@@ -222,7 +222,18 @@ jobs:
       - name: Boot and assert the success banner (--strict)
         # Phải thấy cả ba dòng: "yui: ready", "Phan loai" (auto-profiler) và
         # "Tang 1" (bảng năng lực). Thiếu một dòng là build đỏ.
-        run: ./scripts/qemu-smoke.sh ${{ matrix.arch }} --strict
+        run: |
+          set -o pipefail
+          YUI_QEMU_LOG=/tmp/qemu-serial.log ./scripts/qemu-smoke.sh ${{ matrix.arch }} --strict 2>&1 | tee /tmp/qemu.log
+      - name: "Lỗi CI: cuối log qemu (${{ matrix.arch }})"
+        if: failure()
+        run: |
+          for f in /tmp/qemu-serial.log /tmp/qemu.log; do
+            [ -f "$f" ] || continue
+            echo "::error title=file::$f"
+            tail -n 8 "$f" | sed 's/%/%25/g; s/\r//g' | cut -c1-350 \
+              | while IFS= read -r l; do echo "::error title=qemu-${{ matrix.arch }}::$l"; done
+          done
 
   # ------------------------------------------------------------- tài liệu ----
   docs:

@@ -49,7 +49,8 @@ command -v "qemu-system-$ARCH" >/dev/null 2>&1 || skip "không có qemu-system-$
 [ -f "$KERNEL" ] || skip "chưa build nhân ($KERNEL) — chạy: ./scripts/build-kernel.sh $ARCH"
 
 LOG="$(mktemp)"
-trap 'rm -f "$LOG"' EXIT
+# CI cần giữ log để đọc khi đỏ: YUI_QEMU_LOG=/tmp/qemu.log
+trap '[ -n "${YUI_QEMU_LOG:-}" ] && cp "$LOG" "$YUI_QEMU_LOG"; rm -f "$LOG"' EXIT
 
 case "$ARCH" in
     x86_64)
