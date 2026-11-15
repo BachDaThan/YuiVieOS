@@ -118,12 +118,18 @@ pub fn compress(input: &[u8]) -> Option<Vec<u8>> {
         }
     }
 
+    // Không phát token rỗng ở cuối: nếu khớp cuối kết thúc đúng cuối dữ liệu
+    // thì chuỗi nén cũng kết thúc ở đó. Nhờ vậy cắt cụt chuỗi nén **luôn** bị
+    // `decompress` từ chối (nếu có token rỗng, cắt nó đi vẫn ra đủ dữ liệu và
+    // lỗi cắt cụt sẽ bị bỏ qua im lặng).
     let lit_len = input.len() - anchor;
-    out.push((lit_len.min(NIBBLE_MAX) as u8) << 4);
-    if lit_len >= NIBBLE_MAX {
-        put_len(&mut out, lit_len - NIBBLE_MAX);
+    if lit_len > 0 {
+        out.push((lit_len.min(NIBBLE_MAX) as u8) << 4);
+        if lit_len >= NIBBLE_MAX {
+            put_len(&mut out, lit_len - NIBBLE_MAX);
+        }
+        out.extend_from_slice(&input[anchor..]);
     }
-    out.extend_from_slice(&input[anchor..]);
     Some(out)
 }
 

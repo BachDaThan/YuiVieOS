@@ -29,19 +29,26 @@ jobs:
         run: |
           set -o pipefail
           make test 2>&1 | tee /tmp/test.log
-      - name: Báo lỗi thành annotation (đọc được từ API)
+      - name: "Lỗi CI: đầu log (cpp)"
         if: failure()
         run: |
-          for f in /tmp/*.log; do
-            [ -f "$f" ] || continue
-            echo "::group::$f"
-            sed 's/\x1b\[[0-9;]*m//g' "$f" | grep -nEi "error|✗|panicked|FAIL|not found|undefined reference|cannot find" \
-              | tail -n 30 | sed 's/%/%25/g; s/\r//g' | cut -c1-350 \
-              | while IFS= read -r line; do echo "::error title=log::$line"; done
-            sed 's/\x1b\[[0-9;]*m//g' "$f" | tail -n 12 | sed 's/%/%25/g; s/\r//g' | cut -c1-350 \
-              | while IFS= read -r line; do echo "::error title=log-tail::$line"; done
-            echo "::endgroup::"
-          done
+          [ -f /tmp/test.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/test.log | grep -vE "^ *(Compiling|Downloaded|Updating|Adding|Locking|Checking) "\
+            | head -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=head-cpp::$l"; done
+      - name: "Lỗi CI: dòng lỗi (cpp)"
+        if: failure()
+        run: |
+          [ -f /tmp/test.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/test.log | grep -nEi "error\[|^error|panicked|FAILED|assertion|✗|undefined reference"\
+            | tail -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=err-cpp::$l"; done
+      - name: "Lỗi CI: cuối log (cpp)"
+        if: failure()
+        run: |
+          [ -f /tmp/test.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/test.log | tail -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=tail-cpp::$l"; done
       - name: Static verification + smoke runs
         run: make check
       - name: Install into a temporary prefix
@@ -97,18 +104,26 @@ jobs:
         run: |
           set -o pipefail
           cargo test --workspace --verbose 2>&1 | tee /tmp/rust.log
-      - name: Báo lỗi thành annotation (đọc được từ API)
+      - name: "Lỗi CI: đầu log (rust)"
         if: failure()
         run: |
-          for f in /tmp/rust.log; do
-            [ -f "$f" ] || continue
-            sed 's/\x1b\[[0-9;]*m//g' "$f" | grep -nEi "error|✗|panicked|FAIL|not found|cannot find" \
-              | tail -n 30 | sed 's/%/%25/g; s/\r//g' | cut -c1-350 \
-              | while IFS= read -r line; do echo "::error title=rust::$line"; done
-            sed 's/\x1b\[[0-9;]*m//g' "$f" | tail -n 12 | sed 's/%/%25/g; s/\r//g' | cut -c1-350 \
-              | while IFS= read -r line; do echo "::error title=rust-tail::$line"; done
-          done
-
+          [ -f /tmp/rust.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/rust.log | grep -vE "^ *(Compiling|Downloaded|Updating|Adding|Locking|Checking) "\
+            | head -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=head-rust::$l"; done
+      - name: "Lỗi CI: dòng lỗi (rust)"
+        if: failure()
+        run: |
+          [ -f /tmp/rust.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/rust.log | grep -nEi "error\[|^error|panicked|FAILED|assertion|✗|undefined reference"\
+            | tail -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=err-rust::$l"; done
+      - name: "Lỗi CI: cuối log (rust)"
+        if: failure()
+        run: |
+          [ -f /tmp/rust.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/rust.log | tail -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=tail-rust::$l"; done
       # Formatter and lints are advisory: the crates were written where no Rust
       # toolchain existed, so style must not block the build before review.
       - name: Formatting (advisory)
@@ -157,19 +172,26 @@ jobs:
         run: |
           set -o pipefail
           ./scripts/build-kernel.sh ${{ matrix.arch }} 2>&1 | tee /tmp/kernel.log
-      - name: Báo lỗi thành annotation (đọc được từ API)
+      - name: "Lỗi CI: đầu log (kernel-${{ matrix.arch }})"
         if: failure()
         run: |
-          for f in /tmp/*.log; do
-            [ -f "$f" ] || continue
-            echo "::group::$f"
-            sed 's/\x1b\[[0-9;]*m//g' "$f" | grep -nEi "error|✗|panicked|FAIL|not found|undefined reference|cannot find" \
-              | tail -n 30 | sed 's/%/%25/g; s/\r//g' | cut -c1-350 \
-              | while IFS= read -r line; do echo "::error title=kernel-${{ matrix.arch }}::$line"; done
-            sed 's/\x1b\[[0-9;]*m//g' "$f" | tail -n 12 | sed 's/%/%25/g; s/\r//g' | cut -c1-350 \
-              | while IFS= read -r line; do echo "::error title=kernel-${{ matrix.arch }}-tail::$line"; done
-            echo "::endgroup::"
-          done
+          [ -f /tmp/kernel.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/kernel.log | grep -vE "^ *(Compiling|Downloaded|Updating|Adding|Locking|Checking) "\
+            | head -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=head-kernel-${{ matrix.arch }}::$l"; done
+      - name: "Lỗi CI: dòng lỗi (kernel-${{ matrix.arch }})"
+        if: failure()
+        run: |
+          [ -f /tmp/kernel.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/kernel.log | grep -nEi "error\[|^error|panicked|FAILED|assertion|✗|undefined reference"\
+            | tail -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=err-kernel-${{ matrix.arch }}::$l"; done
+      - name: "Lỗi CI: cuối log (kernel-${{ matrix.arch }})"
+        if: failure()
+        run: |
+          [ -f /tmp/kernel.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/kernel.log | tail -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=tail-kernel-${{ matrix.arch }}::$l"; done
       - name: ELF sanity
         run: |
           file "build/kernel/yui-kernel-${{ matrix.arch }}.elf"
