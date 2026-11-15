@@ -95,7 +95,24 @@ pub extern "C" fn kmain_arm(dtb: usize) -> ! {
         // 0x4008_0000). U-Boot/UEFI thì truyền x0 đúng chuẩn. Khi x0 = 0,
         // quét cửa sổ đầu RAM để tìm magic FDT — không thấy thì để 0 và báo
         // "khong doc duoc", tuyệt đối không bịa số.
-        addr = crate::boot::find_fdt(0x4000_0000, 0x8_0000);
+        //
+        // Cửa sổ quét mở rộng 64 MiB (không chỉ phần trước ảnh nhân): QEMU
+        // bỏ qua DTB không lọt "gap" trước ảnh, nhưng firmware thật có thể
+        // đặt DTB bất kỳ đâu trong RAM thấp. Thấy magic ở đâu thì đọc ở đó.
+        addr = crate::boot::find_fdt(0x4000_0000, 0x400_0000);
+        if addr == 0 {
+            // Chẩn đoán cho CI: in 8 từ đầu tại 0x4000_0000 để biết firmware
+            // (không) đặt gì ở đó — một dòng duy nhất, đọc được từ annotation.
+            let p = 0x4000_0000u64 as *const u32;
+            let mut words = [0u32; 8];
+            for (i, w) in words.iter_mut().enumerate() {
+                *w = unsafe { core::ptr::read_unaligned(p.add(i)) };
+            }
+            println!(
+                "    - chua thay FDT; 8 tu @ 0x40000000: {:#x} {:#x} {:#x} {:#x} {:#x} {:#x} {:#x} {:#x}",
+                words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7]
+            );
+        }
     }
     crate::kmain(RawBoot::DeviceTree(addr))
 }

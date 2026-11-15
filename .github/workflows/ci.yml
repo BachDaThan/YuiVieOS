@@ -235,15 +235,20 @@ jobs:
         run: |
           set -o pipefail
           YUI_QEMU_LOG=/tmp/qemu-serial.log ./scripts/qemu-smoke.sh ${{ matrix.arch }} --strict 2>&1 | tee /tmp/qemu.log
-      - name: "Lỗi CI: toàn bộ log serial qemu (${{ matrix.arch }})"
+      - name: "Lỗi CI: log serial + log smoke (${{ matrix.arch }})"
         if: failure()
         run: |
-          for f in /tmp/qemu-serial.log; do
-            [ -f "$f" ] || continue
-            # Nối mọi dòng thành MỘT annotation: giới hạn 10 annotation/bước của
-            # GitHub sẽ cắt mất log nếu tách dòng, mà thứ tự dòng lại quan trọng.
-            body="$(sed 's/\x1b\[[0-9;]*m//g' "$f" | sed 's/%/%25/g; s/\r//g' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-1200)"
-            echo "::error title=serial-${{ matrix.arch }}::$body"
+          # Hai dòng annotation: (1) log serial của QEMU, (2) đầu ra của
+          # qemu-smoke.sh (chứa thông báo "BỎ QUA"/lỗi cục bộ). Không bao giờ
+          # để body rỗng — annotation rỗng bị GitHub vứt đi.
+          for f in /tmp/qemu-serial.log /tmp/qemu.log; do
+            if [ -f "$f" ]; then
+              body="$(cat -v "$f" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/%/%25/g; s/\r//g' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-1200)"
+            else
+              body="<khong co $f>"
+            fi
+            [ -n "$body" ] || body="<log rong: $f>"
+            echo "::error title=$(basename "$f")-${{ matrix.arch }}::$body"
           done
 
   # ------------------------------------------------------------- tài liệu ----
