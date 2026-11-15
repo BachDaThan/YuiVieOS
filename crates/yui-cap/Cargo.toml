@@ -1,0 +1,9 @@
+[package]
+name = "yui-cap"
+version = "0.1.0"
+edition = "2021"
+description = "YuiVieOS capability microkernel core: capability tables, derived grants, signed tokens"
+license = "MIT"
+
+[lib]
+name = "yui_cap"

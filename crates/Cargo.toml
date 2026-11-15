@@ -1,0 +1,11 @@
+# YuiVieOS kernel crates (Tầng 1 & Tầng 2).
+# Build: cargo test --workspace  (see docs/BUILD.md)
+[workspace]
+resolver = "2"
+members = ["yui-cap", "yui-sched", "yui-zram"]
+
+[profile.release]
+opt-level = 2
+lto = true
+codegen-units = 1
+panic = "abort"
