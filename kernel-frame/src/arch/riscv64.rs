@@ -40,14 +40,11 @@ pub fn serial_write(byte: u8) {
 }
 
 pub fn detect_simd() -> &'static str {
-    // misa bit 'V' (bit 21) báo vector extension.
-    let misa: usize;
-    unsafe { core::arch::asm!("csrr {}, misa", out(reg) misa, options(nomem, nostack)) }
-    if misa & (1 << 21) != 0 {
-        "rvv"
-    } else {
-        "scalar"
-    }
+    // KHÔNG đọc `misa`: đó là CSR cấp M (0x301), S-mode đọc sẽ trap — đây chính
+    // là lỗi làm nhân dừng ngay sau dòng "Kien truc" ở lần boot QEMU đầu tiên.
+    // Vector extension được phát hiện qua chuỗi `riscv,isa` trong device tree
+    // (xem boot::parse_fdt), mặc định là scalar.
+    "scalar"
 }
 
 pub fn cpu_vendor() -> [u8; 12] {

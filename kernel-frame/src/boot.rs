@@ -82,6 +82,7 @@ pub fn parse(raw: RawBoot) -> BootInfo {
         framebuffer: None,
     };
 
+    println!("    - simd: {}", info.simd);
     match raw {
         RawBoot::Multiboot(addr) => parse_multiboot(&mut info, addr),
         RawBoot::DeviceTree(addr) => parse_fdt(&mut info, addr),
@@ -164,10 +165,22 @@ fn be32(bytes: &[u8], offset: usize) -> u32 {
 
 fn parse_fdt(info: &mut BootInfo, addr: u64) {
     if addr == 0 {
+        println!("    - khong co device tree");
         return;
     }
-    // Device tree luôn nằm trong vùng nhớ thấp, căn 8 byte.
     let base = addr as usize;
+    // Chặn con trỏ rác trước khi chạm bộ nhớ: một địa chỉ ngoài RAM sẽ gây lỗi
+    // trang và khung không còn cơ hội in ra manh mối nào.
+    if !(0x1000..(1usize << 48)).contains(&base) {
+        println!("    - device tree @ {:#x} vo ly, bo qua", base);
+        return;
+    }
+    let magic = unsafe { core::ptr::read_unaligned(base as *const u32) }.swap_bytes();
+    println!("    - device tree @ {:#x}, magic {:#x}", base, magic);
+    if magic != FDT_MAGIC {
+        println!("    - khong phai FDT (can 0xd00dfeed), bo qua");
+        return;
+    }
     let header = unsafe { core::slice::from_raw_parts(base as *const u8, 40) };
     if be32(header, 0) != FDT_MAGIC {
         return;
@@ -228,6 +241,17 @@ fn parse_fdt(info: &mut BootInfo, addr: u64) {
                 pos += 8;
                 if pos + len > blob.len() {
                     return;
+                }
+                if off_strings + nameoff < blob.len() {
+                    let name_bytes = &blob[off_strings + nameoff..];
+                    // RISC-V: chuỗi ISA của hart (rv64imafdcv...) là cách duy nhất
+                    // tin được từ S-mode để biết có vector extension.
+                    if name_bytes.starts_with(b"riscv,isa") && len > 0 && pos + len <= blob.len() {
+                        let isa = &blob[pos..pos + len];
+                        if isa.iter().any(|&b| b == b'v' || b == b'V') {
+                            info.simd = "rvv";
+                        }
+                    }
                 }
                 if in_memory > 0 && len >= 8 && off_strings + nameoff < blob.len() {
                     let prop_name = &blob[off_strings + nameoff..];

@@ -51,14 +51,11 @@ pub fn serial_write(byte: u8) {
 }
 
 pub fn detect_simd() -> &'static str {
-    // ARMv8-A bắt buộc có NEON. SVE được báo ở ID_AA64PFR0_EL1[35:32] != 0.
-    let pfr0: u64;
-    unsafe { core::arch::asm!("mrs {}, id_aa64pfr0_el1", out(reg) pfr0, options(nomem, nostack)) }
-    if (pfr0 >> 32) & 0xF != 0 {
-        "sve"
-    } else {
-        "neon"
-    }
+    // ARMv8-A **bắt buộc** có NEON nên không cần đọc thanh ghi nào.
+    // (Trước đây tôi đọc ID_AA64PFR0_EL1 để dò SVE; lần chạy QEMU đầu tiên cho
+    // thấy đọc thanh ghi ID ở EL1 có thể trap tuỳ cấu hình EL2 — không đáng để
+    // mạo hiểm trong khung khởi động. Dò SVE sẽ làm ở P2.5 bằng bảng CPU.)
+    "neon"
 }
 
 pub fn cpu_vendor() -> [u8; 12] {
