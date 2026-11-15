@@ -15,10 +15,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ARCH="${1:-}"
+ROOT="$(pwd)"
+# TARGET = tên target Rust; LDLINK = thư mục linker script (arm64, không phải aarch64)
 case "$ARCH" in
-    x86_64)  TARGET="x86_64-unknown-none" ;;
-    aarch64) TARGET="aarch64-unknown-none" ;;
-    riscv64) TARGET="riscv64gc-unknown-none-elf" ;;
+    x86_64)  TARGET="x86_64-unknown-none";        LINK_DIR="x86_64" ;;
+    aarch64) TARGET="aarch64-unknown-none";       LINK_DIR="arm64" ;;
+    riscv64) TARGET="riscv64gc-unknown-none-elf"; LINK_DIR="riscv64" ;;
     all)
         for arch in x86_64 aarch64 riscv64; do "$0" "$arch"; done
         exit 0
@@ -43,14 +45,15 @@ fi
 mkdir -p build/kernel
 
 echo "── build khung nhân cho $ARCH ($TARGET)"
-cargo +nightly build \
+# RUSTFLAGS thay cho --config: không phải lo quoting TOML, và link-arg chỉ có
+# tác dụng ở bước link của binary (các rlib build-std không bị ảnh hưởng).
+RUSTFLAGS="-C link-arg=-T$ROOT/arch/$LINK_DIR/linker.ld" \
+    cargo +nightly build \
     --manifest-path kernel-frame/Cargo.toml \
     --target "$TARGET" \
     --release \
     -Z build-std=core,alloc \
-    -Z build-std-features=compiler-builtins-mem \
-    -Z unstable-options \
-    --config "target.$TARGET.rustflags=[\"-C\",\"link-arg=-Tarch/$ARCH/linker.ld\",\"-C\",\"link-arg=-nostartfiles\"]"
+    -Z build-std-features=compiler-builtins-mem
 
 SRC="kernel-frame/target/$TARGET/release/yui-frame"
 OUT="build/kernel/yui-kernel-$ARCH.elf"
