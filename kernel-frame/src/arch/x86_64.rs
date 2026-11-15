@@ -73,6 +73,11 @@ _start:
     movl %edx, (%eax)
     movl $0, 4(%eax)
 
+    /* CR3 = &pml4 — BẮT BUỘC trước khi bật CR0.PG: thiếu bước này CPU dò
+     * bảng trang tại địa chỉ 0 (giá trị reset), hỏng ngay ở lệnh kế tiếp. */
+    movl $pml4, %eax
+    movl %eax, %cr3
+
     /* CR4.PAE */
     movl %cr4, %eax
     orl  $0x20, %eax
@@ -84,9 +89,9 @@ _start:
     orl  $0x100, %eax
     wrmsr
 
-    /* CR0.PG | CR0.PE */
+    /* CR0.PG | CR0.PE (PE đã = 1 từ protected mode, OR lại cho đúng chuẩn) */
     movl %cr0, %eax
-    orl  $0x80010000, %eax
+    orl  $0x80000001, %eax
     movl %eax, %cr0
 
     lgdt gdt64_ptr
