@@ -41,6 +41,21 @@ rustup toolchain install nightly --component rust-src
 
 Ba dòng phải thấy trên serial: `yui: ready`, `Phan loai :`, `Tang 1    :`.
 
-> **Trạng thái:** mã đã viết, **chưa từng được biên dịch** trong môi trường soạn
-> thảo (không có `cargo`/`qemu`). `PLAN.md` đánh dấu P2.1–P2.3 là `[~]`, không
-> phải `[x]`. CI job `kernel` + `qemu` là nơi xác nhận thật.
+## Trạng thái thật (đo bằng CI, không phải lời hứa)
+
+| Kiến trúc | Build (`kernel`) | Boot QEMU (`qemu`) |
+|---|---|---|
+| `riscv64` | ✅ | ✅ `yui: ready`, `Phan loai : may-yeu`, `Tang 1`, thu hồi quyền |
+| `aarch64` | ✅ | ✅ cả ba dòng; RAM `0 MiB — khong doc duoc` (QEMU không truyền DTB) |
+| `x86_64` | ✅ | ⛔ QEMU chỉ nạp multiboot 1 từ ELF32 → cần multiboot2 + GRUB hoặc shim 32-bit |
+
+Bài học đã trả giá, ghi lại:
+
+- `csrr misa` là CSR **cấp M**: S-mode đọc là trap. Dò vector qua `riscv,isa`
+  trong device tree.
+- PL011 phải lập trình IBRD/FBRD/LCR_H trước khi in, nếu không FIFO kẹt và
+  `serial_write` bỏ byte ⇒ mất chữ giữa dòng.
+- `println!("{}", chuoi_runtime)` làm nhân aarch64 dừng giữa dòng → dùng
+  `console::print_str` (ghi byte trực tiếp) cho mọi `&str` tính lúc chạy.
+- x86_64: `global_asm!` mặc định Intel → cần `options(att_syntax)`; cần thêm
+  `-C relocation-model=static` (target mặc định PIC) và `-C target-feature=+strict-align`.

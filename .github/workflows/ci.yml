@@ -207,10 +207,10 @@ jobs:
     name: QEMU boot (${{ matrix.arch }})
     needs: kernel
     runs-on: ubuntu-24.04
-    # Cổng ra phase yêu cầu boot được trên **ít nhất một** kiến trúc ngoài x86;
-    # hiện riscv64 là kiến trúc duy nhất đạt. aarch64 và x86_64 vẫn chạy thật
-    # nhưng KHÔNG chặn merge — trung thực: chúng đang đỏ vì lý do đã ghi trong
-    # docs/PLAN.md (P2.2/P2.3), không phải vì thiếu cấu hình CI.
+    # aarch64 và riscv64 boot được thật (banner + profiler + bảng năng lực) nên
+    # là cổng bắt buộc. x86_64 vẫn build và vẫn được boot thử, nhưng KHÔNG chặn
+    # merge: QEMU chỉ nạp multiboot 1 từ ELF32 ("Cannot load x86-64 image, give a
+    # 32bit one") — cần multiboot2 + GRUB hoặc shim 32-bit, xem docs/PLAN.md P2.2.
     continue-on-error: ${{ matrix.required == false }}
     strategy:
       fail-fast: false
@@ -219,7 +219,7 @@ jobs:
           - arch: riscv64
             required: true
           - arch: aarch64
-            required: false
+            required: true
           - arch: x86_64
             required: false
     steps:

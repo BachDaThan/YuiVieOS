@@ -22,7 +22,7 @@ chặn (ghi rõ chặn bởi gì).
 |---|---|---|
 | **P0** | Nền móng: monorepo, hợp đồng cổng chờ, test C++/C11, CI | ✅ xong (670 check lúc đó, nay 2357) |
 | **P1** | Chạy thật trên Linux host: `yuid` service, IBus, stripper, telemetry, OS MCP | 🟡 4/10 task (P1.5 xong) |
-| **P2** | Rust framekernel + 3 kiến trúc + QEMU + năng lượng + FS + Linux ABI | 🟡 khung nhân có mã (P2.1–P2.3 `[~]`), chờ CI QEMU |
+| **P2** | Rust framekernel + 3 kiến trúc + QEMU + năng lượng + FS + Linux ABI | 🟡 khung nhân **boot thật** trên aarch64 + riscv64 (CI xanh); x86_64 chặn bởi QEMU multiboot |
 | **P3** | VMM sandbox (Wine/VKD3D, Waydroid-lite) | ⬜ chưa bắt đầu |
 | **P4** | UX & phát hành (compositor, installer, ký số) | ⬜ chưa bắt đầu |
 | **P5** | *(dự trữ)* Tích hợp AI vào hệ điều hành | 🔒 chờ lệnh kích hoạt |
@@ -88,9 +88,9 @@ trên máy thật, và một app được gọt chạy bình thường. Ghi lạ
 | Mã | Task | Trạng thái | DoD (đo được) |
 |---|---|---|---|
 | P2.0 | Workspace Rust `kernel-cap` + `kernel-services/*`, `deny(unsafe_code)` | [x] | `cargo test --workspace` (CI); `grep unsafe` rỗng; `kernel-frame` **ngoài** workspace để `--workspace` vẫn chỉ chạy trên host |
-| P2.1 | `yui-frame`: khung duy nhất chứa `unsafe` (asm, MMU, ngắt, MMIO) | [~] | `kernel-frame/` (25 tệp Rust, 29 khối `unsafe` đều nằm trong danh sách kiểm toán của `verify.py`); `scripts/build-kernel.sh`; crate an toàn vẫn `deny(unsafe_code)`. **Chưa** boot được trong sandbox (không có `cargo`/`qemu`) ⇒ chờ job `kernel`+`qemu` của CI |
-| P2.2 | `yui-boot` + nhân tối thiểu, x86_64 (BIOS Legacy + UEFI) | [~] | Đường BIOS: multiboot 1 → cầu nối 32→64 bit (`kernel-frame/src/arch/x86_64.rs`), COM1, `kmain`; UEFI **chưa** làm. Chưa chạy được trong sandbox |
-| P2.3 | ARM64 + RISC-V 64 ở mức "ready" | [~] | `kernel-frame/src/arch/aarch64.rs` (PL011) + `kernel-frame/src/arch/riscv64.rs` (SBI) cùng gọi `kmain` với `RawBoot::DeviceTree`; bộ đọc FDT tối giản lấy RAM + số hart. Chưa chạy được trong sandbox |
+| P2.1 | `yui-frame`: khung duy nhất chứa `unsafe` (asm, MMU, ngắt, MMIO) | [x] | `kernel-frame/` là crate **duy nhất** có `unsafe`: 29 khối, tất cả nằm trong 7 tệp có tên + lý do ở `scripts/verify.py::FRAME_UNSAFE_FILES` (tệp khác có `unsafe` ⇒ `verify.sh` đỏ); mọi crate khác vẫn `deny(unsafe_code)`. Boot thật trong QEMU trên aarch64 + riscv64 — job CI `qemu` xanh |
+| P2.2 | `yui-boot` + nhân tối thiểu, x86_64 (BIOS Legacy + UEFI) | [~] | `kernel-frame/src/arch/x86_64.rs` **build được** (multiboot 1 + cầu nối 32→64 bit + COM1) nhưng **chưa boot được**: QEMU từ chối ELF64 (`Cannot load x86-64 image, give a 32bit one`). Hai đường sửa đã chọn: (a) multiboot2 + ISO GRUB, (b) shim 32-bit nạp ELF64. UEFI chưa làm |
+| P2.3 | ARM64 + RISC-V 64 ở mức "ready" | [x] | Cả hai **boot thật trong QEMU** (job CI `qemu` xanh): in `yui: ready`, `Phan loai`, `Tang 1`. riscv64 đọc RAM từ device tree; aarch64 nhận `x0 = 0` (QEMU không truyền DTB cho ELF `-kernel`) nên in `RAM: 0 MiB — khong doc duoc`, **không bịa số** |
 | P2.4 | Sovereign Keyring + Ed25519 clean-room cho `.bundle` | [ ] | Vector RFC 8032 (5 test) qua; sửa 1 byte bundle ⇒ từ chối; bundle hợp lệ ⇒ cài được trong QEMU |
 | P2.5 | Năng lượng: full tickless + DVFS mỗi nhân + clock gating | [ ] | Khi rảnh: **0** wakeup/s trong 10 s (đếm trong nhân); công suất gói giảm **≥ 20 %** so với governor mặc định cùng workload (đo RAPL nếu có, nếu không ghi rõ máy không hỗ trợ) |
 | P2.6 | Hiển thị: framebuffer trực tiếp + DRM/Vulkan zero-copy | [~] | Bộ vẽ pixel tuyến tính + font 5×7 + màn hình chào đã xong và kiểm thử: `userspace-vi/fb.cpp`, `tests/test_fb.cpp` (**1155 check**), `tools/splash` → `docs/splash.png`; bản kernel `kernel-frame/src/splash.rs` vẽ vào framebuffer multiboot. **Còn thiếu:** đường DRM/Vulkan, và đo fps |
@@ -281,5 +281,6 @@ vào nhật ký dưới đây.
 | 2026-11-15 | P1.1 | `yuid` chạy được với `--socket/--state-dir/--serve-once`; `test_daemon` 102 check |
 | 2026-11-15 | P1.5 | `test_telemetry` 471 check, `test_capi` 61 check; `telemetry.read` + MCP `system_telemetry`; đo thật trên container này: CPU 46 °C, RAM 3.8 GB, không pin ⇒ `present:false` |
 | 2026-11-15 | P1 (framebuffer) | `test_fb` 1155 check; `yui-splash --width 640 --height 400` → `docs/splash.png` (2 880 byte PNG, xem bằng mắt: đúng bố cục) |
-| 2026-11-15 | P2.1–P2.3 (`[~]`) | `kernel-frame/` + `arch/*/linker.ld` + `scripts/build-kernel.sh` + `qemu-smoke.sh --build`; `verify.sh` canh 29 khối `unsafe`. **Chưa biên dịch** (sandbox không có cargo/qemu) — CI là nơi xác nhận |
+| 2026-11-15 | P2.1, P2.3 | CI `kernel` xanh 3/3 target; CI `qemu` xanh cho aarch64 + riscv64 (boot thật, thấy 3 dòng bắt buộc). Lỗi tìm và sửa được nhờ CI: E0255 macro, `misa` là CSR cấp M (S-mode đọc ⇒ trap), PL011 thiếu divisor, `{}` với `&str` runtime trên aarch64, `relocation-model=static`, PLT/linker script |
+| 2026-11-15 | P2.2 (`[~]`) | x86_64 build xong nhưng QEMU `-kernel` chỉ nhận multiboot 1 từ ELF32; ghi rõ 2 hướng sửa. Job `qemu` x86_64 để `required: false` nên không chặn merge, nhưng **vẫn đỏ và vẫn hiện** |
 | 2026-11-15 | P1.6 (`[~]`) | `yui-trim` tròn vẹn trên cây thư mục mẫu: 5 file → gói 187 B, lọc `locale/fr/`, giải nén đúng |

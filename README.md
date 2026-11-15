@@ -96,8 +96,8 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | Tầng | Thành phần | Trạng thái | Bằng chứng |
 |---|---|---|---|
 | 0 | Hardware Auto-Profiler: CPU/RAM/GPU/pin/nhiệt → `may-yeu`/`can-bang`/`may-manh` + k/W | ✅ chạy | `kernel-services/profile.cpp`, `tools/profiler` |
-| 0 | Luồng khởi động 3 kiến trúc + linker script | 🟡 mã xong, chưa boot được ở đây | `arch/{x86_64,arm64,riscv64}/linker.ld` |
-| 0 | Khung nhân bare-metal: serial, bộ cấp phát, `YuiBootInfo`, profiler, bảng năng lực trên ring 0 | 🟡 mã xong, chờ CI QEMU | `kernel-frame/`, `scripts/build-kernel.sh`, `scripts/qemu-smoke.sh` |
+| 0 | Luồng khởi động 3 kiến trúc + linker script | ✅ build 3/3, boot 2/3 | `arch/{x86_64,arm64,riscv64}/linker.ld` |
+| 0 | Khung nhân bare-metal: serial, bộ cấp phát, `YuiBootInfo`, profiler, bảng năng lực trên ring 0 | ✅ boot thật (aarch64, riscv64) / ⛔ x86_64 | `kernel-frame/`; CI `qemu` xanh 2 kiến trúc; x86_64 chặn bởi QEMU multiboot (ELF32) |
 | 0 | Màn hình chào trên framebuffer tuyến tính (font 5×7) | ✅ kiểm thử | `userspace-vi/fb.cpp` (1155 check), `tools/splash`, [`docs/splash.png`](docs/splash.png) |
 | 1 | Bảng năng lực: 15 quyền, dẫn xuất chỉ thu hẹp, thu hồi bắc cầu | ✅ Rust | `kernel-cap/src/lib.rs` |
 | 1 | Thẻ năng lực ký HMAC-SHA-256, xác minh hằng thời gian, lỗi có kiểu | ✅ hai phía | `kernel-cap/src/lib.rs`, `vmm-sandbox/sandbox.cpp` |
@@ -105,7 +105,7 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 1 | Sovereign Keyring + `.bundle` ký Ed25519 | ❌ chưa có | P2.4 |
 | 2 | Lập lịch chuyển đổi nóng LAVD (P/E-core, tín dụng đánh thức, công bằng) | ✅ Rust | `kernel-services/yui-sched` (9 test) |
 | 2 | ZRAM: codec YUI-LZ + kho trang nén, fallback verbatim | ✅ Rust + C++ | `kernel-services/yui-zram` (8 test), `kernel-services/codec.cpp` |
-| 2 | `yui-frame` (khung unsafe duy nhất) | 🟡 P1.2–P1.3 có mã | `kernel-frame/` (29 khối `unsafe`, đều được `verify.sh` kiểm toán) |
+| 2 | `yui-frame` (khung unsafe duy nhất) | ✅ boot được (2 kiến trúc) | `kernel-frame/` — 29 khối `unsafe` trong 7 tệp được `verify.sh` kiểm toán |
 | 2 | Tickless, DVFS, FS bất biến, Linux ABI | ❌ chưa có | P2.5, P2.7–P2.9 |
 | 3 | Hộp cát 3 bậc + audit + 4 policy mẫu có test | ✅ | `vmm-sandbox/` (129 check) |
 | 3 | Manifest micro-VM (JSON Schema) | 🟡 đặc tả | `vmm-sandbox/vmm/` |
@@ -127,10 +127,20 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 ba đều có job CI và task tương ứng trong `PLAN.md` — chúng tôi **không** tuyên bố
 chúng đã chạy.
 
-Riêng khung nhân: `kernel-frame/` là mã **chưa từng được biên dịch** ở đây. Nó
-được viết theo đặc tả (multiboot 1, PL011, SBI) và `verify.sh` chỉ kiểm được cấu
-trúc + ranh giới `unsafe`, **không** kiểm được ngữ nghĩa. Trạng thái `[~]` trong
-`PLAN.md` là trạng thái thật: chờ job `kernel` + `qemu` của CI xác nhận.
+Riêng khung nhân: máy soạn thảo **không** biên dịch được Rust, nhưng CI thì có.
+Kết quả thật từ CI (job `kernel` + `qemu`):
+
+| Kiến trúc | Build | Boot QEMU | Ghi chú |
+|---|---|---|---|
+| `riscv64` | ✅ | ✅ `yui: ready` + `Phan loai` + `Tang 1` | đọc RAM từ device tree |
+| `aarch64` | ✅ | ✅ cả ba dòng | RAM in `0 MiB — khong doc duoc` vì QEMU không truyền DTB cho ELF `-kernel` — **không bịa số** |
+| `x86_64` | ✅ | ⛔ | QEMU: *Cannot load x86-64 image, give a 32bit one* — cần multiboot2 + GRUB hoặc shim 32-bit (P2.2) |
+
+Chú thích kỹ thuật đáng nhớ (đã tìm ra nhờ CI, ghi lại để không lặp lại):
+`csrr misa` là CSR cấp M — S-mode đọc sẽ trap; PL011 phải đặt divisor trước khi
+in; `{}` với `&str` tính lúc chạy làm nhân aarch64 dừng giữa dòng (dùng
+`console::print_str`); x86_64 cần `-C relocation-model=static` và
+`options(att_syntax)`.
 
 ---
 

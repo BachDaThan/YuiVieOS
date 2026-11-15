@@ -154,9 +154,11 @@ Ranh giới `unsafe` do `scripts/verify.py` (`check_frame`) canh: chỉ 7 tệp 
 liệt kê (arch/*, boot, allocator, splash, lib) mới được có `unsafe`; tệp khác
 xuất hiện `unsafe` ⇒ `verify.sh` đỏ. Tổng hiện tại: 29 khối, có chú thích an toàn.
 
-**Chưa được biên dịch trong môi trường soạn thảo hiện tại** (không có `cargo`,
-`qemu-system-*`). Trạng thái thật của nó là `[~]` trong `PLAN.md`, và CI job
-`kernel` + `qemu` là nơi xác nhận.
+Kết quả CI (2026-11-15): build **3/3** target; boot QEMU **2/3** — `riscv64` và
+`aarch64` in đủ `yui: ready`, `Phan loai`, `Tang 1`; `x86_64` bị QEMU từ chối
+(`Cannot load x86-64 image, give a 32bit one`) nên cần multiboot2 + GRUB hoặc
+shim 32-bit trước khi đạt — xem `docs/PLAN.md` P2.2. Job `qemu` của x86_64 để
+`required: false`, nhưng vẫn chạy thật và vẫn đỏ.
 
 ---
 
