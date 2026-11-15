@@ -8,7 +8,6 @@ build/
 *.exe
 
 # rust
-crates/target/
 target/
 Cargo.lock.bak
 
@@ -22,4 +21,5 @@ Cargo.lock.bak
 *.yuip
 *.yuia
 *.yuib
+*.o
 tmp/
