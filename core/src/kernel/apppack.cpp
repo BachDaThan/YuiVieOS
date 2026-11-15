@@ -1,0 +1,435 @@
+// Application trimmer + archiver (Tầng 5).
+#include "yui/apppack.hpp"
+
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <map>
+#include <sstream>
+
+#include "yui/codec.hpp"
+#include "yui/crypto.hpp"
+#include "yui/text.hpp"
+
+namespace yui::apppack {
+namespace {
+
+constexpr uint32_t kArchiveMagic = 0x41495559;  // 'Y','U','I','A'
+constexpr uint8_t kArchiveVersion = 1;
+
+bool read_file(const std::string& path, Bytes& out, std::string* error) {
+  FILE* f = std::fopen(path.c_str(), "rb");
+  if (!f) {
+    if (error) *error = "không đọc được: " + path;
+    return false;
+  }
+  std::fseek(f, 0, SEEK_END);
+  const long size = std::ftell(f);
+  std::fseek(f, 0, SEEK_SET);
+  if (size < 0) {
+    std::fclose(f);
+    if (error) *error = "kích thước không hợp lệ: " + path;
+    return false;
+  }
+  out.assign(size_t(size), 0);
+  const size_t got = size ? std::fread(out.data(), 1, out.size(), f) : 0;
+  std::fclose(f);
+  if (got != out.size()) {
+    if (error) *error = "đọc thiếu dữ liệu: " + path;
+    return false;
+  }
+  return true;
+}
+
+void put_u16(Bytes& b, uint16_t v) {
+  b.push_back(uint8_t(v & 0xff));
+  b.push_back(uint8_t(v >> 8));
+}
+void put_u32(Bytes& b, uint32_t v) {
+  for (int i = 0; i < 4; ++i) b.push_back(uint8_t((v >> (8 * i)) & 0xff));
+}
+void put_u64(Bytes& b, uint64_t v) {
+  for (int i = 0; i < 8; ++i) b.push_back(uint8_t((v >> (8 * i)) & 0xff));
+}
+uint16_t get_u16(const Bytes& b, size_t& p) {
+  const uint16_t v = uint16_t(b[p] | (b[p + 1] << 8));
+  p += 2;
+  return v;
+}
+uint32_t get_u32(const Bytes& b, size_t& p) {
+  uint32_t v = 0;
+  for (int i = 3; i >= 0; --i) v = (v << 8) | b[p + size_t(i)];
+  p += 4;
+  return v;
+}
+uint64_t get_u64(const Bytes& b, size_t& p) {
+  uint64_t v = 0;
+  for (int i = 7; i >= 0; --i) v = (v << 8) | b[p + size_t(i)];
+  p += 8;
+  return v;
+}
+
+bool is_skipped_dir(const std::string& name) {
+  static const char* kSkip[] = {".git", ".hg", ".svn", "node_modules", "__pycache__",
+                                ".cache", ".pytest_cache", ".venv", "target", "build"};
+  for (const char* s : kSkip)
+    if (name == s) return true;
+  return false;
+}
+
+// Locale filtering only applies to conventional layouts:
+//   locale/<lang>/..., locales/<lang>/..., lang/<lang>/..., i18n/<lang>/...
+// Anything else is left alone: guessing would delete real data.
+bool locale_allowed(const std::string& relative_path, const TrimOptions& opts) {
+  const std::string r = "/" + relative_path + "/";
+  size_t start = std::string::npos;
+  for (const char* marker : {"/locale/", "/locales/", "/lang/", "/i18n/"}) {
+    const size_t p = r.find(marker);
+    if (p != std::string::npos) {
+      start = p + std::strlen(marker);
+      break;
+    }
+  }
+  if (start == std::string::npos || start >= r.size()) return true;
+  const size_t end = r.find('/', start);
+  const std::string lang = r.substr(start, (end == std::string::npos ? r.size() : end) - start);
+  if (lang.empty()) return true;
+  for (const auto& keep : opts.keep_locales)
+    if (lang.compare(0, keep.size(), keep) == 0) return true;
+  return false;
+}
+
+bool docs_skipped(const std::string& path, const TrimOptions& opts) {
+  if (!opts.strip_docs) return false;
+  return yui::text::starts_with(path, "share/doc") || yui::text::starts_with(path, "share/man") ||
+         yui::text::ends_with(path, ".md") || yui::text::ends_with(path, ".1") ||
+         yui::text::ends_with(path, ".3") || yui::text::ends_with(path, ".html");
+}
+
+void walk(const std::string& root, const std::string& rel, const TrimOptions& opts, std::vector<Entry>& out,
+          TrimReport& rep, std::string* error) {
+  const std::string dir_path = rel.empty() ? root : root + "/" + rel;
+  DIR* dir = ::opendir(dir_path.c_str());
+  if (!dir) {
+    rep.warnings.push_back("bỏ qua thư mục không đọc được: " + dir_path);
+    if (error && error->empty()) *error = "không mở được thư mục: " + dir_path;
+    return;
+  }
+  std::vector<std::string> names;
+  while (dirent* ent = ::readdir(dir)) {
+    const std::string name = ent->d_name;
+    if (name == "." || name == "..") continue;
+    names.push_back(name);
+  }
+  ::closedir(dir);
+  std::sort(names.begin(), names.end());
+
+  for (const auto& name : names) {
+    const std::string child_rel = rel.empty() ? name : rel + "/" + name;
+    const std::string child_abs = root + "/" + child_rel;
+    struct stat st{};
+    if (::lstat(child_abs.c_str(), &st) != 0) continue;
+
+    if (S_ISDIR(st.st_mode)) {
+      if (is_skipped_dir(name)) {
+        ++rep.files_dropped;
+        if (rep.dropped_samples.size() < 32) rep.dropped_samples.push_back(child_rel + "/ (thư mục)");
+        continue;
+      }
+      if (!locale_allowed(child_rel, opts) || docs_skipped(child_rel, opts)) {
+        ++rep.files_dropped;
+        if (rep.dropped_samples.size() < 32) rep.dropped_samples.push_back(child_rel + "/ (ngôn ngữ/tài liệu)");
+        continue;
+      }
+      walk(root, child_rel, opts, out, rep, error);
+      continue;
+    }
+    if (!S_ISREG(st.st_mode)) continue;
+
+    ++rep.files_in;
+    rep.bytes_in += uint64_t(st.st_size);
+
+    if (yui::text::ends_with(name, ".debug") || !locale_allowed(child_rel, opts) ||
+        docs_skipped(child_rel, opts)) {
+      ++rep.files_dropped;
+      if (rep.dropped_samples.size() < 32) rep.dropped_samples.push_back(child_rel);
+      continue;
+    }
+
+    Entry e;
+    e.path = child_rel;
+    e.mode = uint32_t(st.st_mode & 07777);
+    e.kind = (st.st_mode & 0111) ? 'x' : 'f';
+    if (!read_file(child_abs, e.data, error)) continue;
+    if (opts.strip_debug_elf && e.data.size() > 4 && e.data[0] == 0x7f && e.data[1] == 'E' &&
+        e.data[2] == 'L' && e.data[3] == 'F') {
+      rep.bytes_debug_zeroed += strip_elf_debug(e.data);
+    }
+    e.size = e.data.size();
+    rep.bytes_kept += e.size;
+    ++rep.files_kept;
+    out.push_back(std::move(e));
+  }
+}
+
+}  // namespace
+
+std::string TrimReport::summary_vi() const {
+  std::ostringstream os;
+  const double saved = bytes_in ? 100.0 * double(bytes_in > bytes_packed ? bytes_in - bytes_packed : 0) / double(bytes_in) : 0.0;
+  os << "Đã gọt " << files_dropped << " mục, giữ " << files_kept << "/" << files_in << " tệp";
+  if (duplicates) os << ", gộp " << duplicates << " bản trùng";
+  if (bytes_debug_zeroed) os << ", xoá " << (bytes_debug_zeroed / 1024) << " KiB ký hiệu gỡ lỗi";
+  auto human = [](uint64_t n) -> std::string {
+    char b[48];
+    if (n >= 1024ull * 1024) std::snprintf(b, sizeof(b), "%.1f MiB", double(n) / (1024.0 * 1024));
+    else if (n >= 1024) std::snprintf(b, sizeof(b), "%.1f KiB", double(n) / 1024.0);
+    else std::snprintf(b, sizeof(b), "%llu B", static_cast<unsigned long long>(n));
+    return b;
+  };
+  char buf[96];
+  std::snprintf(buf, sizeof(buf), " (giảm %.1f%%)", saved);
+  os << " — " << human(bytes_in) << " → " << human(bytes_packed) << buf;
+  if (!warnings.empty()) os << " · " << warnings.size() << " cảnh báo";
+  return os.str();
+}
+
+uint64_t strip_elf_debug(Bytes& image) {
+  if (image.size() < 64 || image[0] != 0x7f || image[1] != 'E' || image[2] != 'L' || image[3] != 'F')
+    return 0;
+  if (image[4] != 2) return 0;  // ELFCLASS64 only (ELF32 layout differs)
+  auto rd16 = [&](size_t off) -> uint16_t { return uint16_t(image[off] | (image[off + 1] << 8)); };
+  auto rd32 = [&](size_t off) -> uint32_t {
+    uint32_t v = 0;
+    for (int i = 3; i >= 0; --i) v = (v << 8) | image[off + size_t(i)];
+    return v;
+  };
+  auto rd64 = [&](size_t off) -> uint64_t {
+    uint64_t v = 0;
+    for (int i = 7; i >= 0; --i) v = (v << 8) | image[off + size_t(i)];
+    return v;
+  };
+  const uint64_t shoff = rd64(0x28);
+  const uint16_t shentsize = rd16(0x3A);
+  const uint16_t shnum = rd16(0x3C);
+  const uint16_t shstrndx = rd16(0x3E);
+  const uint64_t phoff = rd64(0x20);
+  const uint16_t phentsize = rd16(0x36);
+  const uint16_t phnum = rd16(0x38);
+  if (shentsize < 64 || shnum == 0 || shoff == 0 || shoff + uint64_t(shentsize) * shnum > image.size())
+    return 0;
+
+  // Section-header string table.
+  if (shstrndx >= shnum) return 0;
+  const size_t shstr_off = size_t(shoff) + size_t(shstrndx) * shentsize;
+  const uint64_t names_off = rd64(shstr_off + 0x18);
+  const uint64_t names_size = rd64(shstr_off + 0x20);
+  if (names_off + names_size > image.size()) return 0;
+
+  // Ranges covered by program headers: never touch those bytes.
+  std::vector<std::pair<uint64_t, uint64_t>> load_ranges;
+  for (uint16_t i = 0; i < phnum; ++i) {
+    const size_t ph = size_t(phoff) + size_t(i) * phentsize;
+    if (ph + 56 > image.size()) break;
+    const uint64_t offset = rd64(ph + 0x08);
+    const uint64_t filesz = rd64(ph + 0x20);
+    if (filesz) load_ranges.emplace_back(offset, offset + filesz);
+  }
+
+  uint64_t zeroed = 0;
+  for (uint16_t i = 0; i < shnum; ++i) {
+    const size_t sh = size_t(shoff) + size_t(i) * shentsize;
+    if (sh + 64 > image.size()) break;
+    const uint32_t name_off = rd32(sh + 0x00);
+    const uint32_t type = rd32(sh + 0x04);
+    const uint64_t offset = rd64(sh + 0x18);
+    const uint64_t size = rd64(sh + 0x20);
+    if (name_off >= names_size || size == 0) continue;
+    std::string name;
+    for (uint64_t k = names_off + name_off; k < names_off + names_size && image[size_t(k)]; ++k)
+      name += char(image[size_t(k)]);
+    const bool debug = yui::text::starts_with(name, ".debug_") || name == ".comment" ||
+                       yui::text::starts_with(name, ".note") || name == ".gnu_debuglink";
+    if (!debug || type == 0 /*SHT_NULL*/) continue;
+    if (offset + size > image.size()) continue;
+    // Skip anything that overlaps a loaded segment.
+    bool overlaps = false;
+    for (const auto& r : load_ranges) {
+      if (!(offset + size <= r.first || offset >= r.second)) {
+        overlaps = true;
+        break;
+      }
+    }
+    if (overlaps) continue;
+    std::memset(image.data() + offset, 0, size_t(size));
+    zeroed += size;
+  }
+  return zeroed;
+}
+
+bool collect(const std::string& root, const TrimOptions& opts, std::vector<Entry>& out, TrimReport& rep,
+             std::string* error) {
+  struct stat st{};
+  if (::stat(root.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+    if (error) *error = "không phải thư mục: " + root;
+    return false;
+  }
+  out.clear();
+  walk(root, "", opts, out, rep, error);
+  std::sort(out.begin(), out.end(), [](const Entry& a, const Entry& b) { return a.path < b.path; });
+
+  if (opts.dedupe) {
+    std::map<std::string, std::string> seen;  // sha256 -> first path
+    for (auto& e : out) {
+      if (e.data.empty()) continue;
+      const std::string digest = yui::crypto::hex(yui::crypto::sha256(e.data));
+      auto it = seen.find(digest);
+      if (it == seen.end()) {
+        seen.emplace(digest, e.path);
+        rep.bytes_after_dedupe += e.size;
+        continue;
+      }
+      const uint64_t saved = e.size;
+      e.kind = 'd';
+      e.data.assign(it->second.begin(), it->second.end());
+      e.size = 0;
+      ++rep.duplicates;
+      rep.bytes_after_dedupe += 0;
+      (void)saved;
+    }
+  } else {
+    for (const auto& e : out) rep.bytes_after_dedupe += e.size;
+  }
+  return true;
+}
+
+Bytes build_archive(const std::vector<Entry>& entries) {
+  Bytes out;
+  put_u32(out, kArchiveMagic);
+  out.push_back(kArchiveVersion);
+  put_u32(out, uint32_t(entries.size()));
+  for (const auto& e : entries) {
+    put_u16(out, uint16_t(e.path.size()));
+    out.insert(out.end(), e.path.begin(), e.path.end());
+    out.push_back(e.kind);
+    put_u32(out, e.mode);
+    put_u64(out, uint64_t(e.data.size()));
+    out.insert(out.end(), e.data.begin(), e.data.end());
+  }
+  return out;
+}
+
+bool parse_archive(const Bytes& archive, std::vector<Entry>& out, std::string* error) {
+  auto fail = [&](const char* m) {
+    if (error) *error = m;
+    out.clear();
+    return false;
+  };
+  if (archive.size() < 9) return fail("kho lưu trữ quá ngắn");
+  size_t p = 0;
+  if (get_u32(archive, p) != kArchiveMagic) return fail("không phải kho YUIA");
+  if (archive[p++] != kArchiveVersion) return fail("phiên bản kho không hỗ trợ");
+  const uint32_t count = get_u32(archive, p);
+  out.clear();
+  out.reserve(count);
+  for (uint32_t i = 0; i < count; ++i) {
+    if (p + 2 > archive.size()) return fail("kho bị cắt cụt (tên tệp)");
+    const uint16_t name_len = get_u16(archive, p);
+    if (p + name_len + 1 + 4 + 8 > archive.size()) return fail("kho bị cắt cụt (tiêu đề)");
+    Entry e;
+    e.path.assign(archive.begin() + long(p), archive.begin() + long(p + name_len));
+    p += name_len;
+    e.kind = archive[p++];
+    e.mode = get_u32(archive, p);
+    const uint64_t size = get_u64(archive, p);
+    if (p + size > archive.size()) return fail("kho bị cắt cụt (nội dung)");
+    e.data.assign(archive.begin() + long(p), archive.begin() + long(p + size));
+    p += size_t(size);
+    e.size = e.kind == 'd' ? 0 : size;
+    if (e.path.empty() || e.path.find("..") != std::string::npos || e.path[0] == '/')
+      return fail("đường dẫn không an toàn trong kho");
+    out.push_back(std::move(e));
+  }
+  return true;
+}
+
+bool extract(const std::vector<Entry>& entries, const std::string& dest, std::string* error) {
+  // Build the directory skeleton first so ordering does not matter.
+  std::map<std::string, std::string> links;
+  for (const auto& e : entries) {
+    const std::string full = dest + "/" + e.path;
+    const size_t slash = full.rfind('/');
+    if (slash != std::string::npos) {
+      const std::string dir = full.substr(0, slash);
+      std::string cur;
+      std::istringstream parts(dir);
+      std::string part;
+      while (std::getline(parts, part, '/')) {
+        if (part.empty()) continue;
+        cur += "/" + part;
+        ::mkdir(cur.c_str(), 0755);
+      }
+    }
+    if (e.kind == 'd') {
+      links[e.path] = std::string(e.data.begin(), e.data.end());
+      continue;
+    }
+    FILE* f = std::fopen(full.c_str(), "wb");
+    if (!f) {
+      if (error) *error = "không ghi được: " + full;
+      return false;
+    }
+    if (!e.data.empty()) std::fwrite(e.data.data(), 1, e.data.size(), f);
+    std::fclose(f);
+    ::chmod(full.c_str(), mode_t(e.mode ? e.mode : 0644));
+  }
+  // Materialise dedupe links last (targets are guaranteed to exist by then).
+  for (const auto& kv : links) {
+    const std::string target = dest + "/" + kv.second;
+    const std::string link_path = dest + "/" + kv.first;
+    ::unlink(link_path.c_str());
+    if (::link(target.c_str(), link_path.c_str()) != 0) {
+      // Cross-device or unsupported filesystem: fall back to a copy.
+      Bytes data;
+      if (read_file(target, data, nullptr)) {
+        FILE* f = std::fopen(link_path.c_str(), "wb");
+        if (f) {
+          if (!data.empty()) std::fwrite(data.data(), 1, data.size(), f);
+          std::fclose(f);
+        }
+      }
+    }
+  }
+  return true;
+}
+
+Bytes pack_tree(const std::string& root, const TrimOptions& opts, TrimReport& rep, std::string* error) {
+  std::vector<Entry> entries;
+  TrimOptions o = opts;
+  if (!collect(root, o, entries, rep, error)) return Bytes{};
+  const Bytes archive = build_archive(entries);
+  Bytes packed = yui::codec::pack(archive, o.level);
+  rep.bytes_packed = packed.size();
+  return packed;
+}
+
+bool unpack_to(const Bytes& packed, const std::string& dest, std::string* error) {
+  codec::Bytes archive;
+  std::string e;
+  if (!codec::unpack(packed, archive, nullptr, &e)) {
+    if (error) *error = e;
+    return false;
+  }
+  std::vector<Entry> entries;
+  if (!parse_archive(archive, entries, &e)) {
+    if (error) *error = e;
+    return false;
+  }
+  return extract(entries, dest, error);
+}
+
+}  // namespace yui::apppack
