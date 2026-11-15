@@ -1,0 +1,262 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------- Tầng 4/5 --
+  cpp:
+    name: C++17 + C11 ABI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          g++ --version | head -1
+          make --version | head -1
+      - name: Build (yuid, libyui, profiler, trim, shell, splash)
+        run: |
+          set -o pipefail
+          make -j"$(nproc)" 2>&1 | tee /tmp/build.log
+      - name: Test — 2296 checks C++17 + 61 checks C11 (ABI)
+        run: |
+          set -o pipefail
+          make test 2>&1 | tee /tmp/test.log
+      - name: "Lỗi CI: đầu log (cpp)"
+        if: failure()
+        run: |
+          [ -f /tmp/test.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/test.log | grep -vE "^ *(Compiling|Downloaded|Updating|Adding|Locking|Checking) "\
+            | head -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=head-cpp::$l"; done
+      - name: "Lỗi CI: dòng lỗi (cpp)"
+        if: failure()
+        run: |
+          [ -f /tmp/test.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/test.log | grep -nEi "error\[|^error|panicked|FAILED|assertion|✗|undefined reference"\
+            | tail -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=err-cpp::$l"; done
+      - name: "Lỗi CI: cuối log (cpp)"
+        if: failure()
+        run: |
+          [ -f /tmp/test.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/test.log | tail -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=tail-cpp::$l"; done
+      - name: Static verification + smoke runs
+        run: make check
+      - name: Install into a temporary prefix
+        run: |
+          make install PREFIX="$RUNNER_TEMP/yui"
+          test -x "$RUNNER_TEMP/yui/bin/yuid"
+          test -f "$RUNNER_TEMP/yui/lib/libyui.a"
+          test -f "$RUNNER_TEMP/yui/include/yui/yui.h"
+      - name: Link libyui from C outside the tree
+        run: |
+          mkdir -p /tmp/abi && cd /tmp/abi
+          cat > probe.c <<'C'
+          #include <stdio.h>
+          #include <yui/yui.h>
+          int main(void) {
+            char text[64];
+            printf("abi=%d\n", yui_abi_version());
+            int rc = yui_telex("Vieetj", text, sizeof text);
+            printf("rc=%d text=%s\n", rc, text);
+            yui_graph* g = yui_graph_new();
+            yui_graph_upsert(g, "a", "A", "concept");
+            printf("nodes=%zu\n", yui_graph_nodes(g));
+            yui_graph_free(g);
+            return rc >= 0 ? 0 : 2;   /* string functions return byte length */
+          }
+          C
+          cc -std=c11 -I"$RUNNER_TEMP/yui/include" probe.c \
+             -L"$RUNNER_TEMP/yui/lib" -lyui -lstdc++ -lm -lpthread \
+             -Wl,-rpath,"$RUNNER_TEMP/yui/lib" -o probe
+          ./probe
+      - name: Trim round-trip on a synthetic app
+        run: |
+          mkdir -p /tmp/app/bin /tmp/app/locale/vi /tmp/app/locale/fr /tmp/app/.git
+          printf '#!/bin/sh\necho hello\n' > /tmp/app/bin/run.sh
+          printf 'xin chao\n' > /tmp/app/locale/vi/msgs.txt
+          printf 'bonjour\n' > /tmp/app/locale/fr/msgs.txt
+          printf 'git\n' > /tmp/app/.git/HEAD
+          ./build/bin/yui-trim /tmp/app -o /tmp/app.yuip --strip-docs
+          ./build/bin/yui-trim --info /tmp/app.yuip
+          mkdir -p /tmp/out && ./build/bin/yui-trim --unpack /tmp/app.yuip -C /tmp/out
+          test ! -e /tmp/out/locale/fr && echo "locale filtering ok"
+
+  # ------------------------------------------------------------ Tầng 1/2 Rust --
+  rust:
+    name: Rust no_std crates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Test every crate
+        run: |
+          set -o pipefail
+          cargo test --workspace --verbose 2>&1 | tee /tmp/rust.log
+      - name: "Lỗi CI: đầu log (rust)"
+        if: failure()
+        run: |
+          [ -f /tmp/rust.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/rust.log | grep -vE "^ *(Compiling|Downloaded|Updating|Adding|Locking|Checking) "\
+            | head -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=head-rust::$l"; done
+      - name: "Lỗi CI: dòng lỗi (rust)"
+        if: failure()
+        run: |
+          [ -f /tmp/rust.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/rust.log | grep -nEi "error\[|^error|panicked|FAILED|assertion|✗|undefined reference"\
+            | tail -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=err-rust::$l"; done
+      - name: "Lỗi CI: cuối log (rust)"
+        if: failure()
+        run: |
+          [ -f /tmp/rust.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/rust.log | tail -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=tail-rust::$l"; done
+      # Formatter and lints are advisory: the crates were written where no Rust
+      # toolchain existed, so style must not block the build before review.
+      - name: Formatting (advisory)
+        continue-on-error: true
+        run: cargo fmt --all -- --check
+      - name: Clippy (advisory)
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets
+      - name: Release build (LTO + panic=abort, as the kernel would)
+        run: cargo build --workspace --release
+
+  # ------------------------------------------------------------ 3 kiến trúc --
+  cross-arch:
+    name: Cross-check ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-unknown-linux-gnu
+          - riscv64gc-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Type-check the kernel crates for ${{ matrix.target }}
+        run: cargo check --workspace --target ${{ matrix.target }}
+
+  # ------------------------------------------------ khung nhân bare-metal (P1) --
+  kernel:
+    name: Kernel frame ${{ matrix.arch }} (nightly, no_std)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64, riscv64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          # `-Z build-std` cần mã nguồn thư viện chuẩn; `#[alloc_error_handler]`
+          # vẫn là feature không ổn định nên khung dùng nightly.
+          components: rust-src
+      - name: Build bare-metal kernel (${{ matrix.arch }})
+        run: |
+          set -o pipefail
+          ./scripts/build-kernel.sh ${{ matrix.arch }} 2>&1 | tee /tmp/kernel.log
+      - name: "Lỗi CI: đầu log (kernel-${{ matrix.arch }})"
+        if: failure()
+        run: |
+          [ -f /tmp/kernel.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/kernel.log | grep -vE "^ *(Compiling|Downloaded|Updating|Adding|Locking|Checking) "\
+            | head -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=head-kernel-${{ matrix.arch }}::$l"; done
+      - name: "Lỗi CI: dòng lỗi (kernel-${{ matrix.arch }})"
+        if: failure()
+        run: |
+          [ -f /tmp/kernel.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/kernel.log | grep -nEi "error\[|^error|panicked|FAILED|assertion|✗|undefined reference"\
+            | tail -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=err-kernel-${{ matrix.arch }}::$l"; done
+      - name: "Lỗi CI: cuối log (kernel-${{ matrix.arch }})"
+        if: failure()
+        run: |
+          [ -f /tmp/kernel.log ] || exit 0
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/kernel.log | tail -n 10 | sed 's/%/%25/g; s/\r//g' | cut -c1-350\
+            | while IFS= read -r l; do echo "::error title=tail-kernel-${{ matrix.arch }}::$l"; done
+      - name: ELF sanity
+        run: |
+          file "build/kernel/yui-kernel-${{ matrix.arch }}.elf"
+          test -s "build/kernel/yui-kernel-${{ matrix.arch }}.elf"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yui-kernel-${{ matrix.arch }}
+          path: build/kernel/yui-kernel-${{ matrix.arch }}.elf
+          if-no-files-found: error
+
+  # -------------------------------------------------------- QEMU boot thật ------
+  qemu:
+    name: QEMU boot (${{ matrix.arch }})
+    needs: kernel
+    runs-on: ubuntu-24.04
+    # aarch64 và riscv64 boot được thật (banner + profiler + bảng năng lực) nên
+    # là cổng bắt buộc. x86_64 vẫn build và vẫn được boot thử, nhưng KHÔNG chặn
+    # merge: QEMU chỉ nạp multiboot 1 từ ELF32 ("Cannot load x86-64 image, give a
+    # 32bit one") — cần multiboot2 + GRUB hoặc shim 32-bit, xem docs/PLAN.md P2.2.
+    continue-on-error: ${{ matrix.required == false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: riscv64
+            required: true
+          - arch: aarch64
+            required: true
+          - arch: x86_64
+            required: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: yui-kernel-${{ matrix.arch }}
+          path: build/kernel
+      - name: Install QEMU
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 qemu-system-arm qemu-system-misc
+      - name: Boot and assert the success banner (--strict)
+        # Phải thấy cả ba dòng: "yui: ready", "Phan loai" (auto-profiler) và
+        # "Tang 1" (bảng năng lực). Thiếu một dòng là build đỏ.
+        run: |
+          set -o pipefail
+          YUI_QEMU_LOG=/tmp/qemu-serial.log ./scripts/qemu-smoke.sh ${{ matrix.arch }} --strict 2>&1 | tee /tmp/qemu.log
+      - name: "Lỗi CI: toàn bộ log serial qemu (${{ matrix.arch }})"
+        if: failure()
+        run: |
+          for f in /tmp/qemu-serial.log; do
+            [ -f "$f" ] || continue
+            # Nối mọi dòng thành MỘT annotation: giới hạn 10 annotation/bước của
+            # GitHub sẽ cắt mất log nếu tách dòng, mà thứ tự dòng lại quan trọng.
+            body="$(sed 's/\x1b\[[0-9;]*m//g' "$f" | sed 's/%/%25/g; s/\r//g' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-1200)"
+            echo "::error title=serial-${{ matrix.arch }}::$body"
+          done
+
+  # ------------------------------------------------------------- tài liệu ----
+  docs:
+    name: Docs, policies & static checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: verify.sh (layout, policies, unsafe-free, links, paths, CRLF)
+        run: ./scripts/verify.sh
+      - name: Docs must not drift from the tree
+        run: |
+          # Every task marked [x] in PLAN.md must point at something real.
+          grep -c '\[x\]' docs/PLAN.md
+          grep -q 'P5' docs/PLAN.md

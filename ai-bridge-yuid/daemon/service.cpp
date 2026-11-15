@@ -1,0 +1,642 @@
+// yuid dispatch table: one implementation, three transports.
+#include "yui/service.hpp"
+
+#include <cstdlib>
+#include <ctime>
+
+#include "yui/b64.hpp"
+#include "yui/codec.hpp"
+#include "yui/engine.hpp"
+#include "yui/ime.hpp"
+#include "yui/profile.hpp"
+#include "yui/telemetry.hpp"
+#include "yui/text.hpp"
+
+namespace yui::service {
+namespace {
+
+using json::Value;
+
+Value make_error(int code, const std::string& message) {
+  Value v(json::Object{});
+  v.set("code", code);
+  v.set("message", message);
+  return v;
+}
+
+std::string param_string(const Value& p, const char* key, const std::string& def = "") {
+  return p[key].is_string() ? p[key].as_string() : def;
+}
+
+bool require(const Value& p, const char* key, RpcError& err) {
+  if (!p.has(key)) {
+    err.code = kInvalidParams;
+    err.message = std::string("missing parameter: ") + key;
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
+
+const char* version() { return "0.1.0"; }
+
+Daemon::Daemon(Options opts) : opts_(std::move(opts)) {}
+
+// --------------------------------------------------------------- profile --
+Value Daemon::method_info() {
+  Value v(json::Object{});
+  v.set("name", "yuid");
+  v.set("version", version());
+  v.set("tier", 4);
+  json::Value features(json::Array{});
+  features.push("graph");
+  features.push("vault");
+  features.push("sandbox");
+  features.push("ime");
+  features.push("pack");
+  features.push("mcp");
+  features.push("web.search");
+  v.set("features", features);
+  v.set("offline", opts_.offline);
+  v.set("dot_kernel", engine::dot_kernel_name());
+  const auto simd = engine::detect_simd();
+  json::Value s(json::Object{});
+  s.set("arch", simd.arch);
+  s.set("best", simd.best);
+  s.set("vector_bits", int(simd.vector_bits));
+  v.set("simd", s);
+  v.set("vault_enabled", !opts_.vault_password.empty());
+  v.set("graph_nodes", graph_.stats().nodes);
+  v.set("graph_edges", graph_.stats().edges);
+  v.set("udh", false);  // placeholder for future UDH negotiation
+  return v;
+}
+
+Value Daemon::method_profile() {
+  if (!has_host_) {
+    set_host_snapshot(profile::to_json(profile::probe()));
+  }
+  return host_;
+}
+
+Value Daemon::method_tune(const Value& params, RpcError& err) {
+  engine::TuneInput in;
+  if (params.has("ram_gb")) in.ram_gb = params["ram_gb"].as_double(in.ram_gb);
+  if (params.has("temperature_c")) in.temperature_c = params["temperature_c"].as_double(in.temperature_c);
+  if (params.has("on_battery")) in.on_battery = params["on_battery"].as_bool(in.on_battery);
+  if (params.has("cpu_threads")) in.cpu_threads = int(params["cpu_threads"].as_int(in.cpu_threads));
+  if (params.has("dedicated_gpu")) in.dedicated_gpu = params["dedicated_gpu"].as_bool(false);
+  if (!params.has("ram_gb") && !has_host_) {
+    // Fall back to real hardware when the caller gives us nothing.
+    const auto host = profile::probe();
+    in.ram_gb = host.tune_input.ram_gb;
+    in.cpu_threads = host.tune_input.cpu_threads;
+    in.temperature_c = host.tune_input.temperature_c;
+    in.on_battery = host.tune_input.on_battery;
+    in.dedicated_gpu = host.tune_input.dedicated_gpu;
+  }
+  if (in.cpu_threads <= 0) {
+    err.code = kInvalidParams;
+    err.message = "cpu_threads must be positive";
+    return Value(nullptr);
+  }
+  const auto r = engine::auto_tune(in);
+  Value v(json::Object{});
+  v.set("k", r.k);
+  v.set("window", r.window);
+  v.set("threads", r.threads);
+  v.set("profile", r.profile);
+  v.set("reason", r.reason);
+  return v;
+}
+
+// ----------------------------------------------------------------- graph --
+Value Daemon::method_graph(const std::string& op, const Value& p, RpcError& err) {
+  if (op == "upsert") {
+    if (!require(p, "id", err)) return Value(nullptr);
+    const bool created = graph_.upsert(p["id"].as_string(), param_string(p, "label", p["id"].as_string()),
+                                       graph::kind_from(param_string(p, "kind", "unknown")), p["props"]);
+    err = RpcError{};
+    Value v(json::Object{});
+    v.set("created", created);
+    v.set("id", p["id"].as_string());
+    return v;
+  }
+  if (op == "link") {
+    if (!require(p, "from", err) || !require(p, "rel", err) || !require(p, "to", err)) return Value(nullptr);
+    const bool ok = graph_.link(p["from"].as_string(), p["rel"].as_string(), p["to"].as_string(),
+                                p["weight"].as_double(1.0), p["props"]);
+    if (!ok) {
+      err.code = kInvalidParams;
+      err.message = "both endpoints must exist and rel must be non-empty";
+      return Value(nullptr);
+    }
+    Value v(json::Object{});
+    v.set("linked", true);
+    return v;
+  }
+  if (op == "query") {
+    const std::string q = param_string(p, "q");
+    const bool has_kind = p.has("kind");
+    const auto hits = graph_.search(q, has_kind, graph::kind_from(param_string(p, "kind")));
+    Value v(json::Object{});
+    json::Value arr(json::Array{});
+    for (const auto& id : hits) {
+      const auto* node = graph_.find(id);
+      json::Value o(json::Object{});
+      o.set("id", id);
+      if (node) {
+        o.set("label", node->label);
+        o.set("kind", graph::kind_name(node->kind));
+      }
+      arr.push(o);
+    }
+    v.set("hits", arr);
+    if (p.has("expand_from")) {
+      json::Value exp(json::Array{});
+      for (const auto& id : graph_.bfs(p["expand_from"].as_string(), int(p["depth"].as_int(2)),
+                                       param_string(p, "rel")))
+        exp.push(id);
+      v.set("expanded", exp);
+    }
+    return v;
+  }
+  if (op == "path") {
+    if (!require(p, "from", err) || !require(p, "to", err)) return Value(nullptr);
+    json::Value arr(json::Array{});
+    for (const auto& id : graph_.shortest_path(p["from"].as_string(), p["to"].as_string())) arr.push(id);
+    Value v(json::Object{});
+    v.set("path", arr);
+    return v;
+  }
+  if (op == "stats") {
+    const auto s = graph_.stats();
+    Value v(json::Object{});
+    v.set("nodes", s.nodes);
+    v.set("edges", s.edges);
+    json::Value kinds(json::Object{});
+    for (int k = 0; k < 10; ++k) kinds.set(graph::kind_name(graph::NodeKind(k)), int(s.kinds[k]));
+    v.set("kinds", kinds);
+    return v;
+  }
+  if (op == "export") {
+    Value v(json::Object{});
+    v.set("graph", graph_.to_json());
+    return v;
+  }
+  if (op == "import") {
+    std::string e;
+    if (!graph_.from_json(p["graph"], &e)) {
+      err.code = kInvalidParams;
+      err.message = e;
+      return Value(nullptr);
+    }
+    Value v(json::Object{});
+    v.set("imported", true);
+    v.set("nodes", graph_.stats().nodes);
+    return v;
+  }
+  err.code = kMethodNotFound;
+  err.message = "unknown graph operation: " + op;
+  return Value(nullptr);
+}
+
+// ----------------------------------------------------------------- vault --
+Value Daemon::method_vault(const std::string& op, const Value& p, RpcError& err) {
+  if (opts_.vault_password.empty()) {
+    err.code = kUnavailable;
+    err.message = "yuid đang chạy không có khoá vault (dùng --vault-key hoặc YUI_VAULT_KEY)";
+    return Value(nullptr);
+  }
+  if (op == "seal") {
+    if (!require(p, "plain", err)) return Value(nullptr);
+    std::vector<uint8_t> plain;
+    if (!b64::decode(p["plain"].as_string(), plain)) {
+      err.code = kInvalidParams;
+      err.message = "plain must be base64";
+      return Value(nullptr);
+    }
+    vault::Params params;
+    if (p.has("log2n")) params.log2_n = uint8_t(p["log2n"].as_int(params.log2_n));
+    if (params.log2_n < 10 || params.log2_n > 22) {
+      err.code = kInvalidParams;
+      err.message = "log2n out of range";
+      return Value(nullptr);
+    }
+    const vault::Bytes blob = vault::seal(opts_.vault_password, plain, params);
+    ++vault_ops_;
+    Value v(json::Object{});
+    v.set("blob", b64::encode(blob));
+    v.set("bytes", blob.size());
+    return v;
+  }
+  if (op == "open") {
+    if (!require(p, "blob", err)) return Value(nullptr);
+    std::vector<uint8_t> blob;
+    if (!b64::decode(p["blob"].as_string(), blob)) {
+      err.code = kInvalidParams;
+      err.message = "blob must be base64";
+      return Value(nullptr);
+    }
+    vault::Bytes plain;
+    std::string e;
+    if (!vault::open(opts_.vault_password, blob, plain, &e)) {
+      err.code = kDenied;
+      err.message = e;
+      return Value(nullptr);
+    }
+    ++vault_ops_;
+    Value v(json::Object{});
+    v.set("plain", b64::encode(plain));
+    v.set("bytes", plain.size());
+    return v;
+  }
+  err.code = kMethodNotFound;
+  err.message = "unknown vault operation: " + op;
+  return Value(nullptr);
+}
+
+// --------------------------------------------------------------- sandbox --
+Value Daemon::method_sandbox_check(const Value& p, RpcError& err) {
+  if (!require(p, "policy", err) || !require(p, "action", err)) return Value(nullptr);
+  std::string e;
+  const sandbox::Policy policy = sandbox::Policy::from_json(p["policy"], &e);
+  if (!e.empty()) {
+    err.code = kInvalidParams;
+    err.message = e;
+    return Value(nullptr);
+  }
+  sandbox::Action action;
+  action.kind = param_string(p["action"], "kind");
+  action.target = param_string(p["action"], "target");
+  if (action.kind.empty()) {
+    err.code = kInvalidParams;
+    err.message = "action.kind is required";
+    return Value(nullptr);
+  }
+  const auto now = int64_t(std::time(nullptr));
+  const auto d = enforcer_.check(policy, nullptr, action, now);
+  Value v(json::Object{});
+  v.set("allowed", d.allowed);
+  v.set("tier", sandbox::tier_name(d.tier));
+  v.set("reason", d.reason);
+  v.set("audit_entries", enforcer_.audit().size());
+  return v;
+}
+
+// ------------------------------------------------------------------- ime --
+Value Daemon::method_ime(const Value& p, RpcError& err) {
+  if (!require(p, "text", err)) return Value(nullptr);
+  const std::string text = p["text"].as_string();
+  const std::string method = param_string(p, "method", "telex");
+  ime::Method m;
+  if (method == "telex") m = ime::Method::Telex;
+  else if (method == "vni") m = ime::Method::Vni;
+  else {
+    err.code = kInvalidParams;
+    err.message = "method must be telex or vni";
+    return Value(nullptr);
+  }
+  Value v(json::Object{});
+  v.set("result", ime::convert(text, m));
+  v.set("method", method);
+  return v;
+}
+
+// ------------------------------------------------------------------ pack --
+Value Daemon::method_pack(const std::string& op, const Value& p, RpcError& err) {
+  if (!require(p, "data", err)) return Value(nullptr);
+  std::vector<uint8_t> data;
+  if (!b64::decode(p["data"].as_string(), data)) {
+    err.code = kInvalidParams;
+    err.message = "data must be base64";
+    return Value(nullptr);
+  }
+  if (op == "compress") {
+    const int level = int(p["level"].as_int(6));
+    const auto packed = codec::pack(data, level);
+    Value v(json::Object{});
+    v.set("packed", b64::encode(packed));
+    v.set("original_size", data.size());
+    v.set("packed_size", packed.size());
+    v.set("ratio", codec::ratio(data.size(), packed.size()));
+    return v;
+  }
+  if (op == "decompress") {
+    codec::Bytes plain;
+    codec::PackInfo info;
+    std::string e;
+    if (!codec::unpack(data, plain, &info, &e)) {
+      err.code = kInvalidParams;
+      err.message = e;
+      return Value(nullptr);
+    }
+    Value v(json::Object{});
+    v.set("data", b64::encode(plain));
+    v.set("original_size", info.original_size);
+    v.set("digest", info.digest_hex);
+    return v;
+  }
+  err.code = kMethodNotFound;
+  err.message = "unknown pack operation: " + op;
+  return Value(nullptr);
+}
+
+// ------------------------------------------------------------- web.search --
+Value Daemon::method_web_search(const Value& p, RpcError& err) {
+  if (!require(p, "q", err)) return Value(nullptr);
+  // Tiered search is a Tầng 4 feature, but the *policy* is explicit: with no
+  // network backend configured the daemon says so instead of pretending.
+  Value v(json::Object{});
+  json::Value results(json::Array{});
+  v.set("results", results);
+  v.set("query", p["q"].as_string());
+  v.set("backend", "offline");
+  v.set("note",
+        opts_.offline ? "yuid đang ở chế độ ngoại tuyến: không gọi mạng. Bật backend bằng --enable-net."
+                      : "chưa cấu hình backend tìm kiếm");
+  return v;
+}
+
+// -------------------------------------------------------------------- os --
+Value Daemon::method_telemetry() {
+  // Facts + one recommendation. The AI core may override k/W, but it has to say
+  // why; the bridge never guesses a sensor value.
+  const telemetry::Reading reading = telemetry::read();
+  const telemetry::Advice advice = telemetry::advise(reading);
+  return telemetry::to_json(reading, advice);
+}
+
+Value Daemon::method_os(const std::string& op) {
+  Value v(json::Object{});
+  if (!has_host_) set_host_snapshot(profile::to_json(profile::probe()));
+  if (op == "battery") {
+    v.set("has_battery", host_["has_battery"]);
+    v.set("percent", host_["battery_percent"]);
+    v.set("on_battery", host_["on_battery"]);
+    v.set("charging", host_["charging"]);
+    return v;
+  }
+  if (op == "thermal") {
+    v.set("temperature_c", host_["temperature_c"]);
+    v.set("throttled", host_["temperature_c"].as_double(0) >= 80.0);
+    return v;
+  }
+  if (op == "power") {
+    // "Giới hạn sạc pin" lives in Tầng 2; the daemon only reports the policy
+    // that the kernel module would apply.
+    v.set("charge_limit_percent", 85);
+    v.set("governor", "adaptive");
+    v.set("note", "giới hạn sạc do module yui-power ở Tầng 2 thực thi");
+    return v;
+  }
+  v.set("error", "unknown os operation: " + op);
+  return v;
+}
+
+// -------------------------------------------------------------- dispatch --
+Value Daemon::handle(const std::string& method, const Value& params, RpcError& err) {
+  err = RpcError{};
+  if (method == "yuid.info" || method == "ping") return method_info();
+  if (method == "yuid.profile") return method_profile();
+  if (method == "yuid.tune") return method_tune(params, err);
+  if (method == "yuid.version") {
+    Value v(json::Object{});
+    v.set("version", version());
+    return v;
+  }
+  if (text::starts_with(method, "graph.")) return method_graph(method.substr(6), params, err);
+  if (text::starts_with(method, "vault.")) return method_vault(method.substr(6), params, err);
+  if (text::starts_with(method, "pack.")) return method_pack(method.substr(5), params, err);
+  if (method == "sandbox.check") return method_sandbox_check(params, err);
+  if (method == "ime.convert") return method_ime(params, err);
+  if (method == "web.search") return method_web_search(params, err);
+  if (method == "telemetry.read") return method_telemetry();
+  if (text::starts_with(method, "os.")) return method_os(method.substr(3));
+  if (method == "engine.tune") return method_tune(params, err);
+
+  err.code = kMethodNotFound;
+  err.message = "unknown method: " + method;
+  return Value(nullptr);
+}
+
+Value Daemon::dispatch(const Value& request) {
+  Value response(json::Object{});
+  response.set("jsonrpc", "2.0");
+  const Value& id = request["id"];
+  if (id.is_number()) response.set("id", id.as_int());
+  else if (id.is_string()) response.set("id", id.as_string());
+  else response.set("id", Value(nullptr));
+
+  if (!request.is_object() || request["method"].is_null()) {
+    response.set("error", make_error(kInvalidRequest, "request must be an object with a method"));
+    return response;
+  }
+  RpcError err;
+  const Value result = handle(request["method"].as_string(), request["params"], err);
+  if (err.code != 0) {
+    Value e = make_error(err.code, err.message);
+    if (!err.data.is_null()) e.set("data", err.data);
+    response.set("error", e);
+  } else {
+    response.set("result", result);
+  }
+  return response;
+}
+
+// ------------------------------------------------------------------- MCP --
+Value Daemon::mcp_initialize(const Value& params) {
+  Value v(json::Object{});
+  v.set("protocolVersion", "2024-11-05");
+  Value caps(json::Object{});
+  Value tools(json::Object{});
+  tools.set("listChanged", false);
+  caps.set("tools", tools);
+  v.set("capabilities", caps);
+  Value info(json::Object{});
+  info.set("name", "yuid");
+  info.set("version", version());
+  v.set("serverInfo", info);
+  Value instructions(json::Array{});
+  instructions.push("YuiVieOS core daemon: đồ thị tri thức, kho mã hoá, hộp cát, bộ gõ tiếng Việt.");
+  v.set("instructions", instructions.arr()[0]);
+  (void)params;
+  return v;
+}
+
+namespace {
+Value tool_schema(const std::string& name, const std::string& desc, const json::Value& props,
+                  const json::Value& required) {
+  Value t(json::Object{});
+  t.set("name", name);
+  t.set("description", desc);
+  Value schema(json::Object{});
+  schema.set("type", "object");
+  schema.set("properties", props);
+  schema.set("required", required);
+  t.set("inputSchema", schema);
+  return t;
+}
+Value prop(const std::string& type, const std::string& desc) {
+  Value p(json::Object{});
+  p.set("type", type);
+  p.set("description", desc);
+  return p;
+}
+}  // namespace
+
+Value Daemon::mcp_tools_list() {
+  Value list(json::Array{});
+  {
+    Value props(json::Object{});
+    props.set("q", prop("string", "từ khoá tiếng Việt hoặc tiếng Anh"));
+    Value req(json::Array{});
+    req.push("q");
+    list.push(tool_schema("graph_query", "Tìm trong đồ thị tri thức của người dùng", props, req));
+  }
+  {
+    Value props(json::Object{});
+    props.set("id", prop("string", "id ổn định của nút"));
+    props.set("label", prop("string", "nhãn hiển thị"));
+    props.set("kind", prop("string", "file|app|entity|concept|device|capability|person|place|note"));
+    Value req(json::Array{});
+    req.push("id");
+    list.push(tool_schema("graph_upsert", "Thêm hoặc cập nhật một nút trong đồ thị", props, req));
+  }
+  {
+    Value props(json::Object{});
+    props.set("from", prop("string", "id nút nguồn"));
+    props.set("rel", prop("string", "tên quan hệ"));
+    props.set("to", prop("string", "id nút đích"));
+    Value req(json::Array{});
+    req.push("from");
+    req.push("rel");
+    req.push("to");
+    list.push(tool_schema("graph_link", "Nối hai nút bằng một quan hệ", props, req));
+  }
+  {
+    Value props(json::Object{});
+    props.set("text", prop("string", "chuỗi phím gõ (Telex hoặc VNI)"));
+    props.set("method", prop("string", "telex (mặc định) hoặc vni"));
+    Value req(json::Array{});
+    req.push("text");
+    list.push(tool_schema("ime_convert", "Chuyển phím gõ thành chữ tiếng Việt có dấu", props, req));
+  }
+  {
+    Value props(json::Object{});
+    props.set("plain", prop("string", "dữ liệu base64 cần niêm phong"));
+    Value req(json::Array{});
+    req.push("plain");
+    list.push(tool_schema("vault_seal", "Niêm phong dữ liệu vào kho mã hoá", props, req));
+  }
+  {
+    Value props(json::Object{});
+    props.set("policy", prop("object", "chính sách hộp cát"));
+    props.set("kind", prop("string", "loại hành động, ví dụ fs.read"));
+    props.set("target", prop("string", "đối tượng, ví dụ /home/user/Documents/a.txt"));
+    Value req(json::Array{});
+    req.push("policy");
+    req.push("kind");
+    list.push(tool_schema("sandbox_check", "Kiểm tra một hành động có được phép trong hộp cát", props, req));
+  }
+  {
+    Value props(json::Object{});
+    props.set("q", prop("string", "truy vấn tìm kiếm"));
+    Value req(json::Array{});
+    req.push("q");
+    list.push(tool_schema("web_search", "Tìm kiếm web nhiều tầng (có thể ngoại tuyến)", props, req));
+  }
+  {
+    Value props(json::Object{});
+    list.push(tool_schema("system_profile", "Thông tin phần cứng và cấu hình tự chỉnh k/W", props,
+                          json::Value(json::Array{})));
+  }
+  {
+    Value props(json::Object{});
+    list.push(tool_schema("system_telemetry",
+                          "Pin, nhiệt độ CPU/GPU, RAM trống và khuyến nghị k/W cho lõi AI", props,
+                          json::Value(json::Array{})));
+  }
+  Value out(json::Object{});
+  out.set("tools", list);
+  return out;
+}
+
+Value Daemon::mcp_tool_call(const Value& params, RpcError& err) {
+  if (!require(params, "name", err)) return Value(nullptr);
+  const std::string name = params["name"].as_string();
+  const Value args = params.has("arguments") ? params["arguments"] : Value(json::Object{});
+
+  Value text_result(json::Object{});
+  Value content(json::Array{});
+  auto emit = [&](const std::string& text, bool is_error) {
+    Value item(json::Object{});
+    item.set("type", "text");
+    item.set("text", text);
+    content.push(item);
+    text_result.set("content", content);
+    text_result.set("isError", is_error);
+    return text_result;
+  };
+
+  if (name == "graph_query") {
+    RpcError e;
+    const Value r = method_graph("query", args, e);
+    if (e.code) return emit(e.message, true);
+    return emit(r.dump(), false);
+  }
+  if (name == "graph_upsert") {
+    RpcError e;
+    const Value r = method_graph("upsert", args, e);
+    if (e.code) return emit(e.message, true);
+    return emit(r.dump(), false);
+  }
+  if (name == "graph_link") {
+    RpcError e;
+    const Value r = method_graph("link", args, e);
+    if (e.code) return emit(e.message, true);
+    return emit(r.dump(), false);
+  }
+  if (name == "ime_convert") {
+    RpcError e;
+    const Value r = method_ime(args, e);
+    if (e.code) return emit(e.message, true);
+    return emit(r["result"].as_string(), false);
+  }
+  if (name == "vault_seal") {
+    RpcError e;
+    const Value r = method_vault("seal", args, e);
+    if (e.code) return emit(e.message, true);
+    return emit(r["blob"].as_string(), false);
+  }
+  if (name == "sandbox_check") {
+    Value shaped(json::Object{});
+    shaped.set("policy", args["policy"]);
+    Value action(json::Object{});
+    action.set("kind", args["kind"]);
+    action.set("target", args["target"]);
+    shaped.set("action", action);
+    RpcError e;
+    const Value r = method_sandbox_check(shaped, e);
+    if (e.code) return emit(e.message, true);
+    return emit(r.dump(), false);
+  }
+  if (name == "web_search") {
+    RpcError e;
+    const Value r = method_web_search(args, e);
+    if (e.code) return emit(e.message, true);
+    return emit(r.dump(), false);
+  }
+  if (name == "system_telemetry") {
+    return method_telemetry();
+  }
+  if (name == "system_profile") {
+    return emit(method_profile().dump(), false);
+  }
+  err.code = kMethodNotFound;
+  err.message = "unknown tool: " + name;
+  return Value(nullptr);
+}
+
+}  // namespace yui::service

@@ -1,0 +1,34 @@
+# YuiVieOS Beta — Rust workspace (Tầng 1 & Tầng 2).
+#
+# The kernel-side crates are safe Rust only: every crate carries
+# #![deny(unsafe_code)]. Hardware glue lives in `kernel-frame/`, which is NOT a
+# member of this workspace (it is a no_std bare-metal crate built for QEMU, with
+# its own nightly toolchain requirements — see scripts/build-kernel.sh). Keeping
+# it excluded means `cargo test --workspace` stays fast and host-only.
+#
+#   cargo test --workspace      # unit tests (needs a Rust toolchain)
+#   cargo build --workspace --release
+[workspace]
+resolver = "2"
+exclude = ["kernel-frame"]
+members = [
+    "kernel-cap",                    # Tầng 1: capability microkernel core
+    "kernel-services/yui-sched",     # Tầng 2: LAVD hot-swap scheduler policy
+    "kernel-services/yui-zram",      # Tầng 2: compressed RAM (YUI-LZ)
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/BachDaThan/YuiVieOS"
+
+[profile.release]
+opt-level = 2
+lto = true
+codegen-units = 1
+panic = "abort"
+
+# Tests need unwinding, so the test profile keeps the default panic strategy.
+[profile.test]
+opt-level = 1

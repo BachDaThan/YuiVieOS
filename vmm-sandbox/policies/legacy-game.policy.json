@@ -1,0 +1,13 @@
+{
+  "app": "app:legacy-game",
+  "tier": "microvm",
+  "capabilities": [
+    "gpu",
+    "net.connect",
+    "net:*.steampowered.com",
+    "power"
+  ],
+  "deny": ["fs.read", "fs.write", "input"],
+  "persistent_storage": true,
+  "allow_child_processes": false
+}

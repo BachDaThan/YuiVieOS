@@ -1,0 +1,9 @@
+[package]
+name = "yui-sched"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "YuiVieOS latency-aware hot-swappable scheduler policy (Tầng 2)"
+
+[lib]
+name = "yui_sched"

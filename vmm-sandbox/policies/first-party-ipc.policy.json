@@ -1,0 +1,8 @@
+{
+  "app": "svc:yuid",
+  "tier": "native",
+  "capabilities": ["*"],
+  "deny": [],
+  "persistent_storage": true,
+  "allow_child_processes": true
+}

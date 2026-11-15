@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yuivie.os/schema/vm-manifest-1.json",
+  "title": "YuiVieOS micro-VM manifest",
+  "type": "object",
+  "required": ["name", "image", "memory_mb", "vcpus", "capabilities"],
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$" },
+    "image": { "type": "string", "description": "Đường dẫn tới ảnh .yuip đã ký số" },
+    "cmdline": { "type": "string", "default": "console=ttyS0 quiet" },
+    "memory_mb": { "type": "integer", "minimum": 256, "maximum": 65536 },
+    "vcpus": { "type": "integer", "minimum": 1, "maximum": 64 },
+    "network": {
+      "type": "string",
+      "enum": ["none", "vsock-only", "nat"],
+      "default": "none",
+      "description": "nat chỉ được phép khi capabilities có net.connect"
+    },
+    "gpu": { "type": "boolean", "default": false },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Quyền đi qua yuid: vault, graph, model, net.connect, power…"
+    },
+    "deny": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "persistent_storage": { "type": "boolean", "default": false }
+  }
+}

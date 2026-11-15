@@ -1,0 +1,22 @@
+{
+  "app": "app:yui",
+  "tier": "isolated",
+  "capabilities": [
+    "model",
+    "graph",
+    "vault",
+    "net.connect",
+    "net:*.yui.vn",
+    "net:api.github.com:443",
+    "fs.read",
+    "fs:/home/user/Documents:ro",
+    "fs:/home/user/.local/share/yui:rw"
+  ],
+  "deny": [
+    "/home/user/.ssh",
+    "/home/user/.gnupg",
+    "net:telemetry.*"
+  ],
+  "persistent_storage": true,
+  "allow_child_processes": false
+}

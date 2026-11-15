@@ -1,0 +1,9 @@
+[package]
+name = "yui-zram"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "YuiVieOS in-RAM compressed swap: YUI-LZ codec + page store (Tầng 2)"
+
+[lib]
+name = "yui_zram"

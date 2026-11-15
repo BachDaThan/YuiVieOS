@@ -1,0 +1,13 @@
+{
+  "app": "app:trim",
+  "tier": "isolated",
+  "capabilities": [
+    "fs.read",
+    "fs.write",
+    "fs:/home/user/Applications:rw",
+    "fs:/tmp/yui-trim:rw"
+  ],
+  "deny": ["/home/user/.ssh", "/etc/shadow"],
+  "persistent_storage": false,
+  "allow_child_processes": false
+}

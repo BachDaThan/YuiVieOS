@@ -1,0 +1,188 @@
+# Build — tự biên dịch & kiểm thử
+
+## 1. Yêu cầu tối thiểu
+
+| Thành phần | Bắt buộc | Ghi chú |
+|---|---|---|
+| `make` (GNU) | có | chỉ dùng biến thường, không có gì đặc biệt |
+| trình biên dịch C++17 | có | `g++ ≥ 10` hoặc `clang++ ≥ 12` |
+| trình biên dịch C11 | để chạy `test_capi` | `cc`, cùng máy |
+| `rustc`/`cargo` ≥ 1.70 | tuỳ chọn | chỉ cần cho `` (Tầng 1–2) |
+| libzstd, GTK, Qt | **không** | repo không cần thư viện ngoài nào |
+
+Đã kiểm trên Debian 12 / g++ 12.2.0 / glibc 2.36 (x86_64). Không dùng GNU
+extension nào ngoài `-D_GNU_SOURCE` (cho `strdup`, socket).
+
+---
+
+## 2. Build cơ bản
+
+```bash
+git clone <repo> YuiVieOS && cd YuiVieOS
+make -j"$(nproc)"        # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell}
+make test                # 2357 kiểm thử (2296 C++17 + 61 C11 ABI) — xem mục 4
+make check               # test + smoke test 4 CLI
+```
+
+Biến thường dùng:
+
+```bash
+make CXX=clang++                 # đổi trình biên dịch
+make CXXFLAGS="-std=c++17 -O2"   # ghi đè (nhớ giữ -std và -fPIC)
+make BUILD=/tmp/yui-build        # thư mục trung gian khác
+make PREFIX=$HOME/.local install # cài vào $HOME/.local/{bin,lib,include}
+make DESTDIR=/tmp/pkg install    # đóng gói
+make clean
+```
+
+Cờ mặc định (giữ nguyên nếu bạn tự đặt `CXXFLAGS`):
+
+```
+-std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter
+-Iinclude -Itests -Ikernel-services -Iuserspace-vi -D_GNU_SOURCE -fPIC
+```
+
+`-fPIC` là bắt buộc vì `libyui.so` được link từ cùng object với `libyui.a`.
+
+### Cài đặt
+
+```
+$PREFIX/bin/{yuid,yui-profiler,yui-trim,yui-shell}
+$PREFIX/lib/libyui.so.1, libyui.a, libyui.so → libyui.so.1
+$PREFIX/include/yui/{yui.h,crypto.hpp,…}
+```
+
+---
+
+## 3. Rust (Tầng 1 & 2)
+
+```bash
+make rust      # cargo test --workspace, rồi build release
+```
+
+hoặc thủ công:
+
+```bash
+cd kernel-cap   && cargo test
+cd kernel-services/yui-sched && cargo test
+cd kernel-services/yui-zram  && cargo test
+```
+
+Ba crate đều `#![no_std]` + `alloc` khi **không** ở chế độ `test`, và dùng `std`
+khi chạy test (để có `Vec`, `format!`, harness). `#![deny(unsafe_code)]` ở cả ba:
+nếu bạn thêm `unsafe`, build sẽ **thất bại** — đó là chủ ý, không phải tai nạn.
+
+Ràng buộc:
+
+- `panic = "abort"`, `lto = true`, `codegen-units = 1` trong profile release
+  (xem `Cargo.toml`) — hợp với mã nhân, nơi không có unwinding.
+- Không có dependency ngoài (cả ba crate chỉ dùng `core`/`alloc`). `Cargo.lock`
+  **chưa có** vì môi trường soạn thảo không có `cargo`; lần build đầu tiên sẽ sinh
+  ra nó và phải được commit — nếu không thì CI và máy dev có thể lệch phiên bản.
+- MSRV: 1.70 (do dùng `let … else` và `core::cmp` ổn định từ lâu).
+
+Nếu máy bạn không có Rust, mọi thứ C++ vẫn build và test được; `make rust` chỉ
+báo "cargo không có trong PATH" và thoát khác 0.
+
+---
+
+## 4. Kiểm thử
+
+```bash
+make test                          # tất cả
+./build/obj/test/test_core         # một bộ (dùng YUI_TEST_MAIN, in ✓/FAIL từng check)
+./build/obj/test/test_sandbox -v   # (tuỳ bộ) in cả check thành công
+```
+
+| Bộ | Số check | Kiểm gì |
+|---|---|---|
+| `test_crypto` | 28 | SHA-256/HMAC/SHAKE/scrypt với vector RFC, vault tròn vẹn, sai khoá/hỏng tag |
+| `test_codec_json` | 102 | YUI-LZ tròn vẹn, biên kích thước, JSON parse/serialize, CRC/SHA |
+| `test_core` | 163 | đồ thị, engine q4/t2 + SIMD, text tiếng Việt, profiler, apppack |
+| `test_sandbox` | 129 | bảng năng lực, thu hồi, token, hộp cát 3 bậc, **4 chính sách mẫu** |
+| `test_ime` | 84 | Telex, VNI, đặt dấu, chữ ASCII không bị phá |
+| `test_daemon` | 103 | JSON-RPC, MCP, vault qua RPC, web offline, os.*, telemetry |
+| `test_tools` | 61 | `yui-trim` tròn vẹn + chống zip-slip, strip ELF, ui::plan, shell |
+| `test_telemetry` | 471 | đọc sysfs pin/nhiệt/RAM, ranh giới 20 %/75 °C, quét toàn miền k/W, `telemetry.read` + MCP |
+| `test_fb` | 1155 | ghi pixel có chặn biên (guard band), font 5×7, clipping, màn hình chào, xuất PPM |
+| `test_capi` (C11) | 61 | toàn bộ bề mặt `libyui` gọi từ C thuần: `YUI_E_TOO_SMALL`, hộp cát, `yui_telemetry`, `yui_telemetry_advise` |
+
+Test dùng `YUI_SOURCE_DIR` (Makefile chèn `-DYUI_SOURCE_DIR='"$(CURDIR)"'`) để
+nạp chính sách thật trong `vmm-sandbox/policies/` — nhờ vậy tài liệu và mã không thể
+lệch nhau mà test vẫn xanh.
+
+### Chạy test trong môi trường tối thiểu
+
+Không cần mạng, không cần root, không cần `/run`. `test_daemon` tạo socket trong
+thư mục tạm; `test_tools` tạo cây thư mục tạm và tự dọn.
+
+---
+
+## 5. Khung nhân bare-metal (Tầng 0)
+
+`kernel-frame/` là **crate Rust duy nhất được phép chứa `unsafe`** và **không**
+nằm trong workspace ở gốc (nó nhắm target bare-metal, còn workspace chỉ build
+cho host). Build bằng script:
+
+```bash
+rustup toolchain install nightly --component rust-src
+./scripts/build-kernel.sh x86_64      # → build/kernel/yui-kernel-x86_64.elf
+./scripts/build-kernel.sh aarch64
+./scripts/build-kernel.sh riscv64
+./scripts/build-kernel.sh all
+```
+
+Vì sao cần nightly (và chỉ ở đây):
+
+| Lý do | Chi tiết |
+|---|---|
+| `#[alloc_error_handler]` | bắt buộc khi `no_std` + `alloc`, vẫn là feature không ổn định |
+| `-Z build-std=core,alloc` | phải tự biên dịch `core`/`alloc` cho target `*-unknown-none` |
+| `-Z build-std-features=compiler-builtins-mem` | cần `memcpy`/`memset` cho Rust trên bare metal |
+
+Boot thử:
+
+```bash
+./scripts/qemu-smoke.sh x86_64 --build        # build + boot, tìm 3 dấu hiệu
+./scripts/qemu-smoke.sh riscv64 --strict      # CI: thiếu nhân/qemu ⇒ đỏ
+```
+
+Ba dòng phải thấy trên serial: `yui: ready`, `Phan loai :` (auto-profiler),
+`Tang 1    :` (bảng năng lực). Xem `docs/PLAN.md` §8.
+
+Ranh giới `unsafe` do `scripts/verify.py` (`check_frame`) canh: chỉ 7 tệp được
+liệt kê (arch/*, boot, allocator, splash, lib) mới được có `unsafe`; tệp khác
+xuất hiện `unsafe` ⇒ `verify.sh` đỏ. Tổng hiện tại: 29 khối, có chú thích an toàn.
+
+Kết quả CI (2026-11-15): build **3/3** target; boot QEMU **2/3** — `riscv64` và
+`aarch64` in đủ `yui: ready`, `Phan loai`, `Tang 1`; `x86_64` bị QEMU từ chối
+(`Cannot load x86-64 image, give a 32bit one`) nên cần multiboot2 + GRUB hoặc
+shim 32-bit trước khi đạt — xem `docs/PLAN.md` P2.2. Job `qemu` của x86_64 để
+`required: false`, nhưng vẫn chạy thật và vẫn đỏ.
+
+---
+
+## 6. CI
+
+`.github/workflows/ci.yml` chạy hai job song song:
+
+1. **cpp** — Ubuntu: `make -j`, `make test` (2357 check), `make check`, cài vào `$RUNNER_TEMP`
+   rồi biên dịch một chương trình C nhỏ chống lại `libyui.a` để chắc header C
+   vẫn dùng được từ ngoài.
+2. **rust** — Ubuntu + `cargo` có sẵn: `cargo test --workspace`, `cargo fmt
+   --check`, `cargo clippy -- -D warnings` (clippy chỉ cảnh báo, không chặn).
+
+Cả hai chạy trên mọi push và PR. Không job nào cần mạng sau bước checkout.
+
+---
+
+## 7. Sự cố thường gặp
+
+| Triệu chứng | Nguyên nhân | Cách sửa |
+|---|---|---|
+| `undefined reference to lroundf` khi link C | thiếu `-lm` sau `-lstdc++` | dùng `$(LDLIBS)` (đã có `-lm`), đừng viết danh sách lib tay |
+| `-Wstringop-overflow` trong `server.cpp` | đọc 1 byte vào `char` | đã sửa: dùng đệm 512 byte |
+| `error: 'Edge' was not declared` | viết `Graph::Edge` ngoài lớp | viết `Edge` (xem `graph.cpp`) |
+| test fail vì kích thước gói | dữ liệu nhỏ hơn header 78 byte | dùng ≥ 1 KiB dữ liệu lặp |
+| `cargo: not found` | chưa cài Rust | `make` (C++) vẫn đủ; cài rustup nếu cần phần Rust |
+| test_sandbox không tìm thấy policy | thiếu `-DYUI_SOURCE_DIR` | dùng `make test`, đừng tự biên dịch tay |
