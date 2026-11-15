@@ -47,7 +47,10 @@ mkdir -p build/kernel
 echo "── build khung nhân cho $ARCH ($TARGET)"
 # RUSTFLAGS thay cho --config: không phải lo quoting TOML, và link-arg chỉ có
 # tác dụng ở bước link của binary (các rlib build-std không bị ảnh hưởng).
-RUSTFLAGS="-C link-arg=-T$ROOT/arch/$LINK_DIR/linker.ld" \
+# relocation-model=static: x86_64-unknown-none mặc định PIC, mà nhân được link
+# tại địa chỉ vật lý tuyệt đối (1 MiB) nên PIC không dùng được — rust-lld báo
+# "relocation R_X86_64_32 cannot be used against local symbol".
+RUSTFLAGS="-C relocation-model=static -C link-arg=-T$ROOT/arch/$LINK_DIR/linker.ld" \
     cargo +nightly build \
     --manifest-path kernel-frame/Cargo.toml \
     --target "$TARGET" \
