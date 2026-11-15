@@ -58,8 +58,10 @@ case "$ARCH" in
             -kernel "$KERNEL" >"$LOG" 2>&1 &
         ;;
     aarch64)
+        # -d guest_errors: QEMU in ra lỗi của khách (lệnh không hỗ trợ, lỗi
+        # thanh ghi hệ thống) — thứ duy nhất giúp thấy một cú trap im lặng.
         qemu-system-aarch64 -M virt -cpu cortex-a72 -m 1024 -serial stdio \
-            -display none -no-reboot -kernel "$KERNEL" >"$LOG" 2>&1 &
+            -display none -no-reboot -d guest_errors -kernel "$KERNEL" >"$LOG" 2>&1 &
         ;;
     riscv64)
         qemu-system-riscv64 -M virt -m 1024 -serial stdio -display none \
