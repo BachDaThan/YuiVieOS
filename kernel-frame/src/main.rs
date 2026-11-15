@@ -69,9 +69,21 @@ pub fn kmain(raw_boot: boot::RawBoot) -> ! {
     println!("YuiVieOS Beta · khung phan cung (Tầng 0 + Tầng 1)");
     println!("  Kien truc : {}", boot::arch_name());
 
+    // Các mốc "[n]" có mục đích thực dụng: nếu chỉ thấy mốc n-1 trên cổng nối
+    // tiếp là biết khung chết ở bước nào, không phải đoán.
+    match raw_boot {
+        boot::RawBoot::Multiboot(addr) => println!("  Nguon     : multiboot @ {:#x}", addr),
+        boot::RawBoot::DeviceTree(addr) => println!("  Nguon     : device tree @ {:#x}", addr),
+        boot::RawBoot::None => println!("  Nguon     : khong co (firmware khong truyen gi)"),
+    }
+
+    println!("  [1] doc YuiBootInfo");
     let info = boot::parse(raw_boot);
+    println!("  [2] Hardware Auto-Profiler");
     profiler::report(&info);
+    println!("  [3] khoi tao bang nang luc");
     cap::self_test();
+    println!("  [4] man hinh chao");
 
     if let Some(fb) = info.framebuffer {
         match splash::render(&fb, &info) {
