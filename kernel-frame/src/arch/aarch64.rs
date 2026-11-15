@@ -30,9 +30,25 @@ __yui_stack_top:
 );
 
 pub fn init_console() {
-    // QEMU cấu hình PL011 sẵn; trên bo mạch thật, phần này sẽ lập trình
-    // IBRD/FBRD theo tinh thể (P2.2). Ghi CR để bật UART, TXE, RXE.
-    unsafe { core::ptr::write_volatile(0x0900_0030 as *mut u32, (1 << 0) | (1 << 8) | (1 << 9)) }
+    // PL011 trên QEMU virt: UART_CLK = 24 MHz. Muốn 115200 8N1 thì
+    //   IBRD = 24e6 / (16 * 115200) = 13, FBRD = 0.0208 * 64 ≈ 1
+    // Ban đầu tôi chỉ ghi CR và bỏ qua divisor ⇒ sau vài chục byte TXFF kẹt và
+    // serial_write rơi vào nhánh "quá số lần chờ" nên **mất chữ giữa dòng**
+    // ("Kien truc : " rồi không có tên kiến trúc). Đó là lỗi, không phải ma.
+    let uart = 0x0900_0000usize as *mut u32;
+    unsafe {
+        write(uart, 0x30, 0); // UARTEN = 0 trong lúc cấu hình
+        write(uart, 0x24, 13); // IBRD
+        write(uart, 0x28, 1); // FBRD
+        write(uart, 0x2C, 0x70); // LCR_H: FIFO bật, 8 bit, không parity, 1 stop
+        write(uart, 0x38, 0); // IMSC: không ngắt
+        write(uart, 0x44, 0x7FF); // ICR: xoá mọi cờ ngắt
+        write(uart, 0x30, 0x301); // CR: UARTEN | TXE | RXE
+    }
+}
+
+unsafe fn write(uart: *mut u32, offset: usize, value: u32) {
+    core::ptr::write_volatile(uart.add(offset / 4), value);
 }
 
 pub fn serial_write(byte: u8) {
