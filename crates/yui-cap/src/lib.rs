@@ -63,13 +63,18 @@ pub fn rights_to_string(rights: u64) -> String {
         (RIGHT_MODEL, "model"),
         (RIGHT_ADMIN, "admin"),
     ];
-    let mut parts: Vec<&str> = Vec::new();
+    // Built by hand rather than with slice::join: this keeps the crate free of
+    // the alloc slice internals and works identically in no_std builds.
+    let mut out = String::new();
     for (bit, name) in NAMES.iter() {
         if rights & bit != 0 {
-            parts.push(name);
+            if !out.is_empty() {
+                out.push(',');
+            }
+            out.push_str(name);
         }
     }
-    parts.join(",")
+    out
 }
 
 pub fn rights_from_string(s: &str) -> u64 {

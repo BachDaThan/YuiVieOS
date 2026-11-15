@@ -81,8 +81,9 @@ trước khi có nhân riêng. Đây là bước quan trọng nhất vì nó t�
 
 ## Giai đoạn E — Hệ sinh thái
 
-- [ ] **E1. App Yui (Flutter)** — chat + đồ thị tri thức + kho mã hoá, gọi
-  `libyui` qua FFI. `ui/` đã dành chỗ.
+- [~] **E1. App Yui (Flutter)** — khung sườn đã có (`ui/app`: 3 màn hình, nói
+  chuyện với `yuid` qua Unix socket). **Chưa build** — cần Flutter SDK; xem
+  `ui/README.md`. Còn thiếu: build thật, ảnh chụp, FFI `libyui` cho đường độ trễ thấp.
 - [ ] **E2. Chợ app có chữ ký** — `.yuip` + Ed25519, xác minh trước khi chạy.
 - [ ] **E3. Đa ngôn ngữ dân tộc** — Tày, Nùng, Khmer, Chăm: bộ gõ và font.
 - [ ] **E4. Tài liệu cho người dùng cuối** — tiếng Việt, có ảnh, không thuật ngữ.

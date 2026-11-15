@@ -106,7 +106,8 @@ Tạm biệt — hẹn gặp lại ở YuiVieOS. / Goodbye.
 | 5 | Shell song ngữ Việt–Anh (mọi lệnh có 2 tên) | ✅ chạy | `core/src/daemon/shell.cpp` |
 | 5 | Giao diện thích ứng: chọn framebuffer/Vulkan theo phần cứng | ✅ logic + test | `core/src/kernel/ui.cpp` |
 | 5 | Trình gọt tỉa & nén app (.yuip) | ✅ chạy | `core/src/kernel/apppack.cpp`, `tools/trim` |
-| 5 | Bộ vẽ framebuffer/Vulkan thật, app Flutter Yui | ❌ chưa có | roadmap |
+| 5 | App Yui (Flutter): 3 màn hình, gọi `yuid` qua socket | 🟡 khung sườn, chưa build | `ui/app` |
+| 5 | Bộ vẽ framebuffer/Vulkan thật | ❌ chưa có | roadmap |
 
 Ghi chú về chữ **Zstd** trong sơ đồ: codec mặc định của repo là **YUI-LZ** tự
 viết (không phụ thuộc), đã đạt >3× trên văn bản lặp và chạy được ngay sau khi
@@ -129,6 +130,7 @@ core/
   src/capi/         lớp C-ABI của libyui
   tests/            7 bộ test C++ + 1 bộ test C11
 crates/             Rust no_std: yui-cap (Tầng 1), yui-sched, yui-zram (Tầng 2)
+ui/app/             App Yui (Flutter) — khung sườn, chưa build
 tools/              profiler, trim, shell (CLI cho người dùng)
 sandbox/policies/   chính sách hộp cát mẫu (có test)
 sandbox/vmm/        đặc tả manifest micro-VM
