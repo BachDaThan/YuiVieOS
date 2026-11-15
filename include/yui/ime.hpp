@@ -13,6 +13,7 @@
 #ifndef YUI_IME_HPP
 #define YUI_IME_HPP
 
+#include <cstdint>
 #include <string>
 #include <vector>
 

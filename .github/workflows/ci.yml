@@ -76,8 +76,8 @@ jobs:
           printf 'bonjour\n' > /tmp/app/locale/fr/msgs.txt
           printf 'git\n' > /tmp/app/.git/HEAD
           ./build/bin/yui-trim /tmp/app -o /tmp/app.yuip --strip-docs
-          ./build/bin/yui-trim /tmp/app.yuip --info
-          mkdir -p /tmp/out && ./build/bin/yui-trim /tmp/app.yuip --unpack -C /tmp/out
+          ./build/bin/yui-trim --info /tmp/app.yuip
+          mkdir -p /tmp/out && ./build/bin/yui-trim --unpack /tmp/app.yuip -C /tmp/out
           test ! -e /tmp/out/locale/fr && echo "locale filtering ok"
 
   # ------------------------------------------------------------ Tầng 1/2 Rust --

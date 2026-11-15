@@ -398,9 +398,17 @@ mod tests {
         widened.rights |= RIGHT_ADMIN;
         assert_eq!(authority.verify(&widened, now), Err(TokenError::BadMac));
 
+        // Thời gian được kiểm TRƯỚC MAC (không tiết lộ gì, và cho lỗi dễ hiểu hơn):
+        // một thẻ "phát hành ở tương lai" xa hơn 300 s => NotYetValid.
         let mut future = token.clone();
         future.issued_at = now + 3600;
-        assert_eq!(authority.verify(&future, now), Err(TokenError::BadMac));
+        assert_eq!(authority.verify(&future, now), Err(TokenError::NotYetValid));
+
+        // Còn trong cửa sổ lệch 300 s thì lỗi phải là MAC sai (dữ liệu bị sửa),
+        // không phải NotYetValid — nếu không thì kẻ sửa thẻ sẽ được báo sai loại lỗi.
+        let mut shifted = token.clone();
+        shifted.issued_at = now + 100;
+        assert_eq!(authority.verify(&shifted, now), Err(TokenError::BadMac));
 
         let other = Authority::new(b"another-key");
         assert_eq!(other.verify(&token, now), Err(TokenError::BadMac));

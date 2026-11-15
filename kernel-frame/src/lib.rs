@@ -30,7 +30,7 @@ pub mod splash;
 
 use core::panic::PanicInfo;
 
-use crate::{print, println};
+use crate::println;
 
 #[global_allocator]
 static ALLOCATOR: allocator::BumpAllocator = allocator::BumpAllocator::new();
