@@ -6,6 +6,7 @@
 //!   * `may-manh` : RAM ≥ 16 GiB và ≥ 8 luồng
 //!   * `can-bang` : còn lại
 
+use crate::console::print_str_no_newline;
 use crate::allocator;
 use crate::boot::BootInfo;
 

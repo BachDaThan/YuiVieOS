@@ -35,6 +35,7 @@ pub mod cap;
 pub mod profiler;
 pub mod splash;
 
+use crate::console::print_str_no_newline;
 use core::panic::PanicInfo;
 
 #[global_allocator]
