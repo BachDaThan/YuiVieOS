@@ -9,6 +9,7 @@
 #include "yui/engine.hpp"
 #include "yui/ime.hpp"
 #include "yui/profile.hpp"
+#include "yui/telemetry.hpp"
 #include "yui/text.hpp"
 
 namespace yui::service {
@@ -359,6 +360,14 @@ Value Daemon::method_web_search(const Value& p, RpcError& err) {
 }
 
 // -------------------------------------------------------------------- os --
+Value Daemon::method_telemetry() {
+  // Facts + one recommendation. The AI core may override k/W, but it has to say
+  // why; the bridge never guesses a sensor value.
+  const telemetry::Reading reading = telemetry::read();
+  const telemetry::Advice advice = telemetry::advise(reading);
+  return telemetry::to_json(reading, advice);
+}
+
 Value Daemon::method_os(const std::string& op) {
   Value v(json::Object{});
   if (!has_host_) set_host_snapshot(profile::to_json(profile::probe()));
@@ -403,6 +412,7 @@ Value Daemon::handle(const std::string& method, const Value& params, RpcError& e
   if (method == "sandbox.check") return method_sandbox_check(params, err);
   if (method == "ime.convert") return method_ime(params, err);
   if (method == "web.search") return method_web_search(params, err);
+  if (method == "telemetry.read") return method_telemetry();
   if (text::starts_with(method, "os.")) return method_os(method.substr(3));
   if (method == "engine.tune") return method_tune(params, err);
 
@@ -542,6 +552,12 @@ Value Daemon::mcp_tools_list() {
     list.push(tool_schema("system_profile", "Thông tin phần cứng và cấu hình tự chỉnh k/W", props,
                           json::Value(json::Array{})));
   }
+  {
+    Value props(json::Object{});
+    list.push(tool_schema("system_telemetry",
+                          "Pin, nhiệt độ CPU/GPU, RAM trống và khuyến nghị k/W cho lõi AI", props,
+                          json::Value(json::Array{})));
+  }
   Value out(json::Object{});
   out.set("tools", list);
   return out;
@@ -611,6 +627,9 @@ Value Daemon::mcp_tool_call(const Value& params, RpcError& err) {
     const Value r = method_web_search(args, e);
     if (e.code) return emit(e.message, true);
     return emit(r.dump(), false);
+  }
+  if (name == "system_telemetry") {
+    return method_telemetry();
   }
   if (name == "system_profile") {
     return emit(method_profile().dump(), false);

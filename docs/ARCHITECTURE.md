@@ -378,7 +378,7 @@ Quy tắc khuyến nghị (bridge quyết, lõi AI tuân hoặc ghi đè có lý
 
 | Điều kiện | k | W |
 |---|---|---|
-| Máy yếu **hoặc** pin < 20 % **hoặc** nhiệt > 80 °C | 1 | 16 |
+| Máy yếu **hoặc** pin < 20 % **hoặc** nhiệt > 75 °C | 1 | 16 |
 | Máy cân bằng, không sạc | 2 | 1024 |
 | Cắm sạc **và** máy mạnh | 2–4 (tối đa 8 nếu `may-manh` + mát) | 4096–8192 |
 

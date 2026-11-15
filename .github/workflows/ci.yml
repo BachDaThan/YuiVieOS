@@ -23,7 +23,7 @@ jobs:
           make --version | head -1
       - name: Build (yuid, libyui, profiler, trim, shell)
         run: make -j"$(nproc)"
-      - name: Test — 669 checks C++17 + 36 checks C11
+      - name: Test — 2296 checks C++17 + 61 checks C11 (ABI)
         run: make test
       - name: Static verification + smoke runs
         run: make check
@@ -107,9 +107,9 @@ jobs:
       - name: Type-check the kernel crates for ${{ matrix.target }}
         run: cargo check --workspace --target ${{ matrix.target }}
 
-  # ------------------------------------------------- QEMU (bật từ Phase P2.2) --
-  qemu:
-    name: QEMU boot (${{ matrix.arch }})
+  # ------------------------------------------------ khung nhân bare-metal (P1) --
+  kernel:
+    name: Kernel frame ${{ matrix.arch }} (nightly, no_std)
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -117,12 +117,44 @@ jobs:
         arch: [x86_64, aarch64, riscv64]
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          # `-Z build-std` cần mã nguồn thư viện chuẩn; `#[alloc_error_handler]`
+          # vẫn là feature không ổn định nên khung dùng nightly.
+          components: rust-src
+      - name: Build bare-metal kernel (${{ matrix.arch }})
+        run: ./scripts/build-kernel.sh ${{ matrix.arch }}
+      - name: ELF sanity
+        run: |
+          file "build/kernel/yui-kernel-${{ matrix.arch }}.elf"
+          test -s "build/kernel/yui-kernel-${{ matrix.arch }}.elf"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yui-kernel-${{ matrix.arch }}
+          path: build/kernel/yui-kernel-${{ matrix.arch }}.elf
+          if-no-files-found: error
+
+  # -------------------------------------------------------- QEMU boot thật ------
+  qemu:
+    name: QEMU boot (${{ matrix.arch }})
+    needs: kernel
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64, riscv64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: yui-kernel-${{ matrix.arch }}
+          path: build/kernel
       - name: Install QEMU
         run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 qemu-system-arm qemu-system-misc
-      - name: Boot smoke test
-        # Until Phase P2.2 there is no kernel image: the script reports SKIP and
-        # exits 0.  From P2.2 the --strict flag is enabled and this must pass.
-        run: ./scripts/qemu-smoke.sh ${{ matrix.arch }}
+      - name: Boot and assert the success banner (--strict)
+        # Phải thấy cả ba dòng: "yui: ready", "Phan loai" (auto-profiler) và
+        # "Tang 1" (bảng năng lực). Thiếu một dòng là build đỏ.
+        run: ./scripts/qemu-smoke.sh ${{ matrix.arch }} --strict
 
   # ------------------------------------------------------------- tài liệu ----
   docs:

@@ -103,6 +103,46 @@ int main(void) {
   {
     char reason[256];
     const char *policy = "{\"app\":\"c-app\",\"tier\":\"native\",\"capabilities\":[\"fs.read\",\"fs:/etc:ro\"]}";
+    /* Telemetry Hook (Phase P1.5): sensors + advice, from plain C. */
+    yui_telemetry_snapshot snap;
+    memset(&snap, 0, sizeof snap);
+    CHECK(yui_telemetry(NULL) == YUI_E_INVALID);
+    CHECK(yui_telemetry(&snap) == YUI_OK);
+    CHECK(snap.ram_total_mb > 0);
+    CHECK(snap.threads >= 1);
+    CHECK(snap.battery_percent >= -1 && snap.battery_percent <= 100);
+    CHECK(strlen(snap.machine_class) > 0);
+    CHECK(strlen(snap.reason) > 0);
+    CHECK(snap.advised_k >= 1 && snap.advised_k <= 4);
+    CHECK(snap.advised_window == 16 ||
+          (snap.advised_window >= 256 && snap.advised_window <= 1024));
+
+    /* Pure rule: weak machine, low battery or heat => k=1, W=16. */
+    int k = 0, w = 0;
+    char why[192];
+    CHECK(yui_telemetry_advise("may-yeu", -1, 0, 40.0f, -1.0f, &k, &w, why, sizeof why) == YUI_OK);
+    CHECK(k == 1 && w == 16);
+    CHECK(strstr(why, "Máy yếu") != NULL);
+
+    CHECK(yui_telemetry_advise("can-bang", 90, 0, 40.0f, -1.0f, &k, &w, why, sizeof why) == YUI_OK);
+    CHECK(k == 2 && w == 256);           /* can-bang on battery */
+
+    CHECK(yui_telemetry_advise("may-manh", 15, 0, 40.0f, -1.0f, &k, &w, why, sizeof why) == YUI_OK);
+    CHECK(k == 1 && w == 16);            /* battery < 20 % while discharging */
+    CHECK(strstr(why, "Pin") != NULL);
+
+    CHECK(yui_telemetry_advise("may-manh", 90, 1, 40.0f, -1.0f, &k, &w, why, sizeof why) == YUI_OK);
+    CHECK(k == 4 && w == 1024);          /* strong + charging */
+
+    CHECK(yui_telemetry_advise("can-bang", 90, 0, 76.0f, -1.0f, &k, &w, why, sizeof why) == YUI_OK);
+    CHECK(k == 1 && w == 16);            /* 76 °C > 75 °C */
+    CHECK(strstr(why, "\xc2\xb0" "C") != NULL);  /* mentions °C: split so \x does not eat the C */
+
+    CHECK(yui_telemetry_advise(NULL, -1, 0, -1.0f, -1.0f, &k, &w, why, sizeof why) == YUI_OK);
+    CHECK(k == 2 && w == 256);           /* NULL class => can-bang */
+    CHECK(yui_telemetry_advise("may-yeu", -1, 0, 40.0f, -1.0f, NULL, &w, why, sizeof why) ==
+          YUI_E_INVALID);
+
     CHECK(yui_sandbox_check(policy, "fs.read", "/etc/yui/x", reason, sizeof(reason)) == 1);
     CHECK(yui_sandbox_check(policy, "fs.write", "/etc/yui/x", reason, sizeof(reason)) == 0);
     CHECK(strlen(reason) > 0);

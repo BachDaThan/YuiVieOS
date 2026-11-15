@@ -14,6 +14,7 @@
 #include "yui/ime.hpp"
 #include "yui/json.hpp"
 #include "yui/sandbox.hpp"
+#include "yui/telemetry.hpp"
 #include "yui/service.hpp"
 #include "yui/vault.hpp"
 
@@ -26,6 +27,14 @@ struct yui_graph {
 };
 
 namespace {
+
+// Copies into a fixed-size C buffer, always NUL terminated, never overflows.
+void copy_fixed(char* out, size_t cap, const std::string& s) {
+  if (!out || cap == 0) return;
+  const size_t n = s.size() < cap - 1 ? s.size() : cap - 1;
+  std::memcpy(out, s.data(), n);
+  out[n] = '\0';
+}
 
 void copy_out(const std::string& s, char* out, size_t cap, int* rc) {
   if (cap <= s.size()) {
@@ -243,6 +252,45 @@ int yui_vault_open(const char* password, const void* blob, size_t len, yui_buf* 
   if (!plain.empty()) std::memcpy(buf, plain.data(), plain.size());
   out->data = buf;
   out->len = plain.size();
+  return YUI_OK;
+}
+
+int yui_telemetry(yui_telemetry_snapshot* out) {
+  if (!out) return YUI_E_INVALID;
+  const yui::telemetry::Reading r = yui::telemetry::read();
+  const yui::telemetry::Advice a = yui::telemetry::advise(r);
+  out->battery_present = r.battery_present ? 1 : 0;
+  out->battery_percent = r.battery_percent;
+  out->charging = r.charging ? 1 : 0;
+  out->cpu_c = float(r.cpu_c);
+  out->gpu_c = float(r.gpu_c);
+  out->ram_total_mb = int(r.ram_total_mb);
+  out->ram_free_mb = int(r.ram_free_mb);
+  copy_fixed(out->machine_class, sizeof out->machine_class, r.machine_class);
+  copy_fixed(out->simd, sizeof out->simd, r.simd);
+  out->threads = r.threads;
+  out->advised_k = a.k;
+  out->advised_window = a.window;
+  copy_fixed(out->reason, sizeof out->reason, a.reason);
+  return YUI_OK;
+}
+
+int yui_telemetry_advise(const char* machine_class, int battery_percent, int charging, float cpu_c,
+                         float gpu_c, int* out_k, int* out_window, char* reason, size_t reason_cap) {
+  if (!out_k || !out_window) return YUI_E_INVALID;
+  yui::telemetry::Reading r;
+  r.machine_class = (machine_class && *machine_class) ? machine_class : "can-bang";
+  r.battery_present = battery_percent >= 0;
+  r.battery_percent = battery_percent;
+  r.charging = charging != 0;
+  r.cpu_c = cpu_c;
+  r.gpu_c = gpu_c;
+  const yui::telemetry::Advice a = yui::telemetry::advise(r);
+  *out_k = a.k;
+  *out_window = a.window;
+  if (reason && reason_cap) {
+    copy_fixed(reason, reason_cap, a.reason);
+  }
   return YUI_OK;
 }
 

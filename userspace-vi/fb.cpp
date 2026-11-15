@@ -1,0 +1,258 @@
+// Linear framebuffer rasteriser — see include/yui/fb.hpp.
+#include "yui/fb.hpp"
+
+#include <cstdio>
+#include <cstring>
+
+
+namespace yui::fb {
+namespace {
+
+// 5x7 bitmap font, one byte per row, bit 4 = leftmost column.
+// Only the glyphs the boot splash needs: A-Z, 0-9 and a little punctuation.
+// Anything else renders as '?' on purpose — we never invent a glyph.
+struct Glyph {
+  char ch;
+  uint8_t rows[7];
+};
+
+constexpr Glyph kFont[] = {
+    {' ', {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
+    {'A', {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}},
+    {'B', {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E}},
+    {'C', {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}},
+    {'D', {0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E}},
+    {'E', {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F}},
+    {'F', {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10}},
+    {'G', {0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F}},
+    {'H', {0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}},
+    {'I', {0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E}},
+    {'J', {0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C}},
+    {'K', {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11}},
+    {'L', {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F}},
+    {'M', {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11}},
+    {'N', {0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11}},
+    {'O', {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}},
+    {'P', {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}},
+    {'Q', {0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D}},
+    {'R', {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11}},
+    {'S', {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}},
+    {'T', {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}},
+    {'U', {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}},
+    {'V', {0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04}},
+    {'W', {0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11}},
+    {'X', {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11}},
+    {'Y', {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04}},
+    {'Z', {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F}},
+    {'0', {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}},
+    {'1', {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E}},
+    {'2', {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}},
+    {'3', {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E}},
+    {'4', {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}},
+    {'5', {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E}},
+    {'6', {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}},
+    {'7', {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08}},
+    {'8', {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}},
+    {'9', {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}},
+    {'.', {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C}},
+    {',', {0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C, 0x08}},
+    {':', {0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00}},
+    {'-', {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00}},
+    {'/', {0x01, 0x02, 0x02, 0x04, 0x08, 0x08, 0x10}},
+    {'%', {0x19, 0x1A, 0x02, 0x04, 0x08, 0x0B, 0x13}},
+    {'=', {0x00, 0x00, 0x1F, 0x00, 0x1F, 0x00, 0x00}},
+    {'+', {0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00}},
+    {'!', {0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04}},
+    {'(', {0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02}},
+    {')', {0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08}},
+    {'?', {0x0E, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04}},
+    {'_', {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F}},
+};
+
+const Glyph* glyph_for(char c) {
+  if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
+  for (const auto& g : kFont) {
+    if (g.ch == c) return &g;
+  }
+  return nullptr;
+}
+
+// Colours (0xAARRGGBB).
+constexpr uint32_t kBg = 0xFF0B1020;
+constexpr uint32_t kInk = 0xFFF5F7FF;
+constexpr uint32_t kAccent = 0xFFDA251D;  // Vietnamese red
+constexpr uint32_t kSoft = 0xFF8A94B8;
+constexpr uint32_t kPanel = 0xFF151B33;
+
+// One lotus petal, drawn from rectangles so the splash never needs a bitmap.
+void petal(const Surface& s, int cx, int cy, int size, uint32_t argb) {
+  for (int i = 0; i < size; ++i) {
+    const int half = size - i;
+    fill_rect(s, Rect{cx - half, cy + size - i, half * 2 + 1, 1}, argb);
+  }
+}
+
+void centered(const Surface& s, const std::string& text, int scale, int y, uint32_t argb) {
+  const int w = text_width(text, scale);
+  int x = (s.width - w) / 2;
+  if (x < 0) x = 0;
+  draw_text(s, x, y, text, argb, scale);
+}
+
+}  // namespace
+
+bool valid(const Surface& s) { return s.pixels != nullptr && s.width > 0 && s.height > 0; }
+
+void put_pixel(const Surface& s, int x, int y, uint32_t argb) {
+  if (!valid(s)) return;
+  if (x < 0 || y < 0 || x >= s.width || y >= s.height) return;
+  s.pixels[y * s.width + x] = argb;
+}
+
+void clear(const Surface& s, uint32_t argb) {
+  if (!valid(s)) return;
+  const long n = long(s.width) * long(s.height);
+  for (long i = 0; i < n; ++i) s.pixels[i] = argb;
+}
+
+void fill_rect(const Surface& s, Rect r, uint32_t argb) {
+  if (!valid(s) || r.w <= 0 || r.h <= 0) return;
+  int x0 = r.x < 0 ? 0 : r.x;
+  int y0 = r.y < 0 ? 0 : r.y;
+  int x1 = r.x + r.w;
+  int y1 = r.y + r.h;
+  if (x1 > s.width) x1 = s.width;
+  if (y1 > s.height) y1 = s.height;
+  for (int y = y0; y < y1; ++y) {
+    uint32_t* row = s.pixels + long(y) * s.width;
+    for (int x = x0; x < x1; ++x) row[x] = argb;
+  }
+}
+
+int text_height(int scale) { return scale < 1 ? 7 : 7 * scale; }
+
+int text_width(const std::string& text, int scale) {
+  if (scale < 1) scale = 1;
+  int chars = 0;
+  for (char c : text) {
+    if (c == '\n') break;
+    ++chars;
+  }
+  if (chars == 0) return 0;
+  return chars * 6 * scale - scale;  // 5 columns + 1 gap, minus the trailing gap
+}
+
+void draw_text(const Surface& s, int x, int y, const std::string& text, uint32_t argb, int scale) {
+  if (!valid(s) || scale < 1) return;
+  int cx = x;
+  for (char c : text) {
+    if (c == '\n') continue;  // single-line rasteriser; callers position each line
+    const Glyph* g = glyph_for(c);
+    if (!g) g = glyph_for('?');  // documented behaviour: unknown → '?'
+    if (g) {
+      for (int row = 0; row < 7; ++row) {
+        const uint8_t bits = g->rows[row];
+        for (int col = 0; col < 5; ++col) {
+          if ((bits >> (4 - col)) & 1u) {
+            fill_rect(s, Rect{cx + col * scale, y + row * scale, scale, scale}, argb);
+          }
+        }
+      }
+    }
+    cx += 6 * scale;
+  }
+}
+
+std::string ascii_upper(const std::string& utf8) {
+  // The 5x7 font only knows ASCII. Vietnamese diacritics need the Unicode font
+  // that arrives with the real compositor (P2.6), so here every non-ASCII byte
+  // becomes a space instead of being silently mangled. The splash strings are
+  // written transliterated on purpose ("HE DIEU HANH VIET NAM"), which is also
+  // what a user reads on a 320x200 screen on a 512 MB machine.
+  std::string out;
+  out.reserve(utf8.size());
+  for (unsigned char c : utf8) {
+    if (c >= 0x80) {
+      out.push_back(' ');
+    } else if (c >= 'a' && c <= 'z') {
+      out.push_back(char(c - 'a' + 'A'));
+    } else if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ' || c == '.' ||
+               c == ',' || c == ':' || c == '-' || c == '/' || c == '%' || c == '=' || c == '+' ||
+               c == '!' || c == '(' || c == ')' || c == '?' || c == '_') {
+      out.push_back(char(c));
+    } else {
+      out.push_back(' ');
+    }
+  }
+  return out;
+}
+
+long render_splash(const Surface& s, const profile::HostProfile& host) {
+  if (!valid(s) || s.width < 120 || s.height < 80) return 0;
+
+  clear(s, kBg);
+  // Accent band on top — the red of the flag, thin enough to keep contrast.
+  fill_rect(s, Rect{0, 0, s.width, s.height / 30 + 2}, kAccent);
+
+  // Lotus motif (three petals) above the title.
+  const int cx = s.width / 2;
+  const int size = s.height / 18 < 6 ? 6 : s.height / 18;
+  petal(s, cx, s.height / 5, size, kAccent);
+  petal(s, cx - size, s.height / 5 + size / 2, size - 2, kSoft);
+  petal(s, cx + size, s.height / 5 + size / 2, size - 2, kSoft);
+
+  const int title_scale = s.width >= 640 ? 4 : (s.width >= 400 ? 3 : 2);
+  centered(s, "YUIVIEOS BETA", title_scale, s.height / 3, kInk);
+  centered(s, "HE DIEU HANH VIET NAM", title_scale > 1 ? title_scale - 1 : 1,
+           s.height / 3 + text_height(title_scale) + 6, kSoft);
+
+  // Machine panel: what the profiler decided, so the boot screen is also a
+  // diagnostic (a technician can read it from a photo).
+  char line1[128];
+  std::snprintf(line1, sizeof line1, "%s  %d THREADS  %.1f GB",
+                ascii_upper(host.tier.empty() ? "can-bang" : host.tier).c_str(),
+                host.threads > 0 ? host.threads : 1, host.ram_gb);
+  char line2[128];
+  std::snprintf(line2, sizeof line2, "K=%d  W=%d  %s", host.tune.k, host.tune.window,
+                ascii_upper(host.simd.best).c_str());
+
+  const int panel_x = s.width / 20;
+  const int panel_w = s.width - 2 * panel_x;
+  const int inner = panel_w - 22;  // accent bar + padding
+
+  // Never overflow the panel: shrink from 2x to 1x before clipping anything.
+  int panel_scale = 2;
+  while (panel_scale > 1 &&
+         (text_width(line1, panel_scale) > inner || text_width(line2, panel_scale) > inner)) {
+    --panel_scale;
+  }
+  const int line_gap = 6;
+  const int panel_h = 2 * text_height(panel_scale) + line_gap + 16;
+  const int panel_y = s.height - panel_h - text_height(1) - 24;
+  fill_rect(s, Rect{panel_x, panel_y, panel_w, panel_h}, kPanel);
+  fill_rect(s, Rect{panel_x, panel_y, 4, panel_h}, kAccent);
+
+  const int tx = panel_x + 14;
+  const int ty = panel_y + 8;
+  draw_text(s, tx, ty, line1, kInk, panel_scale);
+  draw_text(s, tx, ty + text_height(panel_scale) + line_gap, line2, kSoft, panel_scale);
+
+  // Footer: one honest line about what this build is.
+  centered(s, "clean-room  -  safe rust kernel", 1, s.height - text_height(1) - 8, kSoft);
+  return long(s.width) * s.height;
+}
+
+std::string to_ppm(const Surface& s) {
+  if (!valid(s)) return std::string();
+  std::string out = "P6\n" + std::to_string(s.width) + " " + std::to_string(s.height) + "\n255\n";
+  out.reserve(out.size() + size_t(s.width) * size_t(s.height) * 3);
+  for (long i = 0; i < long(s.width) * long(s.height); ++i) {
+    const uint32_t p = s.pixels[i];
+    out.push_back(char((p >> 16) & 0xFF));  // R
+    out.push_back(char((p >> 8) & 0xFF));   // G
+    out.push_back(char(p & 0xFF));          // B
+  }
+  return out;
+}
+
+}  // namespace yui::fb

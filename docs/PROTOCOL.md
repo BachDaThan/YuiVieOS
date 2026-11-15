@@ -129,7 +129,7 @@ mạng khi `--enable-net` và `allow_network` cùng bật.
 
 Giá trị không đọc được thì trả `present:false`/`source:"none"`, **không bịa số**.
 
-### 2.9 `telemetry.read` — **dành sẵn, chưa cài đặt** (task P1.5)
+### 2.9 `telemetry.read` — đã cài đặt (task P1.5)
 
 Hợp đồng đã chốt để lõi AI đọc được số liệu tài nguyên thật:
 
@@ -144,7 +144,24 @@ Hợp đồng đã chốt để lõi AI đọc được số liệu tài nguyên
 
 Khuyến nghị `k/W` do bridge quyết (bảng ở
 [`ARCHITECTURE.md`](ARCHITECTURE.md) §6.3); lõi AI có thể ghi đè nhưng phải ghi lý do.
-**Chưa** có trong bản này: gọi sẽ trả `-32601` (method not found) cho tới P1.5.
+
+Nguồn số liệu thật (`kernel-services/telemetry.cpp`):
+
+| Trường | Đọc từ | Khi không có |
+|---|---|---|
+| `battery.percent` / `charging` | `/sys/class/power_supply/BAT*/capacity`, `status` | `present:false`, `percent:-1` |
+| `thermal.cpu_c` | `/sys/class/thermal/thermal_zone*/temp` (ưu tiên `type` chứa `pkg`/`cpu`/`soc`) | `-1` |
+| `thermal.gpu_c` | `/sys/class/drm/card*/device/hwmon/hwmon*/temp1_input` | `-1` |
+| `memory.total_mb` / `free_mb` | `/proc/meminfo` | `0` |
+| `machine.*` | `kernel-services/profile.cpp` (cùng ngưỡng với nhân) | luôn có |
+
+`throttle` bật khi `max(cpu_c, gpu_c) > 75 °C`. **Quy tắc vàng: không bịa số.**
+Cảm biến không đọc được thì trả `-1`, và `advice.mode` khi đó chỉ dựa trên những
+gì thật sự biết. Không có `zram_ratio` trong bản này (P2.9 mới có số liệu thật;
+hiện trả `0`).
+
+Mã lỗi: `-32602` nếu tham số sai kiểu; method này **không** yêu cầu thẻ năng lực
+vì dữ liệu chỉ đọc và không chứa bí mật.
 
 ---
 

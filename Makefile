@@ -9,6 +9,7 @@
 #   make check      test + end-to-end smoke runs + static verification
 #   make verify     static checks only (needs no toolchain but a C compiler)
 #   make install    install into $(PREFIX) (default /usr/local)
+#   make kernel     build the bare-metal frame for ARCH (nightly + QEMU image)
 #   make clean
 
 CXX      ?= g++
@@ -31,11 +32,13 @@ LIB_SRC := \
 	kernel-services/crypto.cpp \
 	kernel-services/codec.cpp \
 	kernel-services/profile.cpp \
+	kernel-services/telemetry.cpp \
 	vmm-sandbox/sandbox.cpp \
 	pkg-stripper/apppack.cpp \
 	userspace-vi/text.cpp \
 	userspace-vi/ime.cpp \
 	userspace-vi/ui.cpp \
+	userspace-vi/fb.cpp \
 	userspace-vi/shell.cpp \
 	ai-bridge-yuid/reference/graph.cpp \
 	ai-bridge-yuid/reference/engine.cpp \
@@ -50,12 +53,25 @@ LIB_OBJ := $(patsubst %.cpp,$(OBJ)/%.o,$(LIB_SRC))
 HEADERS := $(wildcard include/yui/*.hpp include/yui/*.h) \
            $(wildcard tests/*.hpp) $(wildcard userspace-vi/*.inc)
 
-TESTS := test_crypto test_codec_json test_core test_sandbox test_ime test_daemon test_tools
+TESTS := test_crypto test_codec_json test_core test_sandbox test_ime test_daemon test_tools \
+         test_telemetry test_fb
 
-.PHONY: all test check verify install clean rust fmt
+# `kernel` is declared before `all`, so pin the default goal explicitly.
+.DEFAULT_GOAL := all
+
+.PHONY: all test check verify install clean rust fmt kernel qemu
+
+# Bare-metal frame: separate toolchain (nightly + rust-src), separate workspace.
+# Kept out of `all` so a C++ checkout still builds on a machine without Rust.
+ARCH ?= x86_64
+kernel:
+	./scripts/build-kernel.sh $(ARCH)
+
+qemu:
+	./scripts/qemu-smoke.sh $(ARCH) --build
 
 all: $(BIN)/yuid $(BIN)/libyui.a $(BIN)/libyui.so \
-     $(BIN)/yui-profiler $(BIN)/yui-trim $(BIN)/yui-shell
+     $(BIN)/yui-profiler $(BIN)/yui-trim $(BIN)/yui-shell $(BIN)/yui-splash
 
 $(OBJ)/%.o: %.cpp $(HEADERS)
 	@mkdir -p $(dir $@)
@@ -89,6 +105,10 @@ $(BIN)/yui-shell: $(OBJ)/tools/shell/main.o $(BIN)/libyui.a
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
+$(BIN)/yui-splash: $(OBJ)/tools/splash/main.o $(BIN)/libyui.a
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
+
 $(OBJ)/test/%: tests/%.cpp $(BIN)/libyui.a
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -DYUI_SOURCE_DIR='"$(CURDIR)"' -o $@ $< $(BIN)/libyui.a $(LDLIBS)
@@ -114,6 +134,9 @@ check: test verify
 	@./$(BIN)/yui-profiler | head -4
 	@echo "── smoke: shell script"
 	@printf 'thôngtin\nthoát\n' | ./$(BIN)/yui-shell > /dev/null
+	@echo "── smoke: splash → PPM"
+	@./$(BIN)/yui-splash --width 320 --height 200 --out /tmp/yui-splash.ppm > /dev/null
+	@test -s /tmp/yui-splash.ppm
 	@echo "all checks passed"
 
 install: all
@@ -121,6 +144,7 @@ install: all
 	install -Dm755 $(BIN)/yui-profiler $(DESTDIR)$(PREFIX)/bin/yui-profiler
 	install -Dm755 $(BIN)/yui-trim $(DESTDIR)$(PREFIX)/bin/yui-trim
 	install -Dm755 $(BIN)/yui-shell $(DESTDIR)$(PREFIX)/bin/yui-shell
+	install -Dm755 $(BIN)/yui-splash $(DESTDIR)$(PREFIX)/bin/yui-splash
 	install -Dm644 $(BIN)/libyui.a $(DESTDIR)$(PREFIX)/lib/libyui.a
 	install -Dm755 $(BIN)/libyui.so $(DESTDIR)$(PREFIX)/lib/libyui.so
 	install -Dm644 include/yui/yui.h $(DESTDIR)$(PREFIX)/include/yui/yui.h

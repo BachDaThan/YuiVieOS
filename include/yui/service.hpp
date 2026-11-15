@@ -78,6 +78,7 @@ class Daemon {
   json::Value method_pack(const std::string& op, const json::Value& params, RpcError& err);
   json::Value method_web_search(const json::Value& params, RpcError& err);
   json::Value method_os(const std::string& op);
+  json::Value method_telemetry();
 
   Options opts_;
   graph::Graph graph_;

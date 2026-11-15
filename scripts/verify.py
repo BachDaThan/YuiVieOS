@@ -4,7 +4,9 @@
 Checks, in order:
   1. the monorepo layout the docs promise actually exists;
   2. every shipped sandbox policy and the micro-VM schema parse;
-  3. kernel crates contain no `unsafe`, and Rust sources have balanced brackets;
+  3. kernel crates contain no `unsafe`; the single hardware frame
+     (`kernel-frame/`) is the only place where `unsafe` may appear, and only in
+     the files that touch hardware; all Rust sources have balanced brackets;
   4. internal documentation links resolve;
   5. every repository path quoted in the docs exists;
   6. sources are LF-only.
@@ -169,12 +171,47 @@ def strip_rust(src: str) -> str:
 BRACKETS = {"(": ")", "[": "]", "{": "}"}
 
 
+SAFE_CRATES = ("kernel-cap", "kernel-services", "vmm-sandbox", "pkg-stripper")
+
+# Những tệp trong khung phần cứng được phép có `unsafe`, kèm lý do. Bất kỳ tệp
+# nào khác xuất hiện `unsafe` đều là hồi quy.
+FRAME_UNSAFE_FILES = {
+    "arch/mod.rs": "lệnh hlt / wfi để dừng máy",
+    "arch/x86_64.rs": "cổng nối tiếp (in/out), CPUID, cầu nối 32→64 bit",
+    "arch/aarch64.rs": "UART PL011 qua con trỏ MMIO, đọc thanh ghi hệ thống",
+    "arch/riscv64.rs": "lời gọi SBI qua ecall, đọc thanh ghi misa",
+    "boot.rs": "đọc multiboot info / device tree do firmware cấp",
+    "allocator.rs": "triển khai GlobalAlloc",
+    "splash.rs": "ghi framebuffer tuyến tính do firmware cấp",
+    "lib.rs": "thuộc tính #[global_allocator] cần khung được phép chứa unsafe",
+}
+
+
+def bracket_problems(clean: str) -> list[str]:
+    stack: list[tuple[str, int]] = []
+    problems: list[str] = []
+    line = 1
+    for ch in clean:
+        if ch == "\n":
+            line += 1
+        elif ch in BRACKETS:
+            stack.append((ch, line))
+        elif ch in BRACKETS.values():
+            if not stack:
+                problems.append(f"dòng {line}: đóng '{ch}' không có mở")
+                return problems
+            opener, oline = stack.pop()
+            if BRACKETS[opener] != ch:
+                problems.append(f"dòng {line}: '{ch}' đóng '{opener}' mở ở dòng {oline}")
+                return problems
+    if stack:
+        problems.append(f"còn {len(stack)} ngoặc chưa đóng (gần nhất dòng {stack[-1][1]})")
+    return problems
+
+
 def check_rust() -> None:
     header("an toàn Rust (không unsafe, ngoặc cân)")
-    sources = sorted(
-        list((ROOT / "kernel-cap").rglob("*.rs"))
-        + list((ROOT / "kernel-services").rglob("*.rs"))
-    )
+    sources = sorted(p for crate in SAFE_CRATES for p in (ROOT / crate).rglob("*.rs"))
     if not sources:
         bad("không tìm thấy tệp .rs nào trong crate nhân")
         return
@@ -186,24 +223,7 @@ def check_rust() -> None:
             line = clean[: match.start()].count("\n") + 1
             bad(f"{rel}:{line}: dùng 'unsafe' — crate nhân phải giữ deny(unsafe_code)")
             unsafe_found = True
-        stack: list[tuple[str, int]] = []
-        problems: list[str] = []
-        line = 1
-        for ch in clean:
-            if ch == "\n":
-                line += 1
-            elif ch in BRACKETS:
-                stack.append((ch, line))
-            elif ch in BRACKETS.values():
-                if not stack:
-                    problems.append(f"dòng {line}: đóng '{ch}' không có mở")
-                    break
-                opener, oline = stack.pop()
-                if BRACKETS[opener] != ch:
-                    problems.append(f"dòng {line}: '{ch}' đóng '{opener}' mở ở dòng {oline}")
-                    break
-        if not problems and stack:
-            problems.append(f"còn {len(stack)} ngoặc chưa đóng (gần nhất dòng {stack[-1][1]})")
+        problems = bracket_problems(clean)
         if problems:
             for problem in problems:
                 bad(f"{rel}: {problem}")
@@ -211,6 +231,65 @@ def check_rust() -> None:
             ok(f"ngoặc cân: {rel}")
     if not unsafe_found:
         ok("không có 'unsafe' trong crate nhân")
+
+
+def check_frame() -> None:
+    """Khung phần cứng: `unsafe` chỉ được phép ở những tệp đã được kiểm toán."""
+    header("khung phần cứng (unsafe có kiểm soát)")
+    frame = ROOT / "kernel-frame"
+    if not frame.is_dir():
+        bad("thiếu thư mục kernel-frame")
+        return
+    required = ["Cargo.toml", "src/lib.rs", "src/arch/mod.rs", "src/boot.rs",
+                "src/console.rs", "src/profiler.rs", "src/cap.rs", "src/splash.rs",
+                "src/allocator.rs"]
+    for name in required:
+        (ok if (frame / name).is_file() else bad)(f"kernel-frame/{name}")
+
+    lib = (frame / "src/lib.rs").read_text(encoding="utf-8")
+    if "deny(unsafe_code)" in lib.replace(" ", ""):
+        bad("kernel-frame/src/lib.rs: khung phần cứng không thể deny(unsafe_code) — "
+            "hãy để lệnh cấm ở các crate an toàn, không ở khung")
+    else:
+        ok("khung không tuyên bố deny(unsafe_code) (đúng: unsafe nằm ở đây)")
+
+    total = 0
+    rogue: list[str] = []
+    for path in sorted((frame / "src").rglob("*.rs")):
+        rel = path.relative_to(frame / "src").as_posix()
+        clean = strip_rust(path.read_text(encoding="utf-8"))
+        problems = bracket_problems(clean)
+        if problems:
+            for problem in problems:
+                bad(f"kernel-frame/src/{rel}: {problem}")
+        else:
+            ok(f"ngoặc cân: kernel-frame/src/{rel}")
+        count = len(re.findall(r"\bunsafe\b", clean))
+        total += count
+        if count and rel not in FRAME_UNSAFE_FILES:
+            rogue.append(rel)
+            bad(f"kernel-frame/src/{rel}: có unsafe nhưng không nằm trong danh sách "
+                f"kiểm toán ({', '.join(sorted(FRAME_UNSAFE_FILES))})")
+    if not rogue:
+        ok(f"{total} khối unsafe, tất cả nằm trong tệp đã kiểm toán")
+
+    # Mỗi kiến trúc phải có mặt và mỗi kiến trúc phải in được banner thành công.
+    for arch in ("x86_64", "aarch64", "riscv64"):
+        path = frame / "src" / "arch" / f"{arch}.rs"
+        if not path.is_file():
+            bad(f"thiếu nhánh kiến trúc {arch}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "kmain" not in text:
+            bad(f"kernel-frame/src/arch/{arch}.rs: không gọi vào kmain")
+        else:
+            ok(f"nhánh {arch} gọi kmain")
+
+    # Lời hứa với CI: banner "yui: ready" phải tồn tại đâu đó trong khung.
+    if "yui: ready" not in lib:
+        bad("kernel-frame/src/lib.rs: thiếu banner 'yui: ready' mà qemu-smoke.sh chờ")
+    else:
+        ok("banner 'yui: ready' có trong khung")
 
 
 # --------------------------------------------------------------------------- 4
@@ -296,6 +375,7 @@ def main() -> int:
     check_layout()
     check_policies()
     check_rust()
+    check_frame()
     check_links()
     check_doc_paths()
     check_line_endings()

@@ -20,9 +20,9 @@ chặn (ghi rõ chặn bởi gì).
 
 | Phase | Nội dung | Trạng thái |
 |---|---|---|
-| **P0** | Nền móng: monorepo, hợp đồng cổng chờ, test C++/C11, CI | ✅ xong (705 check) |
-| **P1** | Chạy thật trên Linux host: `yuid` service, IBus, stripper, telemetry, OS MCP | 🟡 3/10 task |
-| **P2** | Rust framekernel + 3 kiến trúc + QEMU + năng lượng + FS + Linux ABI | ⬜ chưa bắt đầu (P2.0 xong) |
+| **P0** | Nền móng: monorepo, hợp đồng cổng chờ, test C++/C11, CI | ✅ xong (670 check lúc đó, nay 2357) |
+| **P1** | Chạy thật trên Linux host: `yuid` service, IBus, stripper, telemetry, OS MCP | 🟡 4/10 task (P1.5 xong) |
+| **P2** | Rust framekernel + 3 kiến trúc + QEMU + năng lượng + FS + Linux ABI | 🟡 khung nhân có mã (P2.1–P2.3 `[~]`), chờ CI QEMU |
 | **P3** | VMM sandbox (Wine/VKD3D, Waydroid-lite) | ⬜ chưa bắt đầu |
 | **P4** | UX & phát hành (compositor, installer, ký số) | ⬜ chưa bắt đầu |
 | **P5** | *(dự trữ)* Tích hợp AI vào hệ điều hành | 🔒 chờ lệnh kích hoạt |
@@ -71,7 +71,7 @@ chạy như một tầng dịch vụ trên Linux: bộ gõ, stripper, trợ lý,
 | P1.2 | ZRAM dùng thật qua `/dev/zram0` (module có sẵn của host) | [ ] | 200 MB dữ liệu văn phòng → < 80 MB; đọc lại **đúng từng byte**; `zramctl` xác nhận |
 | P1.3 | `libyui` publish: `pkg-config`, `soname` ổn định, ví dụ C + Python | [ ] | `pkg-config --cflags --libs yui` chạy ngoài cây; ví dụ Python gọi `ime.convert` |
 | P1.4 | Bộ gõ thành IBus/Fcitx5 engine | [ ] | Gõ Telex trong Firefox **và** LibreOffice ra chữ Việt đúng dấu; độ trễ < 10 ms/phím |
-| P1.5 | Telemetry Hook (P4.2 của `ARCHITECTURE.md` §6.3) | [ ] | `telemetry.read` trả pin/nhiệt/RAM thật; trên máy không pin trả `present:false`; 3 test (có pin, không pin, pin thấp) |
+| P1.5 | Telemetry Hook (P4.2 của `ARCHITECTURE.md` §6.3) | [x] | `telemetry.read` + `system_telemetry` MCP đọc sysfs thật; máy này không có pin ⇒ `present:false`; `tests/test_telemetry.cpp` **471 check** (ranh giới 20 % / 75 °C, pin thấp, GPU nóng, quét toàn miền k/W, RPC + MCP); `test_capi` 61 check phủ `yui_telemetry`/`yui_telemetry_advise`. **Chưa** đối chiếu được trên máy có pin thật — ghi rõ, không tô hồng |
 | P1.6 | Smart Stripper trên app thật | [~] | Electron ≥ 35 % nhỏ hơn và **chạy được**; app có DRM: `stripped=false`, 0 byte bị sửa |
 | P1.7 | Đóng gói `.deb` + AppImage/Flatpak | [ ] | Cài trên Ubuntu 22.04 sạch, `yui-shell` chạy, gỡ sạch |
 | P1.8 | MCP dùng thật với một client | [ ] | Agent ngoài gọi `graph_upsert` → `graph_query` thấy dữ liệu; log chứng minh |
@@ -87,13 +87,13 @@ trên máy thật, và một app được gọt chạy bình thường. Ghi lạ
 
 | Mã | Task | Trạng thái | DoD (đo được) |
 |---|---|---|---|
-| P2.0 | Workspace Rust `kernel-cap` + `kernel-services/*`, `deny(unsafe_code)` | [x] | `cargo test --workspace` (CI); `grep unsafe` rỗng |
-| P2.1 | `yui-frame`: khung duy nhất chứa `unsafe` (asm, MMU, ngắt, MMIO) | [ ] | Boot được trong QEMU; **mọi** `unsafe` nằm trong `yui-frame/src/arch/**`; crate khác vẫn `deny(unsafe_code)` |
-| P2.2 | `yui-boot` + nhân tối thiểu, x86_64 (BIOS Legacy + UEFI) | [ ] | QEMU BIOS boot tới `yui: ready` < 3 s; QEMU UEFI (OVMF) cũng tới `yui: ready` |
-| P2.3 | ARM64 + RISC-V 64 ở mức "ready" | [ ] | `qemu-system-aarch64 -M virt` và `qemu-system-riscv64 -M virt` in `yui: ready`; cùng một `YuiBootInfo` |
+| P2.0 | Workspace Rust `kernel-cap` + `kernel-services/*`, `deny(unsafe_code)` | [x] | `cargo test --workspace` (CI); `grep unsafe` rỗng; `kernel-frame` **ngoài** workspace để `--workspace` vẫn chỉ chạy trên host |
+| P2.1 | `yui-frame`: khung duy nhất chứa `unsafe` (asm, MMU, ngắt, MMIO) | [~] | `kernel-frame/` (25 tệp Rust, 29 khối `unsafe` đều nằm trong danh sách kiểm toán của `verify.py`); `scripts/build-kernel.sh`; crate an toàn vẫn `deny(unsafe_code)`. **Chưa** boot được trong sandbox (không có `cargo`/`qemu`) ⇒ chờ job `kernel`+`qemu` của CI |
+| P2.2 | `yui-boot` + nhân tối thiểu, x86_64 (BIOS Legacy + UEFI) | [~] | Đường BIOS: multiboot 1 → cầu nối 32→64 bit (`kernel-frame/src/arch/x86_64.rs`), COM1, `kmain`; UEFI **chưa** làm. Chưa chạy được trong sandbox |
+| P2.3 | ARM64 + RISC-V 64 ở mức "ready" | [~] | `kernel-frame/src/arch/aarch64.rs` (PL011) + `kernel-frame/src/arch/riscv64.rs` (SBI) cùng gọi `kmain` với `RawBoot::DeviceTree`; bộ đọc FDT tối giản lấy RAM + số hart. Chưa chạy được trong sandbox |
 | P2.4 | Sovereign Keyring + Ed25519 clean-room cho `.bundle` | [ ] | Vector RFC 8032 (5 test) qua; sửa 1 byte bundle ⇒ từ chối; bundle hợp lệ ⇒ cài được trong QEMU |
 | P2.5 | Năng lượng: full tickless + DVFS mỗi nhân + clock gating | [ ] | Khi rảnh: **0** wakeup/s trong 10 s (đếm trong nhân); công suất gói giảm **≥ 20 %** so với governor mặc định cùng workload (đo RAPL nếu có, nếu không ghi rõ máy không hỗ trợ) |
-| P2.6 | Hiển thị: framebuffer trực tiếp + DRM/Vulkan zero-copy | [ ] | Máy yếu: vẽ 1280×800 @ ≥ 30 fps không GPU (đo trong QEMU + máy thật); máy mạnh: đường zero-copy có test đếm số lần copy = 0 |
+| P2.6 | Hiển thị: framebuffer trực tiếp + DRM/Vulkan zero-copy | [~] | Bộ vẽ pixel tuyến tính + font 5×7 + màn hình chào đã xong và kiểm thử: `userspace-vi/fb.cpp`, `tests/test_fb.cpp` (**1155 check**), `tools/splash` → `docs/splash.png`; bản kernel `kernel-frame/src/splash.rs` vẽ vào framebuffer multiboot. **Còn thiếu:** đường DRM/Vulkan, và đo fps |
 | P2.7 | Lớp Linux ABI: syscall nhóm 1 (file, mmap, futex, epoll) | [ ] | `busybox` chạy ≥ 100 lệnh; `coreutils` `ls/cat/cp` đúng; `python3 -c "print(1)"` in `1` |
 | P2.8 | FS bất biến + write coalescing | [ ] | Rút điện đột ngột 20 lần khi đang ghi: `graph.json` **luôn** parse được (0 hỏng); số lần ghi giảm ≥ 50 % so với fsync từng lần |
 | P2.9 | ZRAM trong nhân thật | [ ] | 200 MB văn phòng → < 80 MB trong QEMU với RAM 512 MB; đọc lại đúng |
@@ -167,7 +167,7 @@ một kiến trúc.
 | P5.6 | Nạp `.yui v3` | `mmap` tệp qua `yuid`, kiểm `fs.read` đúng đường dẫn; test: tệp 1 GB mở < 50 ms, RAM tăng < 5 MB |
 | P5.7 | Bật dịch vụ nền `yuid` | `systemctl enable --now yuid`, socket `0600`, `yuid --info` liệt kê engine thật |
 | P5.8 | Bật điều khiển tiếng Việt qua MCP | test 5 công cụ với câu tiếng Việt có dấu **và** không dấu; mỗi hành động có audit + xác nhận |
-| P5.9 | Kiểm hồi quy toàn bộ | `make test` 705+ check xanh; thêm test tích hợp: 1 câu lệnh tiếng Việt → hành động OS thật |
+| P5.9 | Kiểm hồi quy toàn bộ | `make test` 2357 check xanh; thêm test tích hợp: 1 câu lệnh tiếng Việt → hành động OS thật |
 | P5.10 | Ghi lại số đo | thời gian phản hồi, RAM tăng thêm, k/W thực tế ở 3 chế độ máy |
 
 ### 7.3 Điều kiện thoát (rollback)
@@ -187,15 +187,16 @@ trạng thái trước P5 **trong một lệnh**, không cần build lại. Đâ
 
 ## 8. CI: ma trận, QEMU, tiêu chí pass
 
-File: `.github/workflows/ci.yml`. Năm job, chạy song song trên mọi push/PR.
+File: `.github/workflows/ci.yml`. Sáu job, chạy song song trên mọi push/PR.
 
 | Job | Chạy gì | Pass khi |
 |---|---|---|
-| `cpp` | `make -j`, `make test`, `make check`, `make install` vào prefix tạm, link `libyui.a` từ chương trình C ngoài cây | 705 check pass; 6 binary tồn tại; chương trình C in `abi=1` |
+| `cpp` | `make -j`, `make test`, `make check`, `make install` vào prefix tạm, link `libyui.a` từ chương trình C ngoài cây | **2357** check pass (2296 C++17 + 61 C11); 9 binary tồn tại; chương trình C in `abi=1` |
 | `rust` | `cargo test --workspace`, `cargo build --release`; fmt/clippy advisory | 0 test fail |
 | `docs` | `scripts/verify.sh`: policy JSON parse, không CRLF, liên kết README, không `unsafe` trong crate nhân | tất cả xanh |
 | `cross-arch` | `cargo check --workspace --target {aarch64-unknown-linux-gnu, riscv64gc-unknown-linux-gnu}` | cả hai target type-check |
-| `qemu` | Build nhân cho 3 kiến trúc rồi boot trong QEMU (`scripts/qemu-smoke.sh`) | **Hiện tại:** QEMU skip có báo cáo (chưa có `yui-frame`). **Từ P2.2:** mỗi kiến trúc in `yui: ready` < 60 s, job fail nếu không |
+| `kernel` | Build `kernel-frame` cho 3 target bare-metal bằng nightly + `-Z build-std` (`scripts/build-kernel.sh`), upload ELF | 3 ELF sinh ra, khác rỗng |
+| `qemu` | Tải ELF rồi boot thật bằng `scripts/qemu-smoke.sh <arch> --strict` | Phải thấy **cả ba** dòng: `yui: ready`, `Phan loai` (profiler), `Tang 1` (bảng năng lực) trong 90 s; thiếu một dòng ⇒ đỏ |
 
 ### 8.1 Ma trận QEMU (mục tiêu P2)
 
@@ -211,9 +212,16 @@ mỗi cái ghi `ok` ra serial. Job đọc serial, fail nếu thiếu dấu `ok`,
 `scripts/qemu-smoke.sh` chạy được cả trên máy dev:
 
 ```bash
-./scripts/qemu-smoke.sh x86_64     # cần yui-kernel.elf; nếu chưa có, báo rõ và thoát 0
-./scripts/qemu-smoke.sh --strict   # fail nếu thiếu nhân (dùng trong CI từ P2.2)
+./scripts/build-kernel.sh x86_64          # cần nightly + rust-src
+./scripts/qemu-smoke.sh x86_64            # boot ảnh vừa build, tìm 3 dấu hiệu
+./scripts/qemu-smoke.sh x86_64 --build    # build rồi boot, một lệnh
+./scripts/qemu-smoke.sh riscv64 --strict  # CI: thiếu nhân/qemu ⇒ đỏ
 ```
+
+Khi **đã có** ảnh nhân, script không còn chấp nhận "boot mà không in gì": thiếu
+`yui: ready`, `Phan loai` hoặc `Tang 1` là `exit 1` kể cả không `--strict`. Chỉ
+trường hợp **chưa có ảnh nhân** (máy dev chưa cài Rust) mới được bỏ qua, và luôn
+in lý do.
 
 ---
 
@@ -271,4 +279,7 @@ vào nhật ký dưới đây.
 | 2026-11-15 | P0.10 | `yui-sched` 9 test, `yui-zram` 8 test (chưa biên dịch — không có cargo trong môi trường soạn thảo) |
 | 2026-11-15 | P0.9 | `test_sandbox` 129 check, gồm 14 tình huống nạp 4 policy thật |
 | 2026-11-15 | P1.1 | `yuid` chạy được với `--socket/--state-dir/--serve-once`; `test_daemon` 102 check |
+| 2026-11-15 | P1.5 | `test_telemetry` 471 check, `test_capi` 61 check; `telemetry.read` + MCP `system_telemetry`; đo thật trên container này: CPU 46 °C, RAM 3.8 GB, không pin ⇒ `present:false` |
+| 2026-11-15 | P1 (framebuffer) | `test_fb` 1155 check; `yui-splash --width 640 --height 400` → `docs/splash.png` (2 880 byte PNG, xem bằng mắt: đúng bố cục) |
+| 2026-11-15 | P2.1–P2.3 (`[~]`) | `kernel-frame/` + `arch/*/linker.ld` + `scripts/build-kernel.sh` + `qemu-smoke.sh --build`; `verify.sh` canh 29 khối `unsafe`. **Chưa biên dịch** (sandbox không có cargo/qemu) — CI là nơi xác nhận |
 | 2026-11-15 | P1.6 (`[~]`) | `yui-trim` tròn vẹn trên cây thư mục mẫu: 5 file → gói 187 B, lọc `locale/fr/`, giải nén đúng |

@@ -37,9 +37,9 @@ Yêu cầu: `g++` ≥ 10 (C++17), `make`, `python3`, POSIX. **Không** cần m�
 cần thư viện ngoài, không cần Rust.
 
 ```bash
-make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell}
-make test         # 705 kiểm thử (669 C++17 + 36 C11 ABI)
-make check        # test + 4 smoke run + kiểm tra tĩnh (scripts/verify.sh)
+make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell,yui-splash}
+make test         # 2357 kiểm thử (2296 C++17 + 61 C11 ABI)
+make check        # test + 5 smoke run + kiểm tra tĩnh (scripts/verify.sh)
 ```
 
 ```console
@@ -68,6 +68,7 @@ Tạm biệt — hẹn gặp lại ở YuiVieOS. / Goodbye.
 
 ```
 docs/                ARCHITECTURE · PLAN · SECURITY · PROTOCOL · FORMAT-YUIP · BUILD
+kernel-frame/        Tầng 0 (Rust no_std, **khung unsafe duy nhất**): boot, serial, profiler, splash
 kernel-cap/          Tầng 1 (Rust no_std): quyền, CapTable, thẻ HMAC, SHA-256
 kernel-services/     Tầng 2: yui-sched/ (LAVD) · yui-zram/ (ZRAM) + codec/crypto/profile
 vmm-sandbox/         Tầng 3: bộ thực thi chính sách · policies/ · vmm/ (manifest schema)
@@ -75,11 +76,11 @@ ai-bridge-yuid/      Tầng 4: daemon/ · capi.cpp · reference/ (chờ thay ở
 pkg-stripper/        Tầng 5: Smart App Stripper (apppack)
 userspace-vi/        Tầng 5: text · ime · ui · shell · ui/app (Flutter)
 include/yui/         API công khai + header C `yui.h`
-tests/               7 bộ test C++17 + 1 bộ test C11
-tools/               yui-profiler · yui-trim · yui-shell
-arch/                x86_64 (linker script) · arm64 · riscv64
-scripts/             verify.sh · verify.py · qemu-smoke.sh
-.github/workflows/   CI: cpp · rust · docs · cross-arch · qemu
+tests/               9 bộ test C++17 + 1 bộ test C11
+tools/               yui-profiler · yui-trim · yui-shell · yui-splash
+arch/                linkerscript per arch: x86_64 · arm64 · riscv64
+scripts/             verify.sh · verify.py · build-kernel.sh · qemu-smoke.sh
+.github/workflows/   CI: cpp · rust · docs · cross-arch · kernel · qemu
 ```
 
 Chi tiết từng thư mục: mỗi thư mục có `README.md` riêng nói nó làm gì, đã xong
@@ -95,31 +96,41 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | Tầng | Thành phần | Trạng thái | Bằng chứng |
 |---|---|---|---|
 | 0 | Hardware Auto-Profiler: CPU/RAM/GPU/pin/nhiệt → `may-yeu`/`can-bang`/`may-manh` + k/W | ✅ chạy | `kernel-services/profile.cpp`, `tools/profiler` |
-| 0 | Luồng khởi động 3 kiến trúc + linker script x86_64 | 🟡 đặc tả | `arch/*/README.md`, `arch/x86_64/linker.ld` |
+| 0 | Luồng khởi động 3 kiến trúc + linker script | 🟡 mã xong, chưa boot được ở đây | `arch/{x86_64,arm64,riscv64}/linker.ld` |
+| 0 | Khung nhân bare-metal: serial, bộ cấp phát, `YuiBootInfo`, profiler, bảng năng lực trên ring 0 | 🟡 mã xong, chờ CI QEMU | `kernel-frame/`, `scripts/build-kernel.sh`, `scripts/qemu-smoke.sh` |
+| 0 | Màn hình chào trên framebuffer tuyến tính (font 5×7) | ✅ kiểm thử | `userspace-vi/fb.cpp` (1155 check), `tools/splash`, [`docs/splash.png`](docs/splash.png) |
 | 1 | Bảng năng lực: 15 quyền, dẫn xuất chỉ thu hẹp, thu hồi bắc cầu | ✅ Rust | `kernel-cap/src/lib.rs` |
 | 1 | Thẻ năng lực ký HMAC-SHA-256, xác minh hằng thời gian, lỗi có kiểu | ✅ hai phía | `kernel-cap/src/lib.rs`, `vmm-sandbox/sandbox.cpp` |
 | 1 | SHA-256 / HMAC / SHAKE-256 / scrypt tự viết, có vector RFC | ✅ | `kernel-services/crypto.cpp`, `tests/test_crypto.cpp` |
 | 1 | Sovereign Keyring + `.bundle` ký Ed25519 | ❌ chưa có | P2.4 |
 | 2 | Lập lịch chuyển đổi nóng LAVD (P/E-core, tín dụng đánh thức, công bằng) | ✅ Rust | `kernel-services/yui-sched` (9 test) |
 | 2 | ZRAM: codec YUI-LZ + kho trang nén, fallback verbatim | ✅ Rust + C++ | `kernel-services/yui-zram` (8 test), `kernel-services/codec.cpp` |
-| 2 | `yui-frame` (khung unsafe duy nhất), tickless, DVFS, FS bất biến, Linux ABI | ❌ chưa có | P2.1–P2.9 |
+| 2 | `yui-frame` (khung unsafe duy nhất) | 🟡 P1.2–P1.3 có mã | `kernel-frame/` (29 khối `unsafe`, đều được `verify.sh` kiểm toán) |
+| 2 | Tickless, DVFS, FS bất biến, Linux ABI | ❌ chưa có | P2.5, P2.7–P2.9 |
 | 3 | Hộp cát 3 bậc + audit + 4 policy mẫu có test | ✅ | `vmm-sandbox/` (129 check) |
 | 3 | Manifest micro-VM (JSON Schema) | 🟡 đặc tả | `vmm-sandbox/vmm/` |
 | 3 | VMM thật (KVM), Wine/VKD3D, Waydroid-lite | ❌ chưa có | P3 |
 | 4 | `yuid`: socket `/run/yuid.sock`, JSON-RPC 2.0 | ✅ chạy | `ai-bridge-yuid/daemon/` (102 check) |
-| 4 | C-ABI `libyui.so/.a` + header C, kiểm từ **C11** | ✅ chạy | `include/yui/yui.h`, `tests/test_capi.c` (36 check) |
+| 4 | C-ABI `libyui.so/.a` + header C, kiểm từ **C11** | ✅ chạy | `include/yui/yui.h`, `tests/test_capi.c` (61 check) |
 | 4 | MCP `2024-11-05`, 8 công cụ dữ liệu | ✅ chạy | `ai-bridge-yuid/daemon/server.cpp` |
-| 4 | Telemetry Hook + 5 công cụ OS MCP có xác nhận | ❌ chưa có | P1.5, P4.3 |
+| 4 | Telemetry Hook: `telemetry.read` + `yui_telemetry()` đọc pin/nhiệt/RAM thật, tự chỉnh k/W | ✅ chạy | `kernel-services/telemetry.cpp` (471 check), `tests/test_capi.c` |
+| 4 | 5 công cụ OS MCP `sys_power`/`sys_scheduler`/`sys_app_stripper`/`sys_proc`/`sys_search_vault` + xác nhận | ❌ chưa có (mới có `system_telemetry`) | P4.3 |
 | 4 | Cài đặt tham chiếu graph/vault/engine (**sẽ thay ở P5**) | 🟡 tạm | `ai-bridge-yuid/reference/` |
 | 5 | Smart App Stripper: strip ELF, khử trùng lặp, lọc locale, chống zip-slip | ✅ chạy | `pkg-stripper/apppack.cpp`, `tools/trim` (61 check) |
 | 5 | Bộ gõ Telex **và** VNI, đặt dấu đúng chính tả | ✅ 84 test | `userspace-vi/ime.cpp` |
 | 5 | Shell song ngữ Việt–Anh, 15 lệnh | ✅ chạy | `userspace-vi/shell.cpp` |
 | 5 | Kế hoạch giao diện thích ứng (Framebuffer ⇄ Vulkan/DRM) | ✅ logic + test | `userspace-vi/ui.cpp` |
-| 5 | Bộ vẽ/compositor thật, IBus engine, App Yui build được | ❌ chưa có | P1.4, P2.6, P4.1, P4.5 |
+| 5 | Compositor thật (DRM/Vulkan), IBus engine, App Yui build được | ❌ chưa có (đã có bộ vẽ pixel + màn hình chào) | P1.4, P2.6, P4.1, P4.5 |
 
 **Chưa kiểm chứng được trong môi trường soạn thảo này**: biên dịch Rust (không có
-`cargo`), boot QEMU (chưa có nhân), build Flutter (không có SDK). Cả ba đều có
-job CI và task tương ứng trong `PLAN.md` — chúng tôi **không** tuyên bố chúng đã chạy.
+`cargo`), boot QEMU (không có `qemu-system-*`), build Flutter (không có SDK). Cả
+ba đều có job CI và task tương ứng trong `PLAN.md` — chúng tôi **không** tuyên bố
+chúng đã chạy.
+
+Riêng khung nhân: `kernel-frame/` là mã **chưa từng được biên dịch** ở đây. Nó
+được viết theo đặc tả (multiboot 1, PL011, SBI) và `verify.sh` chỉ kiểm được cấu
+trúc + ranh giới `unsafe`, **không** kiểm được ngữ nghĩa. Trạng thái `[~]` trong
+`PLAN.md` là trạng thái thật: chờ job `kernel` + `qemu` của CI xác nhận.
 
 ---
 

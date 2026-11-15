@@ -20,7 +20,7 @@ extension nào ngoài `-D_GNU_SOURCE` (cho `strdup`, socket).
 ```bash
 git clone <repo> YuiVieOS && cd YuiVieOS
 make -j"$(nproc)"        # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell}
-make test                # 705 kiểm thử (669 C++17 + 36 C11 ABI) — xem mục 4
+make test                # 2357 kiểm thử (2296 C++17 + 61 C11 ABI) — xem mục 4
 make check               # test + smoke test 4 CLI
 ```
 
@@ -76,7 +76,9 @@ Ràng buộc:
 
 - `panic = "abort"`, `lto = true`, `codegen-units = 1` trong profile release
   (xem `Cargo.toml`) — hợp với mã nhân, nơi không có unwinding.
-- Không có dependency ngoài. `Cargo.lock` được commit cho tái lập.
+- Không có dependency ngoài (cả ba crate chỉ dùng `core`/`alloc`). `Cargo.lock`
+  **chưa có** vì môi trường soạn thảo không có `cargo`; lần build đầu tiên sẽ sinh
+  ra nó và phải được commit — nếu không thì CI và máy dev có thể lệch phiên bản.
 - MSRV: 1.70 (do dùng `let … else` và `core::cmp` ổn định từ lâu).
 
 Nếu máy bạn không có Rust, mọi thứ C++ vẫn build và test được; `make rust` chỉ
@@ -99,9 +101,11 @@ make test                          # tất cả
 | `test_core` | 163 | đồ thị, engine q4/t2 + SIMD, text tiếng Việt, profiler, apppack |
 | `test_sandbox` | 129 | bảng năng lực, thu hồi, token, hộp cát 3 bậc, **4 chính sách mẫu** |
 | `test_ime` | 84 | Telex, VNI, đặt dấu, chữ ASCII không bị phá |
-| `test_daemon` | 102 | JSON-RPC, MCP, vault qua RPC, web offline, os.* |
+| `test_daemon` | 103 | JSON-RPC, MCP, vault qua RPC, web offline, os.*, telemetry |
 | `test_tools` | 61 | `yui-trim` tròn vẹn + chống zip-slip, strip ELF, ui::plan, shell |
-| `test_capi` (C11) | 36 | toàn bộ bề mặt `libyui` gọi từ C thuần, kể cả `YUI_E_TOO_SMALL` và hộp cát |
+| `test_telemetry` | 471 | đọc sysfs pin/nhiệt/RAM, ranh giới 20 %/75 °C, quét toàn miền k/W, `telemetry.read` + MCP |
+| `test_fb` | 1155 | ghi pixel có chặn biên (guard band), font 5×7, clipping, màn hình chào, xuất PPM |
+| `test_capi` (C11) | 61 | toàn bộ bề mặt `libyui` gọi từ C thuần: `YUI_E_TOO_SMALL`, hộp cát, `yui_telemetry`, `yui_telemetry_advise` |
 
 Test dùng `YUI_SOURCE_DIR` (Makefile chèn `-DYUI_SOURCE_DIR='"$(CURDIR)"'`) để
 nạp chính sách thật trong `vmm-sandbox/policies/` — nhờ vậy tài liệu và mã không thể
@@ -114,30 +118,45 @@ thư mục tạm; `test_tools` tạo cây thư mục tạm và tự dọn.
 
 ---
 
-## 5. Cross-compile (Tầng 0, chưa có trong repo)
+## 5. Khung nhân bare-metal (Tầng 0)
 
-Khi bắt đầu viết `yui-boot`/`yui-kernel`, cần toolchain đích:
-
-```bash
-# x86_64
-rustup target add x86_64-unknown-none
-cargo build -p yui-kernel --target x86_64-unknown-none --release
-
-# ARM64
-rustup target add aarch64-unknown-none
-
-# RISC-V 64
-rustup target add riscv64gc-unknown-none-elf
-```
-
-Liên kết với script trong `arch/`:
+`kernel-frame/` là **crate Rust duy nhất được phép chứa `unsafe`** và **không**
+nằm trong workspace ở gốc (nó nhắm target bare-metal, còn workspace chỉ build
+cho host). Build bằng script:
 
 ```bash
-ld.lld -T arch/x86_64/linker.ld -nostdlib -o yui-kernel.elf <objects>
+rustup toolchain install nightly --component rust-src
+./scripts/build-kernel.sh x86_64      # → build/kernel/yui-kernel-x86_64.elf
+./scripts/build-kernel.sh aarch64
+./scripts/build-kernel.sh riscv64
+./scripts/build-kernel.sh all
 ```
 
-Cần thêm: `limine` (ISO ảnh khởi động), `qemu-system-x86_64` (thử), `xorriso`.
-Không có trong sandbox phát triển hiện tại — xem `docs/PLAN.md`.
+Vì sao cần nightly (và chỉ ở đây):
+
+| Lý do | Chi tiết |
+|---|---|
+| `#[alloc_error_handler]` | bắt buộc khi `no_std` + `alloc`, vẫn là feature không ổn định |
+| `-Z build-std=core,alloc` | phải tự biên dịch `core`/`alloc` cho target `*-unknown-none` |
+| `-Z build-std-features=compiler-builtins-mem` | cần `memcpy`/`memset` cho Rust trên bare metal |
+
+Boot thử:
+
+```bash
+./scripts/qemu-smoke.sh x86_64 --build        # build + boot, tìm 3 dấu hiệu
+./scripts/qemu-smoke.sh riscv64 --strict      # CI: thiếu nhân/qemu ⇒ đỏ
+```
+
+Ba dòng phải thấy trên serial: `yui: ready`, `Phan loai :` (auto-profiler),
+`Tang 1    :` (bảng năng lực). Xem `docs/PLAN.md` §8.
+
+Ranh giới `unsafe` do `scripts/verify.py` (`check_frame`) canh: chỉ 7 tệp được
+liệt kê (arch/*, boot, allocator, splash, lib) mới được có `unsafe`; tệp khác
+xuất hiện `unsafe` ⇒ `verify.sh` đỏ. Tổng hiện tại: 29 khối, có chú thích an toàn.
+
+**Chưa được biên dịch trong môi trường soạn thảo hiện tại** (không có `cargo`,
+`qemu-system-*`). Trạng thái thật của nó là `[~]` trong `PLAN.md`, và CI job
+`kernel` + `qemu` là nơi xác nhận.
 
 ---
 
@@ -145,7 +164,7 @@ Không có trong sandbox phát triển hiện tại — xem `docs/PLAN.md`.
 
 `.github/workflows/ci.yml` chạy hai job song song:
 
-1. **cpp** — Ubuntu: `make -j`, `make test`, `make check`, cài vào `$RUNNER_TEMP`
+1. **cpp** — Ubuntu: `make -j`, `make test` (2357 check), `make check`, cài vào `$RUNNER_TEMP`
    rồi biên dịch một chương trình C nhỏ chống lại `libyui.a` để chắc header C
    vẫn dùng được từ ngoài.
 2. **rust** — Ubuntu + `cargo` có sẵn: `cargo test --workspace`, `cargo fmt

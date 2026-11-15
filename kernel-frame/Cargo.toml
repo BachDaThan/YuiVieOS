@@ -1,0 +1,35 @@
+# yui-frame — khung phần cứng duy nhất của YuiVieOS Beta.
+#
+# ĐÂY LÀ CRATE DUY NHẤT ĐƯỢC PHÉP CHỨA `unsafe`. Mọi crate khác giữ
+# `#![deny(unsafe_code)]`; `scripts/verify.py` chặn mọi `unsafe` ngoài thư mục
+# này. Lý do: chuyển ngữ cảnh, MMU, ngõ vào/ra cổng nối tiếp và bộ cấp phát bộ
+# nhớ buộc phải chạm vào phần cứng; cô lập chúng ở một nơi để kiểm toán được.
+#
+# Crate này KHÔNG nằm trong workspace ở gốc (nó nhắm bare-metal target), hãy
+# build bằng: ./scripts/build-kernel.sh
+[package]
+name = "yui-frame"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "YuiVieOS Beta bare-metal frame: boot, serial console, auto-profiler, capability init"
+
+[lib]
+name = "yui_frame"
+path = "src/lib.rs"
+
+[dependencies]
+yui-cap = { path = "../kernel-cap" }
+
+[profile.dev]
+panic = "abort"
+opt-level = 1
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+lto = true
+codegen-units = 1
+
+# Root của workspace riêng: khung này build cho target bare-metal, không cho host.
+[workspace]

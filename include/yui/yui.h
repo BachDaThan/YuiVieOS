@@ -90,6 +90,31 @@ int yui_vault_seal(const char* password, const void* plain, size_t len, int log2
 int yui_vault_open(const char* password, const void* blob, size_t len, yui_buf* out, char* err,
                    size_t err_cap);
 
+/* Telemetry Hook (Tầng 4 bridge): pin, nhiệt độ CPU/GPU, RAM, khuyến nghị k/W.
+ * Unreadable sensors stay -1 / 0 — the bridge never invents a value. */
+typedef struct yui_telemetry_snapshot {
+  int battery_present;   /* 0 | 1 */
+  int battery_percent;   /* 0..100, or -1 when unknown */
+  int charging;          /* 0 | 1 */
+  float cpu_c;           /* °C, or -1 when unknown */
+  float gpu_c;           /* °C, or -1 when unknown */
+  int ram_total_mb;      /* 0 when unknown */
+  int ram_free_mb;       /* 0 when unknown */
+  char machine_class[16];/* may-yeu | can-bang | may-manh */
+  char simd[16];         /* avx512f | avx2 | neon | sve | rvv | scalar */
+  int threads;
+  int advised_k;         /* 1 | 2 | 3 | 4 */
+  int advised_window;    /* 16 .. 1024 */
+  char reason[192];      /* tiếng Việt, hiển thị được cho người dùng */
+} yui_telemetry_snapshot;
+
+int yui_telemetry(yui_telemetry_snapshot* out);
+
+/* Pure recommendation rule, usable by the AI core on its own readings.
+ * machine_class may be NULL or "" (treated as "can-bang"). */
+int yui_telemetry_advise(const char* machine_class, int battery_percent, int charging, float cpu_c,
+                         float gpu_c, int* out_k, int* out_window, char* reason, size_t reason_cap);
+
 /* Sandbox policy evaluation. Returns 1 allowed, 0 denied, negative on error. */
 int yui_sandbox_check(const char* policy_json, const char* kind, const char* target, char* reason,
                       size_t reason_cap);
