@@ -26,6 +26,15 @@ impl Write for Serial {
 /// giữa dòng, trong khi cùng chuỗi đó dưới dạng hằng thì in được. Đường in trực
 /// tiếp vừa tránh được chỗ chết đó, vừa bỏ hẳn bộ máy `Arguments` cho văn bản
 /// thuần — rẻ hơn trên máy yếu.
+pub fn print_str_no_newline(text: &str) {
+    lock();
+    for byte in text.bytes() {
+        crate::arch::serial_write(byte);
+    }
+    unlock();
+}
+
+/// In một `&str` + xuống dòng, không qua `core::fmt`.
 pub fn print_str(text: &str) {
     lock();
     for byte in text.bytes() {

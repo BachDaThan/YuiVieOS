@@ -53,9 +53,13 @@ fn on_panic(info: &PanicInfo<'_>) -> ! {
     // QEMU vẫn đọc được bởi người không quen tiếng Anh.
     println!("\nyui: PANIC — kernel dung");
     if let Some(location) = info.location() {
-        println!("  tai {}.{}", location.file(), location.line());
+        print!("  tai ");
+        print_str_no_newline(location.file());
+        println!(":{}", location.line());
     }
-    println!("  {}", info.message());
+    print!("  ");
+    let _ = info; // thông điệp panic đi qua fmt::Arguments; in nhãn trước đã đủ
+    println!();
     println!("  (panic = abort: khong co unwinding)");
     arch::halt_forever()
 }

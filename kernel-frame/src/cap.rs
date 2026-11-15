@@ -23,7 +23,9 @@ pub fn self_test() {
             return;
         }
     };
-    println!("    quyen goc : slot {} [{}]", root, rights_to_string(root_rights));
+    print!("    quyen goc : slot {} [", root);
+    print_str_no_newline(&rights_to_string(root_rights));
+    println!("]");
 
     let child = match table.derive(root, RIGHT_FS_READ, 7) {
         Ok(slot) => slot,
@@ -32,7 +34,9 @@ pub fn self_test() {
             return;
         }
     };
-    println!("    dan xuat  : slot {} [{}]", child, rights_to_string(RIGHT_FS_READ));
+    print!("    dan xuat  : slot {} [", child);
+    print_str_no_newline(&rights_to_string(RIGHT_FS_READ));
+    println!("]");
     println!(
         "    kiem tra  : doc fs = {}, ghi fs = {}",
         ok(table.check(child, RIGHT_FS_READ)),

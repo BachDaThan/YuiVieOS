@@ -46,12 +46,27 @@ pub fn classify(ram_mb: u64, harts: u32) -> Classification {
 /// In hồ sơ phần cứng ra cổng nối tiếp (đây là "kết quả" của bước P1.2/P1.3).
 pub fn report(info: &BootInfo) {
     let c = classify(info.ram_mb, info.harts);
-    println!("  CPU       : {}", info.cpu_display());
-    println!("  SIMD      : {}", info.simd);
+    let cpu = info.cpu_display();
+
+    // Kỹ thuật: **không** dùng `println!("{}", chuoi_runtime)` trong khung này.
+    // Trên aarch64, `{}` với một `&str` tính lúc chạy làm nhân dừng giữa dòng
+    // (cùng chuỗi dạng hằng thì in được — đã tái hiện qua log QEMU), còn
+    // `print_str` ghi byte trực tiếp thì luôn đúng. Số và nhãn hằng vẫn dùng
+    // `println!` bình thường.
+    label_str("  CPU       : ", &cpu);
+    label_str("  SIMD      : ", info.simd);
     println!("  So nhan   : {}", info.harts);
-    println!("  RAM       : {} MiB ({} nguon)", info.ram_mb, info.ram_source);
-    println!("  Phan loai : {}", c.tier);
-    println!("  Tu chinh  : k={}, W={}", c.k, c.window);
-    println!("  Ghi chu   : {}", c.reason);
+    print!("  RAM       : {} MiB — ", info.ram_mb);
+    println_str!(info.ram_source);
+    label_str("  Phan loai : ", c.tier);
+    print!("  Tu chinh  : k={}, W={}", c.k, c.window);
+    println!();
+    label_str("  Ghi chu   : ", c.reason);
     println!("  Bo nho    : {} byte da cap phat cho khung + bang nang luc", allocator::used_bytes());
+}
+
+/// In `nhãn + chuỗi` mà không đi qua bộ máy `core::fmt` cho phần chuỗi.
+fn label_str(label: &str, value: &str) {
+    print_str_no_newline(label);
+    println_str!(value);
 }

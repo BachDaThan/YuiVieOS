@@ -50,7 +50,10 @@ echo "── build khung nhân cho $ARCH ($TARGET)"
 # relocation-model=static: x86_64-unknown-none mặc định PIC, mà nhân được link
 # tại địa chỉ vật lý tuyệt đối (1 MiB) nên PIC không dùng được — rust-lld báo
 # "relocation R_X86_64_32 cannot be used against local symbol".
-RUSTFLAGS="-C relocation-model=static -C link-arg=-T$ROOT/arch/$LINK_DIR/linker.ld" \
+# strict-align: chạy với MMU tắt (chưa bật bảng trang), nên không được phép giả
+# định truy cập lệch được phần cứng tha. Đây cũng là nghi phạm của lần dừng giữa
+# dòng trên aarch64.
+RUSTFLAGS="-C relocation-model=static -C target-feature=+strict-align -C link-arg=-T$ROOT/arch/$LINK_DIR/linker.ld" \
     cargo +nightly build \
     --manifest-path kernel-frame/Cargo.toml \
     --target "$TARGET" \

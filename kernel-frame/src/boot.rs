@@ -82,7 +82,8 @@ pub fn parse(raw: RawBoot) -> BootInfo {
         framebuffer: None,
     };
 
-    println!("    - simd: {}", info.simd);
+    print!("    - simd: ");
+    println_str!(info.simd);
     match raw {
         RawBoot::Multiboot(addr) => parse_multiboot(&mut info, addr),
         RawBoot::DeviceTree(addr) => parse_fdt(&mut info, addr),
