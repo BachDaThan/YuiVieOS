@@ -67,13 +67,8 @@ pub fn kmain(raw_boot: boot::RawBoot) -> ! {
     println!();
     println!("yui: ready");
     println!("YuiVieOS Beta · khung phan cung (Tầng 0 + Tầng 1)");
-    // Chẩn đoán tạm thời (sẽ bỏ sau khi aarch64 chạy): tách xem chết ở đâu.
-    println!("  [i] khong doi so");
-    println!("  [ii] so: {}", 42u32);
-    println!("  [iii] chuoi co dinh: {}", "aarch64");
-    let ten = boot::arch_name();
-    println!("  [iv] len={} ptr={:#x}", ten.len(), ten.as_ptr() as usize);
-    println!("  Kien truc : {}", ten);
+    print!("  Kien truc : ");
+    println_str!(boot::arch_name());
 
     // Các mốc "[n]" có mục đích thực dụng: nếu chỉ thấy mốc n-1 trên cổng nối
     // tiếp là biết khung chết ở bước nào, không phải đoán.
