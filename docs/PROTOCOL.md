@@ -129,6 +129,23 @@ mạng khi `--enable-net` và `allow_network` cùng bật.
 
 Giá trị không đọc được thì trả `present:false`/`source:"none"`, **không bịa số**.
 
+### 2.9 `telemetry.read` — **dành sẵn, chưa cài đặt** (task P1.5)
+
+Hợp đồng đã chốt để lõi AI đọc được số liệu tài nguyên thật:
+
+```json
+{"jsonrpc":"2.0","id":9,"method":"telemetry.read","result":{
+  "battery":{"present":true,"percent":37,"charging":false},
+  "thermal":{"cpu_c":71.5,"gpu_c":64.0,"throttle":true},
+  "memory":{"total_mb":1843,"free_mb":402,"zram_ratio":2.7},
+  "machine":{"class":"may-yeu","simd":"avx2","threads":2},
+  "advice":{"k":1,"window":16,"reason":"Pin thấp và nhiệt cao: giảm k/W để giữ máy mát"}}}
+```
+
+Khuyến nghị `k/W` do bridge quyết (bảng ở
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §6.3); lõi AI có thể ghi đè nhưng phải ghi lý do.
+**Chưa** có trong bản này: gọi sẽ trả `-32601` (method not found) cho tới P1.5.
+
 ---
 
 ## 3. MCP (Model Context Protocol) — `yuid --mcp`
@@ -154,6 +171,21 @@ Giá trị không đọc được thì trả `present:false`/`source:"none"`, **
 Ánh xạ MCP → JSON-RPC là 1–1: `graph_query` gọi `graph.query`, v.v. Không có
 đường tắt nào bỏ qua kiểm tra năng lực.
 
+### 3.1 Năm công cụ điều khiển hệ điều hành — **dành sẵn, chưa cài đặt** (task P4.3)
+
+| Công cụ | Quyền cần | Xác nhận | Trạng thái |
+|---|---|---|---|
+| `sys_power` | `power` | có | ⬜ P4.3 |
+| `sys_scheduler` | `admin` hoặc `power` | có | ⬜ P4.3 |
+| `sys_app_stripper` | `fs.read` + `fs.write` trong scope | có | ⬜ P4.3 |
+| `sys_proc` | `admin` | có | ⬜ P4.3 |
+| `sys_search_vault` | `vault` | không | ⬜ P4.3 |
+
+Quy tắc (đã ghi trong `ARCHITECTURE.md` §6.4): thiếu quyền ⇒ từ chối kèm lý do
+tiếng Việt; thiếu `confirm: true` ⇒ trả `needs_confirmation` + mô tả tác động;
+mọi hành động ghi `audit.log`. Gọi `tools/list` hôm nay **không** thấy 5 công cụ
+này — đó là hành vi đúng của bản hiện tại, không phải lỗi.
+
 Ví dụ khung trên stdio:
 
 ```
@@ -164,8 +196,8 @@ Content-Length: 121\r\n\r\n{"jsonrpc":"2.0","id":1,"method":"tools/call","params
 
 ## 4. C-ABI — `libyui.so` / `libyui.a`
 
-Header: `core/include/yui/yui.h`, `YUI_ABI_VERSION 1`. Dùng được từ C11
-(`core/tests/test_capi.c` là bằng chứng: 36 check, biên dịch bằng `cc -std=c11`).
+Header: `include/yui/yui.h`, `YUI_ABI_VERSION 1`. Dùng được từ C11
+(`tests/test_capi.c` là bằng chứng: 36 check, biên dịch bằng `cc -std=c11`).
 Không có ngoại lệ C++ hay `std::string` đi qua biên.
 
 **Thiết kế không trạng thái**: không có `yui_open`/`yui_close`. Hàm thuần nhận

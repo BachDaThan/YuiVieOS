@@ -47,7 +47,7 @@ token = (lit_len << 4) | (match_len - 4)
 ```
 
 Chính xác hơn, với `"aaaaaaaa"`: khớp 7 byte ở distance 1 (`a` + 7 bản sao), rồi
-1 literal cuối. Đọc `core/tests/test_codec_json.cpp` để có vector chính xác thay
+1 literal cuối. Đọc `tests/test_codec_json.cpp` để có vector chính xác thay
 vì suy đoán — đây là lý do định dạng có test vector thay vì chỉ có tài liệu.
 
 ### 1.4 Kích thước tối đa
@@ -149,7 +149,7 @@ bundle.yuib = zip (không nén) chứa:
 ```
 
 Chưa cài đặt; xem [`SECURITY.md`](SECURITY.md) mục 6 để biết vì sao và
-[`ROADMAP.md`](ROADMAP.md) để biết kế hoạch.
+[`PLAN.md`](PLAN.md) để biết kế hoạch.
 
 ---
 

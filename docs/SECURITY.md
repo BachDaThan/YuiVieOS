@@ -69,7 +69,7 @@ Quy tắc thực thi trong `Enforcer::check`:
    đúng đường dẫn/host đã cấp.
 4. Mọi từ chối trả `reason` tiếng Việt và được ghi audit.
 
-Ví dụ chính sách thật trong repo: `sandbox/policies/yui-app.policy.json`,
+Ví dụ chính sách thật trong repo: `vmm-sandbox/policies/yui-app.policy.json`,
 `trim.policy.json`, `legacy-game.policy.json`, `first-party-ipc.policy.json` —
 cả bốn đều được nạp và kiểm trong `test_sandbox` (14 tình huống cho/không cho).
 
@@ -160,7 +160,7 @@ Danh sách này cố ý đầy đủ, vì biết giới hạn quan trọng hơn 
 1. **Chưa có nhân thật**: Tầng 1/2 là crate chạy trong tiến trình test, không có
    MMU/ring cách ly. Hộp cát hiện là *quyết định chính sách* + kiểm tra, chưa
    phải cách ly phần cứng.
-2. **Chưa có micro-VM**: `sandbox/vmm` là schema + đặc tả. Cách ly game/Android
+2. **Chưa có micro-VM**: `vmm-sandbox/vmm` là schema + đặc tả. Cách ly game/Android
    ở mức KVM **chưa** tồn tại trong repo.
 3. **Chưa có chữ ký số** cho cập nhật (mục 6).
 4. **Không chống kênh bên**: mọi so sánh mật mã đều hằng thời gian ở mức mã
@@ -180,7 +180,7 @@ hiện, và mức ảnh hưởng. Vui lòng **không** mở issue công khai cho
 
 ## 9. Nguyên tắc khi sửa mã
 
-1. Không thêm `unsafe` vào `crates/` (`#![deny(unsafe_code)]` cố ý).
+1. Không thêm `unsafe` vào `kernel-cap/` hay `kernel-services/` (`#![deny(unsafe_code)]` cố ý).
 2. Quyền mới phải có tên trong `rights`, không dùng số trần.
 3. Mọi hàm giải nén/nạp dữ liệu phải: kiểm độ dài → kiểm toàn vẹn → mới parse.
 4. Mọi quyết định cho/không phải có `reason` đọc được bằng tiếng Việt.

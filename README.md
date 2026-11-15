@@ -1,55 +1,45 @@
-# YuiVieOS 🪷
+# YuiVieOS Beta 🪷
 
-**Hệ điều hành Việt Nam — máy yếu chạy mượt, máy mạnh chạy tối đa.**
+**Hệ điều hành thuần Việt, tự chủ hoàn toàn — clean-room 100 %, nhân bằng Rust an toàn.**
 *A Vietnamese-first operating system: smooth on a 2 GB netbook, unrestricted on a workstation.*
 
 ```
-====================================================================================================
- TẦNG 5: GIAO DIỆN & TRẢI NGHIỆM NGƯỜI DÙNG VIỆT (USER-SPACE SHELL & APPS)
- ┌───────────────────────────────────┐ ┌───────────────────────────────────┐ ┌─────────────────────┐
- │  Giao diện Thích ứng (Adaptive UI)│ │   Trình Gọt Tỉa & Nén App (Zstd)  │ │   Hệ thống Gõ & AI  │
- │  • Máy yếu: Direct Framebuffer    │ │  • Quét DRM/Chữ ký số chủ quyền   │ │  • Bộ gõ Telex/VNI  │
- │  • Máy mạnh: Vulkan / DRM Zero-copy│ │  • Cắt mã chết/ngôn ngữ thừa      │ │    tầng dịch vụ     │
- │  • Shell lệnh song ngữ Việt - Anh │ │  • Nén Zstd + Chạy thẳng trên RAM │ │  • App Yui (Flutter)│
- └─────────────────┬─────────────────┘ └─────────────────┬─────────────────┘ └──────────┬──────────┘
-===================╪=====================================╪==============================╪===========
- TẦNG 4: CỔNG CHỜ & DỊCH VỤ TRÍ TUỆ LÕI (`yuid` CORE AI DAEMON — CẮM TỪ Y-APP & ADAPTIVE-MOE)
- ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
- │  Giao tiếp qua Unix Socket (`/run/yuid.sock`) & C-ABI FFI (`libyui.so` / `libyui.a`)            │
- │  ┌──────────────────────────┐ ┌───────────────────────────┐ ┌─────────────────────────────────┐ │
- │  │ Engine C++ (`yui.cpp`)   │ │ Bộ nhớ & Đồ thị Tri thức  │ │ Hệ thống Agent & Công cụ OS     │ │
- │  │ • SIMD: AVX2/NEON/RVV    │ │ • Graphify (`yui_graph`)  │ │ • Giao thức MCP Server/Client   │ │
- │  │ • Nén q4 / t2 / BITCOS   │ │ • Kho mã hóa (`yui_vault`)│ │ • Sandbox 3 bậc (`yui_sandbox`) │ │
- │  └──────────────────────────┘ └───────────────────────────┘ └─────────────────────────────────┘ │
- ═════════════════════════════════════╪════════════════════════════════════════════════════════════
- TẦNG 3: HỘP CÁT TƯƠNG THÍCH ỨNG DỤNG CŨ (ZERO-TRUST SANDBOX & MICRO-VM)
- TẦNG 2: NHÂN DỊCH VỤ HIỆU NĂNG CAO (CLEAN-ROOM RUST FRAMEKERNEL — SAFE RUST 100%)
- TẦNG 1: LÕI GIÁM SÁT BẢO MẬT & CẤP QUYỀN (CAPABILITY MICROKERNEL)
- TẦNG 0: PHẦN CỨNG ĐA KIẾN TRÚC — x86_64 (BIOS+UEFI) · ARM64 · RISC-V 64
-====================================================================================================
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ TẦNG 5  TRẢI NGHIỆM NGƯỜI DÙNG VIỆT                       userspace-vi/      │
+│   Smart App Stripper │ Shell VI–EN │ Telex/VNI tại dịch vụ │ App Yui (Flutter)│
+├──────────────────────────────────────────────────────────────────────────────┤
+│ TẦNG 4  CỔNG CHỜ TRÍ TUỆ LÕI                            ai-bridge-yuid/      │
+│   ①IPC & C-ABI  ②Telemetry  ③OS Control MCP  ④nạp .yui v3 (mmap)            │
+│   ── đường nối Phase P5 ──► libyui.so (Adaptive-MoE + Y-App, ngoài repo)     │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ TẦNG 3  HỘP CÁT ZERO-TRUST (MicroVM)                     vmm-sandbox/        │
+│   native │ isolated │ microvm (Wine/Proton+VKD3D, Waydroid-lite)             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ TẦNG 2  NHÂN DỊCH VỤ (Safe Rust Framekernel)            kernel-services/     │
+│   Lập lịch chuyển đổi nóng │ ZRAM │ FS bất biến │ DVFS │ tickless │ Linux ABI│
+├──────────────────────────────────────────────────────────────────────────────┤
+│ TẦNG 1  LÕI GIÁM SÁT BẢO MẬT (Capability Microkernel)   kernel-cap/          │
+│   CapTable │ Thẻ năng lực ký HMAC │ Thu hồi bắc cầu │ Sovereign Keyring      │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ TẦNG 0  PHẦN CỨNG ĐA KIẾN TRÚC                          arch/                │
+│   x86_64 (BIOS Legacy + UEFI) │ ARM64 │ RISC-V 64                            │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Xem sơ đồ đầy đủ và trạng thái từng ô ở [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Bản vẽ đầy đủ + giao thức cổng chờ: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Kế hoạch thi công P0–P5, tiêu chí đo được, CI QEMU 3 kiến trúc: [`docs/PLAN.md`](docs/PLAN.md).
 
 ---
 
 ## Chạy thử trong 60 giây
 
-Yêu cầu: `g++` ≥ 10 (C++17), `make`, POSIX. Không cần thư viện ngoài, không cần mạng.
+Yêu cầu: `g++` ≥ 10 (C++17), `make`, `python3`, POSIX. **Không** cần mạng, không
+cần thư viện ngoài, không cần Rust.
 
 ```bash
-make              # build yuid, libyui.so/.a, yui-profiler, yui-trim, yui-shell
-make test         # 705 kiểm thử (C++17 + C11 ABI)
-make check        # test + smoke test các CLI
-```
-
-Thử ngay:
-
-```bash
-./build/bin/yui-profiler              # máy bạn yếu hay mạnh? k/W tự chỉnh là bao nhiêu?
-./build/bin/yuid --info               # daemon biết làm gì
-./build/bin/yui-shell                 # shell song ngữ Việt–Anh
-printf 'gõ telex Tieengs Vieetj\nthoát\n' | ./build/bin/yui-shell
+make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell}
+make test         # 705 kiểm thử (669 C++17 + 36 C11 ABI)
+make check        # test + 4 smoke run + kiểm tra tĩnh (scripts/verify.sh)
 ```
 
 ```console
@@ -60,7 +50,6 @@ YuiVieOS · Hồ sơ phần cứng
   RAM       : 3.8 GB (trống 3.6 GB)
   Phân loại : may-yeu
   Tự chỉnh  : k=2, cửa sổ=1024, luồng=2 (may-yeu)
-  Ghi chú   : Máy yếu / pin thấp: giảm k xuống 2 và cửa sổ ngữ cảnh 1024 để giữ RAM và nhiệt.
 
 $ ./build/bin/yui-shell
 › gõ telex Tieengs Vieetj
@@ -75,90 +64,94 @@ Tạm biệt — hẹn gặp lại ở YuiVieOS. / Goodbye.
 
 ---
 
-## Trong repo có gì (và chưa có gì)
+## Cấu trúc monorepo
 
-Đây là một repo **chạy được thật**, không phải bản mô tả. Mọi thứ trong cột
-"Đã có" đều được biên dịch và kiểm thử tự động; mọi thứ ở cột "Chưa có" đều
-được ghi rõ là chưa có, kèm đặc tả để làm tiếp.
+```
+docs/                ARCHITECTURE · PLAN · SECURITY · PROTOCOL · FORMAT-YUIP · BUILD
+kernel-cap/          Tầng 1 (Rust no_std): quyền, CapTable, thẻ HMAC, SHA-256
+kernel-services/     Tầng 2: yui-sched/ (LAVD) · yui-zram/ (ZRAM) + codec/crypto/profile
+vmm-sandbox/         Tầng 3: bộ thực thi chính sách · policies/ · vmm/ (manifest schema)
+ai-bridge-yuid/      Tầng 4: daemon/ · capi.cpp · reference/ (chờ thay ở P5)
+pkg-stripper/        Tầng 5: Smart App Stripper (apppack)
+userspace-vi/        Tầng 5: text · ime · ui · shell · ui/app (Flutter)
+include/yui/         API công khai + header C `yui.h`
+tests/               7 bộ test C++17 + 1 bộ test C11
+tools/               yui-profiler · yui-trim · yui-shell
+arch/                x86_64 (linker script) · arm64 · riscv64
+scripts/             verify.sh · verify.py · qemu-smoke.sh
+.github/workflows/   CI: cpp · rust · docs · cross-arch · qemu
+```
 
-| Tầng | Thành phần | Trạng thái | Bằng chứng |
-|---|---|---|---|
-| 0 | Profiler phần cứng (CPU/RAM/GPU/pin/nhiệt → máy yếu/mạnh) | ✅ chạy | `tools/profiler`, `core/src/kernel/profile.cpp` |
-| 0 | Stub khởi động + linker script x86_64/ARM64/RISC-V | 🟡 đặc tả | `arch/*/` |
-| 1 | Vi nhân năng lực: bảng capability, dẫn xuất, thu hồi | ✅ Rust | `crates/yui-cap` |
-| 1 | Thẻ năng lực ký HMAC-SHA-256 (khớp C++ ↔ Rust) | ✅ hai phía | `crates/yui-cap/src/lib.rs`, `core/src/sandbox/sandbox.cpp` |
-| 1 | SHA-256 / HMAC / SHAKE-256 / scrypt tự viết, không lib ngoài | ✅ có vector chuẩn | `core/src/crypto/`, `core/tests/test_crypto.cpp` |
-| 2 | Chính sách lập lịch LAVD (P/E-core, ưu tiên độ trễ, công bằng) | ✅ Rust | `crates/yui-sched` |
-| 2 | ZRAM: codec YUI-LZ + kho trang nén + thống kê | ✅ Rust + C++ | `crates/yui-zram`, `core/src/codec.cpp` |
-| 2 | Lượng tử hoá q4/t2 + nhân SIMD (AVX2/NEON/RVV) | ✅ C++ | `core/src/kernel/engine.cpp` |
-| 2 | Tự chỉnh k/W theo RAM, nhiệt, pin, GPU | ✅ C++ | `engine::auto_tune` |
-| 3 | Hộp cát 3 bậc (native/isolated/microvm) + audit | ✅ C++ | `core/src/sandbox/` |
-| 3 | Chính sách mẫu cho app Yui, trim, game cũ | ✅ có test | `sandbox/policies/*.json` |
-| 3 | Manifest micro-VM (JSON Schema) | 🟡 đặc tả | `sandbox/vmm/` |
-| 3 | VMM thật (KVM/crosvm), lớp dịch Windows, Waydroid | ❌ chưa có | roadmap |
-| 4 | `yuid` daemon: socket Unix, JSON-RPC 2.0 | ✅ chạy | `core/src/daemon/` |
-| 4 | MCP server (Content-Length framing, tools/list, tools/call) | ✅ chạy | `tools/list` 8 công cụ |
-| 4 | `libyui.so` / `.a` + header C, kiểm thử từ **C11** | ✅ chạy | `core/include/yui/yui.h`, `core/tests/test_capi.c` |
-| 4 | Đồ thị tri thức (thêm/nối/tìm/đường đi/BFS/JSON) | ✅ chạy | `core/src/kernel/graph.cpp` |
-| 4 | Kho mã hoá: scrypt + SHAKE-256 + HMAC (encrypt-then-MAC) | ✅ chạy | `core/src/crypto/vault.cpp` |
-| 4 | Trọng số mô hình/engine suy luận thật | ❌ chưa có | cần bundle ngoài |
-| 5 | Bộ gõ Telex **và** VNI, đặt dấu đúng chính tả | ✅ 84 test | `core/src/kernel/ime.cpp` |
-| 5 | Shell song ngữ Việt–Anh (mọi lệnh có 2 tên) | ✅ chạy | `core/src/daemon/shell.cpp` |
-| 5 | Giao diện thích ứng: chọn framebuffer/Vulkan theo phần cứng | ✅ logic + test | `core/src/kernel/ui.cpp` |
-| 5 | Trình gọt tỉa & nén app (.yuip) | ✅ chạy | `core/src/kernel/apppack.cpp`, `tools/trim` |
-| 5 | App Yui (Flutter): 3 màn hình, gọi `yuid` qua socket | 🟡 khung sườn, chưa build | `ui/app` |
-| 5 | Bộ vẽ framebuffer/Vulkan thật | ❌ chưa có | roadmap |
-
-Ghi chú về chữ **Zstd** trong sơ đồ: codec mặc định của repo là **YUI-LZ** tự
-viết (không phụ thuộc), đã đạt >3× trên văn bản lặp và chạy được ngay sau khi
-cài. Backend Zstd là tuỳ chọn (`Codec::Zstd` đã dành chỗ) cho trang lạnh; xem
-[`docs/FORMAT-YUIP.md`](docs/FORMAT-YUIP.md).
+Chi tiết từng thư mục: mỗi thư mục có `README.md` riêng nói nó làm gì, đã xong
+phần nào, còn thiếu phần nào.
 
 ---
 
-## Cấu trúc repo
+## Trạng thái thật (không tô hồng)
 
-```
-core/
-  include/yui/      API công khai: crypto, codec, vault, graph, engine,
-                    sandbox, service, server, shell, apppack, ime, text, ui, yui.h (C ABI)
-  src/crypto/       SHA-256, HMAC, SHAKE-256, scrypt, vault
-  src/kernel/       graph, engine (q4/t2 + SIMD), text (tiếng Việt), ime, profile,
-                    apppack, ui
-  src/sandbox/      capability token + hộp cát 3 bậc + audit
-  src/daemon/       service (dispatch), server (socket/MCP), shell, main (yuid)
-  src/capi/         lớp C-ABI của libyui
-  tests/            7 bộ test C++ + 1 bộ test C11
-crates/             Rust no_std: yui-cap (Tầng 1), yui-sched, yui-zram (Tầng 2)
-ui/app/             App Yui (Flutter) — khung sườn, chưa build
-tools/              profiler, trim, shell (CLI cho người dùng)
-sandbox/policies/   chính sách hộp cát mẫu (có test)
-sandbox/vmm/        đặc tả manifest micro-VM
-arch/               x86_64, arm64, riscv64 (linker + luồng khởi động)
-docs/               kiến trúc, bảo mật, giao thức, định dạng, build, roadmap
-```
+Mỗi dòng "đã có" đều trỏ tới tệp và test cụ thể; mỗi dòng "chưa" đều trỏ tới
+task trong [`docs/PLAN.md`](docs/PLAN.md).
 
-## Tài liệu
+| Tầng | Thành phần | Trạng thái | Bằng chứng |
+|---|---|---|---|
+| 0 | Hardware Auto-Profiler: CPU/RAM/GPU/pin/nhiệt → `may-yeu`/`can-bang`/`may-manh` + k/W | ✅ chạy | `kernel-services/profile.cpp`, `tools/profiler` |
+| 0 | Luồng khởi động 3 kiến trúc + linker script x86_64 | 🟡 đặc tả | `arch/*/README.md`, `arch/x86_64/linker.ld` |
+| 1 | Bảng năng lực: 15 quyền, dẫn xuất chỉ thu hẹp, thu hồi bắc cầu | ✅ Rust | `kernel-cap/src/lib.rs` |
+| 1 | Thẻ năng lực ký HMAC-SHA-256, xác minh hằng thời gian, lỗi có kiểu | ✅ hai phía | `kernel-cap/src/lib.rs`, `vmm-sandbox/sandbox.cpp` |
+| 1 | SHA-256 / HMAC / SHAKE-256 / scrypt tự viết, có vector RFC | ✅ | `kernel-services/crypto.cpp`, `tests/test_crypto.cpp` |
+| 1 | Sovereign Keyring + `.bundle` ký Ed25519 | ❌ chưa có | P2.4 |
+| 2 | Lập lịch chuyển đổi nóng LAVD (P/E-core, tín dụng đánh thức, công bằng) | ✅ Rust | `kernel-services/yui-sched` (9 test) |
+| 2 | ZRAM: codec YUI-LZ + kho trang nén, fallback verbatim | ✅ Rust + C++ | `kernel-services/yui-zram` (8 test), `kernel-services/codec.cpp` |
+| 2 | `yui-frame` (khung unsafe duy nhất), tickless, DVFS, FS bất biến, Linux ABI | ❌ chưa có | P2.1–P2.9 |
+| 3 | Hộp cát 3 bậc + audit + 4 policy mẫu có test | ✅ | `vmm-sandbox/` (129 check) |
+| 3 | Manifest micro-VM (JSON Schema) | 🟡 đặc tả | `vmm-sandbox/vmm/` |
+| 3 | VMM thật (KVM), Wine/VKD3D, Waydroid-lite | ❌ chưa có | P3 |
+| 4 | `yuid`: socket `/run/yuid.sock`, JSON-RPC 2.0 | ✅ chạy | `ai-bridge-yuid/daemon/` (102 check) |
+| 4 | C-ABI `libyui.so/.a` + header C, kiểm từ **C11** | ✅ chạy | `include/yui/yui.h`, `tests/test_capi.c` (36 check) |
+| 4 | MCP `2024-11-05`, 8 công cụ dữ liệu | ✅ chạy | `ai-bridge-yuid/daemon/server.cpp` |
+| 4 | Telemetry Hook + 5 công cụ OS MCP có xác nhận | ❌ chưa có | P1.5, P4.3 |
+| 4 | Cài đặt tham chiếu graph/vault/engine (**sẽ thay ở P5**) | 🟡 tạm | `ai-bridge-yuid/reference/` |
+| 5 | Smart App Stripper: strip ELF, khử trùng lặp, lọc locale, chống zip-slip | ✅ chạy | `pkg-stripper/apppack.cpp`, `tools/trim` (61 check) |
+| 5 | Bộ gõ Telex **và** VNI, đặt dấu đúng chính tả | ✅ 84 test | `userspace-vi/ime.cpp` |
+| 5 | Shell song ngữ Việt–Anh, 15 lệnh | ✅ chạy | `userspace-vi/shell.cpp` |
+| 5 | Kế hoạch giao diện thích ứng (Framebuffer ⇄ Vulkan/DRM) | ✅ logic + test | `userspace-vi/ui.cpp` |
+| 5 | Bộ vẽ/compositor thật, IBus engine, App Yui build được | ❌ chưa có | P1.4, P2.6, P4.1, P4.5 |
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — từng tầng làm gì, ai gọi ai, vì sao.
-- [`docs/SECURITY.md`](docs/SECURITY.md) — mô hình mối đe doạ, mô hình năng lực, giới hạn thật.
-- [`docs/PROTOCOL.md`](docs/PROTOCOL.md) — JSON-RPC qua `/run/yuid.sock`, MCP, C-ABI, định dạng token.
-- [`docs/FORMAT-YUIP.md`](docs/FORMAT-YUIP.md) — YUI-LZ, container YUIP, kho YUIA, blob vault.
-- [`docs/BUILD.md`](docs/BUILD.md) — build, cross-compile, toolchain Rust, CI.
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — cái gì tiếp theo và cần gì để làm.
+**Chưa kiểm chứng được trong môi trường soạn thảo này**: biên dịch Rust (không có
+`cargo`), boot QEMU (chưa có nhân), build Flutter (không có SDK). Cả ba đều có
+job CI và task tương ứng trong `PLAN.md` — chúng tôi **không** tuyên bố chúng đã chạy.
+
+---
+
+## Phase P5 — dự trữ, chưa kích hoạt
+
+Lõi AI (`yui.cpp`, `.yui v3`, `yui_graph`, `yui_vault`, `Y-App`) phát triển ở hai
+repo riêng. Repo này chỉ dựng **cổng chờ** với hợp đồng ổn định:
+
+- `telemetry.read` + `yui_telemetry()` — pin, nhiệt, RAM, khuyến nghị k/W
+  (`k=1,W=16` khi yếu/pin thấp; `k=2..4` khi cắm sạc/máy mạnh)
+- `sys_power`, `sys_scheduler`, `sys_app_stripper`, `sys_proc`, `sys_search_vault`
+  qua MCP, mỗi hành động cần quyền + xác nhận người dùng + audit
+- `mmap` trực tiếp tệp `.yui v3` (trọng số không bao giờ đi qua socket)
+
+Khi bạn ra lệnh **"Tích hợp AI vào hệ điều hành"**, quy trình ở
+[`docs/PLAN.md`](docs/PLAN.md) §P5 được thực hiện tuần tự: kéo mã → đóng băng SHA →
+build `libyui.so` 3 kiến trúc → kiểm C-ABI → cắm vào bridge → bật `yuid` → bật
+điều khiển tiếng Việt. Có đường rollback một lệnh (`--reference-engine`).
+
+---
 
 ## Nguyên tắc
 
-1. **Tiếng Việt là công dân hạng nhất**, không phải bản dịch: bộ gõ, tìm kiếm
-   không phân biệt hoa/thường có dấu, shell hai tên lệnh, thông báo lỗi tiếng Việt.
-2. **Máy yếu không phải phiên bản cắt bớt**: cùng một binary, cùng một chính sách,
-   chỉ khác k/W và đường vẽ.
-3. **Không hứa những gì chưa kiểm thử**: mỗi tuyên bố trong README này đều trỏ
-   tới file và test cụ thể.
-4. **Mặc định từ chối**: không có năng lực thì không có quyền, kể cả với app nội bộ.
+1. **Clean-room**: không một dòng mã từ Linux/seL4/Asterinas; chỉ dùng nguyên lý
+   công khai + chuẩn giao tiếp. MIT, không nghĩa vụ GPL.
+2. **Rust an toàn**: `#![deny(unsafe_code)]` cho mọi crate nhân; `unsafe` chỉ được
+   tồn tại trong khung phần cứng `yui-frame` (P2.1) và được `scripts/verify.sh` canh.
+3. **Tiếng Việt hạng nhất**: tìm không dấu, bộ gõ đúng chính tả, shell hai tên lệnh.
+4. **Máy yếu không phải bản cắt bớt**: cùng binary, khác chế độ vận hành.
+5. **Không hứa điều chưa đo**: mỗi mục tiêu có số đo trong `PLAN.md`; giới hạn bảo
+   mật được liệt kê thẳng ở [`docs/SECURITY.md`](docs/SECURITY.md) §7.
 
 ## Giấy phép
 
-MIT — xem [`LICENSE`](LICENSE). Clean-room: không mã nguồn GPL/closed nào được
-sao chép; các thuật toán (SHA-2, SHA-3/SHAKE, scrypt, LZ77, q4) được cài đặt lại
-từ đặc tả công khai và đối chiếu với vector kiểm thử chuẩn.
+MIT — xem [`LICENSE`](LICENSE).

@@ -7,7 +7,7 @@
 | `make` (GNU) | có | chỉ dùng biến thường, không có gì đặc biệt |
 | trình biên dịch C++17 | có | `g++ ≥ 10` hoặc `clang++ ≥ 12` |
 | trình biên dịch C11 | để chạy `test_capi` | `cc`, cùng máy |
-| `rustc`/`cargo` ≥ 1.70 | tuỳ chọn | chỉ cần cho `crates/` (Tầng 1–2) |
+| `rustc`/`cargo` ≥ 1.70 | tuỳ chọn | chỉ cần cho `` (Tầng 1–2) |
 | libzstd, GTK, Qt | **không** | repo không cần thư viện ngoài nào |
 
 Đã kiểm trên Debian 12 / g++ 12.2.0 / glibc 2.36 (x86_64). Không dùng GNU
@@ -39,7 +39,7 @@ Cờ mặc định (giữ nguyên nếu bạn tự đặt `CXXFLAGS`):
 
 ```
 -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter
--Icore/include -Icore/tests -Icore/src/kernel -D_GNU_SOURCE -fPIC
+-Iinclude -Itests -Ikernel-services -Iuserspace-vi -D_GNU_SOURCE -fPIC
 ```
 
 `-fPIC` là bắt buộc vì `libyui.so` được link từ cùng object với `libyui.a`.
@@ -57,15 +57,15 @@ $PREFIX/include/yui/{yui.h,crypto.hpp,…}
 ## 3. Rust (Tầng 1 & 2)
 
 ```bash
-make rust      # cargo test cho từng crate, không cần workspace
+make rust      # cargo test --workspace, rồi build release
 ```
 
 hoặc thủ công:
 
 ```bash
-cd crates/yui-cap   && cargo test
-cd crates/yui-sched && cargo test
-cd crates/yui-zram  && cargo test
+cd kernel-cap   && cargo test
+cd kernel-services/yui-sched && cargo test
+cd kernel-services/yui-zram  && cargo test
 ```
 
 Ba crate đều `#![no_std]` + `alloc` khi **không** ở chế độ `test`, và dùng `std`
@@ -75,7 +75,7 @@ nếu bạn thêm `unsafe`, build sẽ **thất bại** — đó là chủ ý, k
 Ràng buộc:
 
 - `panic = "abort"`, `lto = true`, `codegen-units = 1` trong profile release
-  (xem `crates/Cargo.toml`) — hợp với mã nhân, nơi không có unwinding.
+  (xem `Cargo.toml`) — hợp với mã nhân, nơi không có unwinding.
 - Không có dependency ngoài. `Cargo.lock` được commit cho tái lập.
 - MSRV: 1.70 (do dùng `let … else` và `core::cmp` ổn định từ lâu).
 
@@ -104,7 +104,7 @@ make test                          # tất cả
 | `test_capi` (C11) | 36 | toàn bộ bề mặt `libyui` gọi từ C thuần, kể cả `YUI_E_TOO_SMALL` và hộp cát |
 
 Test dùng `YUI_SOURCE_DIR` (Makefile chèn `-DYUI_SOURCE_DIR='"$(CURDIR)"'`) để
-nạp chính sách thật trong `sandbox/policies/` — nhờ vậy tài liệu và mã không thể
+nạp chính sách thật trong `vmm-sandbox/policies/` — nhờ vậy tài liệu và mã không thể
 lệch nhau mà test vẫn xanh.
 
 ### Chạy test trong môi trường tối thiểu
@@ -137,7 +137,7 @@ ld.lld -T arch/x86_64/linker.ld -nostdlib -o yui-kernel.elf <objects>
 ```
 
 Cần thêm: `limine` (ISO ảnh khởi động), `qemu-system-x86_64` (thử), `xorriso`.
-Không có trong sandbox phát triển hiện tại — xem `docs/ROADMAP.md`.
+Không có trong sandbox phát triển hiện tại — xem `docs/PLAN.md`.
 
 ---
 
