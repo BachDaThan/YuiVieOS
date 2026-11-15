@@ -25,7 +25,7 @@ jobs:
         run: |
           set -o pipefail
           make -j"$(nproc)" 2>&1 | tee /tmp/build.log
-      - name: Test — 2296 checks C++17 + 61 checks C11 (ABI)
+      - name: Test — 2608 checks C++17 + 61 checks C11 (ABI)
         run: |
           set -o pipefail
           make test 2>&1 | tee /tmp/test.log
@@ -207,10 +207,9 @@ jobs:
     name: QEMU boot (${{ matrix.arch }})
     needs: kernel
     runs-on: ubuntu-24.04
-    # aarch64 và riscv64 boot được thật (banner + profiler + bảng năng lực) nên
-    # là cổng bắt buộc. x86_64 vẫn build và vẫn được boot thử, nhưng KHÔNG chặn
-    # merge: QEMU chỉ nạp multiboot 1 từ ELF32 ("Cannot load x86-64 image, give a
-    # 32bit one") — cần multiboot2 + GRUB hoặc shim 32-bit, xem docs/PLAN.md P2.2.
+    # Cả ba kiến trúc là cổng bắt buộc: x86_64 boot được vì build-kernel.sh
+    # đóng gói ELF64 thành container ELF32 (objcopy -O elf32-i386) cho multiboot 1
+    # của QEMU; header multiboot 2 nằm sẵn cho GRUB2. Xem docs/PLAN.md P2.2.
     continue-on-error: ${{ matrix.required == false }}
     strategy:
       fail-fast: false
@@ -221,7 +220,7 @@ jobs:
           - arch: aarch64
             required: true
           - arch: x86_64
-            required: false
+            required: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

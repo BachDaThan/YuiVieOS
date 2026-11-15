@@ -20,7 +20,7 @@ chặn (ghi rõ chặn bởi gì).
 
 | Phase | Nội dung | Trạng thái |
 |---|---|---|
-| **P0** | Nền móng: monorepo, hợp đồng cổng chờ, test C++/C11, CI | ✅ xong (670 check lúc đó, nay 2357) |
+| **P0** | Nền móng: monorepo, hợp đồng cổng chờ, test C++/C11, CI | ✅ xong (670 check lúc đó, nay 2669) |
 | **P1** | Chạy thật trên Linux host: `yuid` service, IBus, stripper, telemetry, OS MCP | 🟡 4/10 task (P1.5 xong) |
 | **P2** | Rust framekernel + 3 kiến trúc + QEMU + năng lượng + FS + Linux ABI | 🟡 khung nhân **boot thật** trên aarch64 + riscv64 (CI xanh); x86_64 chặn bởi QEMU multiboot |
 | **P3** | VMM sandbox (Wine/VKD3D, Waydroid-lite) | ⬜ chưa bắt đầu |
@@ -89,16 +89,18 @@ trên máy thật, và một app được gọt chạy bình thường. Ghi lạ
 |---|---|---|---|
 | P2.0 | Workspace Rust `kernel-cap` + `kernel-services/*`, `deny(unsafe_code)` | [x] | `cargo test --workspace` (CI); `grep unsafe` rỗng; `kernel-frame` **ngoài** workspace để `--workspace` vẫn chỉ chạy trên host |
 | P2.1 | `yui-frame`: khung duy nhất chứa `unsafe` (asm, MMU, ngắt, MMIO) | [x] | `kernel-frame/` là crate **duy nhất** có `unsafe`: 29 khối, tất cả nằm trong 7 tệp có tên + lý do ở `scripts/verify.py::FRAME_UNSAFE_FILES` (tệp khác có `unsafe` ⇒ `verify.sh` đỏ); mọi crate khác vẫn `deny(unsafe_code)`. Boot thật trong QEMU trên aarch64 + riscv64 — job CI `qemu` xanh |
-| P2.2 | `yui-boot` + nhân tối thiểu, x86_64 (BIOS Legacy + UEFI) | [~] | `kernel-frame/src/arch/x86_64.rs` **build được** (multiboot 1 + cầu nối 32→64 bit + COM1) nhưng **chưa boot được**: QEMU từ chối ELF64 (`Cannot load x86-64 image, give a 32bit one`). Hai đường sửa đã chọn: (a) multiboot2 + ISO GRUB, (b) shim 32-bit nạp ELF64. UEFI chưa làm |
-| P2.3 | ARM64 + RISC-V 64 ở mức "ready" | [x] | Cả hai **boot thật trong QEMU** (job CI `qemu` xanh): in `yui: ready`, `Phan loai`, `Tang 1`. riscv64 đọc RAM từ device tree; aarch64 nhận `x0 = 0` (QEMU không truyền DTB cho ELF `-kernel`) nên in `RAM: 0 MiB — khong doc duoc`, **không bịa số** |
-| P2.4 | Sovereign Keyring + Ed25519 clean-room cho `.bundle` | [ ] | Vector RFC 8032 (5 test) qua; sửa 1 byte bundle ⇒ từ chối; bundle hợp lệ ⇒ cài được trong QEMU |
-| P2.5 | Năng lượng: full tickless + DVFS mỗi nhân + clock gating | [ ] | Khi rảnh: **0** wakeup/s trong 10 s (đếm trong nhân); công suất gói giảm **≥ 20 %** so với governor mặc định cùng workload (đo RAPL nếu có, nếu không ghi rõ máy không hỗ trợ) |
-| P2.6 | Hiển thị: framebuffer trực tiếp + DRM/Vulkan zero-copy | [~] | Bộ vẽ pixel tuyến tính + font 5×7 + màn hình chào đã xong và kiểm thử: `userspace-vi/fb.cpp`, `tests/test_fb.cpp` (**1155 check**), `tools/splash` → `docs/splash.png`; bản kernel `kernel-frame/src/splash.rs` vẽ vào framebuffer multiboot. **Còn thiếu:** đường DRM/Vulkan, và đo fps |
-| P2.7 | Lớp Linux ABI: syscall nhóm 1 (file, mmap, futex, epoll) | [ ] | `busybox` chạy ≥ 100 lệnh; `coreutils` `ls/cat/cp` đúng; `python3 -c "print(1)"` in `1` |
-| P2.8 | FS bất biến + write coalescing | [ ] | Rút điện đột ngột 20 lần khi đang ghi: `graph.json` **luôn** parse được (0 hỏng); số lần ghi giảm ≥ 50 % so với fsync từng lần |
+| P2.2 | `yui-boot` + nhân tối thiểu, x86_64 (BIOS Legacy + UEFI) | [~] | **Đã sửa đường boot QEMU x86_64**: header Multiboot2 (24 byte + end tag, checksum `-(0xE85250D6+24)`) đặt cạnh Multiboot1; cầu 32→64 mở rộng edi/esi thành `kmain_x86(u32,u32)` phân biệt magic `0x2BADB002`/`0x36D76289`; `parse_multiboot2` đọc **little-endian** (đã sửa lỗi be32); `build-kernel.sh` xuất `.elf64` + `objcopy -O elf32-i386` ra `.elf` cho QEMU `-kernel`; job CI `qemu` **bắt buộc** cả 3 kiến trúc. **Còn đợi:** CI `kernel`+`qemu` xanh xác nhận boot thật (sandbox dev không có QEMU — không claim thay). UEFI chưa làm |
+| P2.3 | ARM64 + RISC-V 64 ở mức "ready" | [x] | Cả hai **boot thật trong QEMU** (job CI `qemu` xanh): in `yui: ready`, `Phan loai`, `Tang 1`. riscv64 đọc RAM từ device tree; aarch64 nhận `x0 = 0` (QEMU không truyền DTB cho ELF `-kernel`) nên tự quét FDT (`find_fdt`) trong cửa sổ `0x4000_0000±512 KiB`, không có thì in `RAM: 0 MiB — khong doc duoc`, **không bịa số** |
+| P2.4 | Sovereign Keyring + Ed25519 clean-room cho `.bundle` | [x] | **Xong, có bằng chứng test**: Ed25519 clean-room (`kernel-services/ed25519.cpp` ~600 dòng + `kernel-cap/src/ed25519.rs`) khớp **vector RFC 8032 §7.1** (TEST 1/2/3/SHA(abc)/1024 — pub + sig khớp từng hex) và SHA-512 khớp FIPS 180-4: `tests/test_ed25519.cpp` **78 check xanh**; kho khoá + `.bundle` ký/xác minh ngoại tuyến + 5 kịch bản sửa 1 byte đều từ chối + cài khe A/B + quay lui (`bundle.*`); bản Rust `keyring.rs`/`bundle.rs` có test song song. **Còn thiếu (ngoài phạm vi bản này):** cài bundle thật trong QEMU |
+| P2.5 | Năng lượng: full tickless + DVFS mỗi nhân + clock gating | [~] | **Chính sách đã cài + test 47 check** (`include/yui/power.hpp`, `kernel-services/power.cpp`, `tests/test_power.cpp`): tickless 0 wakeup định kỳ khi rảnh, kế hoạch ngủ theo deadline (halt/deep/suspend), bảng OPP 3 loại máy, DVFS theo tải/nhiệt/pin/trần tiến trình, clock-gating GPU/NPU khi quá nhiệt 75 °C, bóp xung per-task. Nguồn dữ liệu = `telemetry.cpp`. **Còn thiếu:** đo trên nhân thật (0 wakeup/10 s, ≥ 20 % W gói) — không có phần cứng trong sandbox, không claim thay |
+| P2.6 | Hiển thị: framebuffer trực tiếp + DRM/Vulkan zero-copy | [~] | Bộ vẽ pixel tuyến tính + font 5×7 + màn hình chào: `userspace-vi/fb.cpp`, `tests/test_fb.cpp` (**1184 check**), `tools/splash` → `docs/splash.png`; bản kernel `kernel-frame/src/splash.rs`. **Đã thêm chữ Việt có dấu**: 180 chữ cái tiền tổ hợp (bảng NFD sinh từ Unicode), dấu thanh + dấu nguyên âm xếp chồng + dấu nặng + đ/Đ, `draw_text_utf8` vẽ ASCII **giống hệt** `draw_text` cùng toạ độ; khung cửa sổ + nhãn tiếng Việt (`userspace-vi/ui.cpp::render_window`) — test `fb_viet.*` (29 check). **Còn thiếu:** đường DRM/Vulkan, và đo fps |
+| P2.7 | Lớp Linux ABI: syscall nhóm 1 (file, mmap, futex, epoll) | [~] | **Bảng phân phối syscall đã có** (`kernel-services/linuxabi.cpp`, `tests/test_linuxabi.cpp` **38 check**): read/write/open/close/openat/exit/exit_group đúng ngữ nghĩa, `/core` chỉ-đọc (EPERM), `utimensat` → EPERM (chặn timestomping), fork/execve/socket/connect → EPERM, `nr_from32` quy đổi số i386, không rõ ⇒ ENOSYS. **Còn thiếu:** mmap/futex/epoll + busybox/coreutils/python3 thật |
+| P2.8 | FS bất biến + write coalescing | [~] | **Đã cài + test 37 check** (`kernel-services/fsstore.cpp`, `tests/test_fsstore.cpp`): phân vùng lõi từ chối mọi ghi (lý do tiếng Việt), `WriteCoalescer` gộp ghi cùng trang (3 lệnh → 1 chốt vật lý), chốt lỗi giữ trang để thử lại, chặn `..`/`//`/đường dẫn tuyệt đối. **Còn thiếu:** test rút điện 20 lần trên QEMU với disk image thật |
 | P2.9 | ZRAM trong nhân thật | [ ] | 200 MB văn phòng → < 80 MB trong QEMU với RAM 512 MB; đọc lại đúng |
 | P2.10 | Self-hosting: build `yuid` trên chính YuiVieOS Beta | [ ] | Trong QEMU: `cargo build` (hoặc rustc bootstrap) của `yuid` thành công; chạy `yuid --info` từ binary vừa build |
 | P2.11 | Ngân sách RAM máy yếu | [ ] | Sau boot (nhân + dịch vụ bắt buộc): **< 64 MB** RSS tổng, đo bằng `free`/bộ đếm trong nhân |
+| P2.12 | Guard chống bất thường nền (đào coin ngầm) — `docs/SECURITY.md` §10.1 | [x] | Quy tắc 70 %/15 s/headless/không `compute.heavy` ⇒ hạ Idle + bóp xung 20 % + audit + hỏi "tiêu diệt / gỡ bỏ / để yên" qua `yuid` (`guard.decide` bắt buộc `confirm`). Cài: `kernel-services/guard.cpp`, `kernel-services/yui-sched/src/guard.rs`, `ai-bridge-yuid/daemon/service.cpp` (`guard.observe/alerts/decide`). Test: `tests/test_redteam.cpp` (kịch bản miner, tải nhấp nháy, tiến trình hợp lệ bất khả xâm phạm, chuỗi quyết định qua daemon) |
+| P2.13 | Bộ lọc egress theo năng lực + test Red-Team — `docs/SECURITY.md` §10.2–10.3 | [x] | `isolated`/`microvm` mặc định chặn egress; chỉ đích trong `policies/*.json` (host/wildcard/CIDR + cổng) đi được, deny thắng allow, có lý do tiếng Việt. Cài: `vmm-sandbox/sandbox.cpp::EgressFilter` (+ `compute.heavy` vào bảng quyền, docs 15→16). Test: `tests/test_redteam.cpp` (mặc định chặn, khoá hậu tố giả mạo, sai cổng, ngoài CIDR, exfil bị chặn ở cả EgressFilter lẫn Enforcer + audit) |
 
 **Gate P2:** 3 kiến trúc boot trong QEMU trên CI; ngân sách RAM và tickless đạt;
 Ed25519 chạy. **Đây là gate khó nhất của dự án** — không đánh dấu xong nếu thiếu
@@ -167,7 +169,7 @@ một kiến trúc.
 | P5.6 | Nạp `.yui v3` | `mmap` tệp qua `yuid`, kiểm `fs.read` đúng đường dẫn; test: tệp 1 GB mở < 50 ms, RAM tăng < 5 MB |
 | P5.7 | Bật dịch vụ nền `yuid` | `systemctl enable --now yuid`, socket `0600`, `yuid --info` liệt kê engine thật |
 | P5.8 | Bật điều khiển tiếng Việt qua MCP | test 5 công cụ với câu tiếng Việt có dấu **và** không dấu; mỗi hành động có audit + xác nhận |
-| P5.9 | Kiểm hồi quy toàn bộ | `make test` 2357 check xanh; thêm test tích hợp: 1 câu lệnh tiếng Việt → hành động OS thật |
+| P5.9 | Kiểm hồi quy toàn bộ | `make test` 2669 check xanh (2608 C++17 + 61 C11); thêm test tích hợp: 1 câu lệnh tiếng Việt → hành động OS thật |
 | P5.10 | Ghi lại số đo | thời gian phản hồi, RAM tăng thêm, k/W thực tế ở 3 chế độ máy |
 
 ### 7.3 Điều kiện thoát (rollback)
@@ -191,7 +193,7 @@ File: `.github/workflows/ci.yml`. Sáu job, chạy song song trên mọi push/PR
 
 | Job | Chạy gì | Pass khi |
 |---|---|---|
-| `cpp` | `make -j`, `make test`, `make check`, `make install` vào prefix tạm, link `libyui.a` từ chương trình C ngoài cây | **2357** check pass (2296 C++17 + 61 C11); 9 binary tồn tại; chương trình C in `abi=1` |
+| `cpp` | `make -j`, `make test`, `make check`, `make install` vào prefix tạm, link `libyui.a` từ chương trình C ngoài cây | **2669** check pass (2608 C++17 + 61 C11); 9 binary tồn tại; chương trình C in `abi=1` |
 | `rust` | `cargo test --workspace`, `cargo build --release`; fmt/clippy advisory | 0 test fail |
 | `docs` | `scripts/verify.sh`: policy JSON parse, không CRLF, liên kết README, không `unsafe` trong crate nhân | tất cả xanh |
 | `cross-arch` | `cargo check --workspace --target {aarch64-unknown-linux-gnu, riscv64gc-unknown-linux-gnu}` | cả hai target type-check |
@@ -284,3 +286,10 @@ vào nhật ký dưới đây.
 | 2026-11-15 | P2.1, P2.3 | CI `kernel` xanh 3/3 target; CI `qemu` xanh cho aarch64 + riscv64 (boot thật, thấy 3 dòng bắt buộc). Lỗi tìm và sửa được nhờ CI: E0255 macro, `misa` là CSR cấp M (S-mode đọc ⇒ trap), PL011 thiếu divisor, `{}` với `&str` runtime trên aarch64, `relocation-model=static`, PLT/linker script |
 | 2026-11-15 | P2.2 (`[~]`) | x86_64 build xong nhưng QEMU `-kernel` chỉ nhận multiboot 1 từ ELF32; ghi rõ 2 hướng sửa. Job `qemu` x86_64 để `required: false` nên không chặn merge, nhưng **vẫn đỏ và vẫn hiện** |
 | 2026-11-15 | P1.6 (`[~]`) | `yui-trim` tròn vẹn trên cây thư mục mẫu: 5 file → gói 187 B, lọc `locale/fr/`, giải nén đúng |
+| 2026-11-15 | P2.2 (`[~]`) — sửa boot x86_64 | Header Multiboot2 (24 B + end tag) song song Multiboot1; `kmain_x86(u32,u32)` phân biệt magic mb1/mb2; `parse_multiboot2` đọc LE (sửa lỗi be32); `build-kernel.sh` xuất `.elf64` + `objcopy -O elf32-i386` → `.elf`; smoke asserts thêm `! grep "khong doc duoc"`; CI `qemu` bắt buộc 3 kiến trúc. **Boot thật chỉ xác nhận bằng CI** (sandbox không có QEMU) |
+| 2026-11-15 | P2.4 (`[x]`) | Ed25519 clean-room C++ + Rust: `tests/test_ed25519.cpp` **78 check** (FIPS SHA-512 ×3 + streaming, RFC 8032 TEST 1/2/3/SHA(abc)/1024 khớp hex từng byte, tamper); `.bundle` keyring + ký/xác minh + 5 kịch bản sửa 1 byte + khe A/B quay lui; bản Rust `sha512/ed25519/keyring/bundle.rs` có test vector song song (chạy qua CI — sandbox không có cargo) |
+| 2026-11-15 | P2.5 (`[~]`) | `power.hpp/.cpp` + `test_power` **47 check** (tickless 0 wakeup định kỳ, OPP 3 loại máy, DVFS tải/nhiệt/pin/trần, clock-gating quá nhiệt) — chưa đo phần cứng |
+| 2026-11-15 | P2.6 (`[~]`) — chữ Việt | `fb.cpp` mở rộng: bảng 180 chữ cái NFD sinh từ Unicode, dấu thanh + nguyên âm xếp chồng + nặng + đ/Đ; `draw_text_utf8` ASCII y hệt `draw_text`; `ui.cpp::render_window`/`render_label`; `test_fb` **1184 check** (1155 cũ + 29 `fb_viet.*`) |
+| 2026-11-15 | P2.7 (`[~]`) | `linuxabi.cpp` bảng phân phối syscall + `test_linuxabi` **38 check** (openat/utimensat EPERM, /core chỉ-đọc, nr_from32, ENOSYS) — chưa có busybox/coreutils |
+| 2026-11-15 | P2.8 (`[~]`) | `fsstore.cpp` bất biến + ghi gộp + `test_fsstore` **37 check** (3 lệnh ghi → 1 chốt vật lý, chặn `..`/`//`) — chưa test rút điện |
+| 2026-11-15 | P2.12–P2.13 (`[x]`) — 3 phòng vệ | Guard đào coin (`guard.cpp` + `yui-sched/src/guard.rs` + `yuid` `guard.*`), EgressFilter (`sandbox.cpp`), `tests/test_redteam.cpp` **83 check**; `compute.heavy` vào bảng quyền (15→16, C++/Rust/docs); `docs/SECURITY.md` §6 thành "đã cài đặt" + §10 mô tả 3 cơ chế. Tổng `make test` **2669 check** (2608 C++17 + 61 C11), 2357 cũ giữ xanh 100% |

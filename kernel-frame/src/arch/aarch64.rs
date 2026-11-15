@@ -85,5 +85,17 @@ pub fn cpu_vendor() -> [u8; 12] {
 
 #[no_mangle]
 pub extern "C" fn kmain_arm(dtb: usize) -> ! {
-    crate::kmain(RawBoot::DeviceTree(dtb as u64))
+    let mut addr = dtb as u64;
+    if addr == 0 {
+        // QEMU `-kernel` với ảnh ELF: bootloader QEMU coi đây là "ELF không
+        // phải Linux" nên nhảy thẳng vào _start mà KHÔNG đặt x0 (xem
+        // hw/arm/boot.c: "Assume that raw images are linux kernels, and ELF
+        // images are not"), nhưng nó vẫn sinh DTB và đặt ngay tại đầu RAM
+        // (`loader_start` = 0x4000_0000 trên QEMU virt, dưới ảnh nhân ở
+        // 0x4008_0000). U-Boot/UEFI thì truyền x0 đúng chuẩn. Khi x0 = 0,
+        // quét cửa sổ đầu RAM để tìm magic FDT — không thấy thì để 0 và báo
+        // "khong doc duoc", tuyệt đối không bịa số.
+        addr = crate::boot::find_fdt(0x4000_0000, 0x8_0000);
+    }
+    crate::kmain(RawBoot::DeviceTree(addr))
 }

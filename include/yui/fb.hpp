@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "yui/engine.hpp"
 #include "yui/profile.hpp"
@@ -58,6 +59,29 @@ std::string to_ppm(const Surface& s);
 /// ASCII-only uppercase copy of a Vietnamese string (the 5x7 font has no
 /// diacritics; documents and the shell use the real thing).
 std::string ascii_upper(const std::string& utf8);
+
+// ------------------------------------------------------- Vietnamese UTF-8 --
+// Chữ Việt có dấu trên framebuffer — "ngôn ngữ hiển thị", P2.10.
+//
+// Ô chữ mở rộng: glyph 5×7 gốc + dải dấu 3 hàng phía trên + 1 hàng dấu nặng
+// phía dưới (tổng 11 hàng mỗi dòng ở scale = 1). Mỗi chữ cái tiếng Việt tiền
+// tổ hợp được tách thành chữ gốc Latin + mặt nạ dấu (NFD) — xem bảng
+// kViet trong fb.cpp, sinh tự động từ Unicode nên không sót chữ nào.
+// Chuỗi ASCII vẽ giống hệt draw_text (cùng glyph, cùng bước 6*scale).
+
+/// Số điểm ảnh của một dòng chữ Việt ở `scale` (7 chữ + 3 dấu + 1 dấu nặng).
+int text_height_utf8(int scale);
+/// Bề rộng pixel của `utf8` ở `scale` (cùng công thức với text_width).
+int text_width_utf8(const std::string& utf8, int scale);
+/// Giải mã UTF-8 → codepoint; byte lỗi trả U+FFFD (thử nghiệm dùng).
+std::vector<uint32_t> decode_utf8(const std::string& utf8);
+/// Vẽ chuỗi UTF-8 (tiếng Việt đầy đủ dấu + ASCII). `y` là ĐỈNH CHỮ CÁI —
+/// đúng tọa độ của draw_text, nên chuỗi ASCII thuần vẽ GIỐNG HỆT draw_text
+/// (cùng glyph, cùng vị trí). Dải dấu vẽ phía trên `y` (3×scale px) và dấu
+/// nặng phía dưới (1×scale px) — người gọi chừa chỗ theo text_height_utf8.
+/// Chữ không có trong bảng vẽ thành '?' — không bao giờ bịa glyph.
+void draw_text_utf8(const Surface& s, int x, int y, const std::string& utf8, uint32_t argb,
+                    int scale);
 
 }  // namespace yui::fb
 

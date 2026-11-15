@@ -255,4 +255,368 @@ std::string to_ppm(const Surface& s) {
   return out;
 }
 
+
+// ------------------------------------------------------ Vietnamese UTF-8 --
+namespace {
+
+// Bảng tách chữ Việt tiền tổ hợp (NFD): codepoint → chữ gốc + mặt nạ dấu.
+// Sinh tự động từ cơ sở dữ liệu Unicode nên đủ 178 chữ cái Việt + đ/Đ.
+// Mặt nạ: 1=huyền 2=sắc 4=ngã 8=hỏi 16=nặng(dưới) 32=^ 64=˘ 128=horn 256=gạch-đ.
+struct VietLetter {
+  uint32_t cp;
+  char base;
+  uint16_t top;
+  uint8_t below;
+};
+
+constexpr VietLetter kViet[] = {
+    {0x00C0, 'A', 1, 0},
+    {0x00C1, 'A', 2, 0},
+    {0x00C2, 'A', 32, 0},
+    {0x00C3, 'A', 4, 0},
+    {0x00C8, 'E', 1, 0},
+    {0x00C9, 'E', 2, 0},
+    {0x00CA, 'E', 32, 0},
+    {0x00CC, 'I', 1, 0},
+    {0x00CD, 'I', 2, 0},
+    {0x00CE, 'I', 32, 0},
+    {0x00D1, 'N', 4, 0},
+    {0x00D2, 'O', 1, 0},
+    {0x00D3, 'O', 2, 0},
+    {0x00D4, 'O', 32, 0},
+    {0x00D5, 'O', 4, 0},
+    {0x00D9, 'U', 1, 0},
+    {0x00DA, 'U', 2, 0},
+    {0x00DB, 'U', 32, 0},
+    {0x00DD, 'Y', 2, 0},
+    {0x00E0, 'A', 1, 0},
+    {0x00E1, 'A', 2, 0},
+    {0x00E2, 'A', 32, 0},
+    {0x00E3, 'A', 4, 0},
+    {0x00E8, 'E', 1, 0},
+    {0x00E9, 'E', 2, 0},
+    {0x00EA, 'E', 32, 0},
+    {0x00EC, 'I', 1, 0},
+    {0x00ED, 'I', 2, 0},
+    {0x00EE, 'I', 32, 0},
+    {0x00F1, 'N', 4, 0},
+    {0x00F2, 'O', 1, 0},
+    {0x00F3, 'O', 2, 0},
+    {0x00F4, 'O', 32, 0},
+    {0x00F5, 'O', 4, 0},
+    {0x00F9, 'U', 1, 0},
+    {0x00FA, 'U', 2, 0},
+    {0x00FB, 'U', 32, 0},
+    {0x00FD, 'Y', 2, 0},
+    {0x0102, 'A', 64, 0},
+    {0x0103, 'A', 64, 0},
+    {0x0106, 'C', 2, 0},
+    {0x0107, 'C', 2, 0},
+    {0x0108, 'C', 32, 0},
+    {0x0109, 'C', 32, 0},
+    {0x0110, 'D', 256, 0},
+    {0x0111, 'D', 256, 0},
+    {0x0114, 'E', 64, 0},
+    {0x0115, 'E', 64, 0},
+    {0x011C, 'G', 32, 0},
+    {0x011D, 'G', 32, 0},
+    {0x011E, 'G', 64, 0},
+    {0x011F, 'G', 64, 0},
+    {0x0124, 'H', 32, 0},
+    {0x0125, 'H', 32, 0},
+    {0x0128, 'I', 4, 0},
+    {0x0129, 'I', 4, 0},
+    {0x012C, 'I', 64, 0},
+    {0x012D, 'I', 64, 0},
+    {0x0134, 'J', 32, 0},
+    {0x0135, 'J', 32, 0},
+    {0x0139, 'L', 2, 0},
+    {0x013A, 'L', 2, 0},
+    {0x0143, 'N', 2, 0},
+    {0x0144, 'N', 2, 0},
+    {0x014E, 'O', 64, 0},
+    {0x014F, 'O', 64, 0},
+    {0x0154, 'R', 2, 0},
+    {0x0155, 'R', 2, 0},
+    {0x015A, 'S', 2, 0},
+    {0x015B, 'S', 2, 0},
+    {0x015C, 'S', 32, 0},
+    {0x015D, 'S', 32, 0},
+    {0x0168, 'U', 4, 0},
+    {0x0169, 'U', 4, 0},
+    {0x016C, 'U', 64, 0},
+    {0x016D, 'U', 64, 0},
+    {0x0174, 'W', 32, 0},
+    {0x0175, 'W', 32, 0},
+    {0x0176, 'Y', 32, 0},
+    {0x0177, 'Y', 32, 0},
+    {0x0179, 'Z', 2, 0},
+    {0x017A, 'Z', 2, 0},
+    {0x01A0, 'O', 128, 0},
+    {0x01A1, 'O', 128, 0},
+    {0x01AF, 'U', 128, 0},
+    {0x01B0, 'U', 128, 0},
+    {0x01F4, 'G', 2, 0},
+    {0x01F5, 'G', 2, 0},
+    {0x01F8, 'N', 1, 0},
+    {0x01F9, 'N', 1, 0},
+    {0x1EA0, 'A', 0, 16},
+    {0x1EA1, 'A', 0, 16},
+    {0x1EA2, 'A', 8, 0},
+    {0x1EA3, 'A', 8, 0},
+    {0x1EA4, 'A', 34, 0},
+    {0x1EA5, 'A', 34, 0},
+    {0x1EA6, 'A', 33, 0},
+    {0x1EA7, 'A', 33, 0},
+    {0x1EA8, 'A', 40, 0},
+    {0x1EA9, 'A', 40, 0},
+    {0x1EAA, 'A', 36, 0},
+    {0x1EAB, 'A', 36, 0},
+    {0x1EAC, 'A', 32, 16},
+    {0x1EAD, 'A', 32, 16},
+    {0x1EAE, 'A', 66, 0},
+    {0x1EAF, 'A', 66, 0},
+    {0x1EB0, 'A', 65, 0},
+    {0x1EB1, 'A', 65, 0},
+    {0x1EB2, 'A', 72, 0},
+    {0x1EB3, 'A', 72, 0},
+    {0x1EB4, 'A', 68, 0},
+    {0x1EB5, 'A', 68, 0},
+    {0x1EB6, 'A', 64, 16},
+    {0x1EB7, 'A', 64, 16},
+    {0x1EB8, 'E', 0, 16},
+    {0x1EB9, 'E', 0, 16},
+    {0x1EBA, 'E', 8, 0},
+    {0x1EBB, 'E', 8, 0},
+    {0x1EBC, 'E', 4, 0},
+    {0x1EBD, 'E', 4, 0},
+    {0x1EBE, 'E', 34, 0},
+    {0x1EBF, 'E', 34, 0},
+    {0x1EC0, 'E', 33, 0},
+    {0x1EC1, 'E', 33, 0},
+    {0x1EC2, 'E', 40, 0},
+    {0x1EC3, 'E', 40, 0},
+    {0x1EC4, 'E', 36, 0},
+    {0x1EC5, 'E', 36, 0},
+    {0x1EC6, 'E', 32, 16},
+    {0x1EC7, 'E', 32, 16},
+    {0x1EC8, 'I', 8, 0},
+    {0x1EC9, 'I', 8, 0},
+    {0x1ECA, 'I', 0, 16},
+    {0x1ECB, 'I', 0, 16},
+    {0x1ECC, 'O', 0, 16},
+    {0x1ECD, 'O', 0, 16},
+    {0x1ECE, 'O', 8, 0},
+    {0x1ECF, 'O', 8, 0},
+    {0x1ED0, 'O', 34, 0},
+    {0x1ED1, 'O', 34, 0},
+    {0x1ED2, 'O', 33, 0},
+    {0x1ED3, 'O', 33, 0},
+    {0x1ED4, 'O', 40, 0},
+    {0x1ED5, 'O', 40, 0},
+    {0x1ED6, 'O', 36, 0},
+    {0x1ED7, 'O', 36, 0},
+    {0x1ED8, 'O', 32, 16},
+    {0x1ED9, 'O', 32, 16},
+    {0x1EDA, 'O', 130, 0},
+    {0x1EDB, 'O', 130, 0},
+    {0x1EDC, 'O', 129, 0},
+    {0x1EDD, 'O', 129, 0},
+    {0x1EDE, 'O', 136, 0},
+    {0x1EDF, 'O', 136, 0},
+    {0x1EE0, 'O', 132, 0},
+    {0x1EE1, 'O', 132, 0},
+    {0x1EE2, 'O', 128, 16},
+    {0x1EE3, 'O', 128, 16},
+    {0x1EE4, 'U', 0, 16},
+    {0x1EE5, 'U', 0, 16},
+    {0x1EE6, 'U', 8, 0},
+    {0x1EE7, 'U', 8, 0},
+    {0x1EE8, 'U', 130, 0},
+    {0x1EE9, 'U', 130, 0},
+    {0x1EEA, 'U', 129, 0},
+    {0x1EEB, 'U', 129, 0},
+    {0x1EEC, 'U', 136, 0},
+    {0x1EED, 'U', 136, 0},
+    {0x1EEE, 'U', 132, 0},
+    {0x1EEF, 'U', 132, 0},
+    {0x1EF0, 'U', 128, 16},
+    {0x1EF1, 'U', 128, 16},
+    {0x1EF2, 'Y', 1, 0},
+    {0x1EF3, 'Y', 1, 0},
+    {0x1EF4, 'Y', 0, 16},
+    {0x1EF5, 'Y', 0, 16},
+    {0x1EF6, 'Y', 8, 0},
+    {0x1EF7, 'Y', 8, 0},
+    {0x1EF8, 'Y', 4, 0},
+    {0x1EF9, 'Y', 4, 0},};
+
+constexpr uint16_t kGrave = 1, kAcute = 2, kTilde = 4, kHook = 8, kDotBelow = 16,
+                   kCirc = 32, kBreve = 64, kHorn = 128, kBar = 256;
+constexpr uint16_t kVowelMask = kCirc | kBreve | kHorn;
+constexpr uint16_t kToneMask = kGrave | kAcute | kTilde | kHook;
+
+const VietLetter* viet_for(uint32_t cp) {
+  for (const auto& v : kViet)
+    if (v.cp == cp) return &v;
+  return nullptr;
+}
+
+// Vẽ một dấu trong hộp 5×2: pattern hàng 0 ở py, hàng 1 ở py + scale.
+void draw_mark(uint16_t bit, const Surface& s, int px, int py, int scale, uint32_t argb) {
+  auto put = [&](int mx, int my) {
+    fill_rect(s, Rect{px + mx * scale, py + my * scale, scale, scale}, argb);
+  };
+  switch (bit) {
+    case kGrave: put(1, 0); put(0, 1); break;
+    case kAcute: put(3, 0); put(2, 1); break;
+    case kTilde: put(1, 0); put(2, 1); put(3, 0); break;
+    case kHook: put(1, 0); put(2, 0); put(2, 1); break;
+    case kCirc: put(2, 0); put(1, 1); put(3, 1); break;
+    case kBreve: put(1, 0); put(3, 0); put(2, 1); break;
+    case kHorn: put(3, 0); put(4, 0); put(4, 1); break;
+    default: break;
+  }
+}
+
+// Chỉ hàng dưới của dấu — dùng khi xếp chồng thanh điệu + dấu nguyên âm
+// (âm sắc đi trên, nguyên âm sát chữ): tránh chồng pixel vào nhau.
+void draw_mark_base(uint16_t bit, const Surface& s, int px, int py, int scale, uint32_t argb) {
+  auto put = [&](int mx) {
+    fill_rect(s, Rect{px + mx * scale, py, scale, scale}, argb);
+  };
+  switch (bit) {
+    case kGrave: put(0); break;
+    case kAcute: put(2); break;
+    case kTilde: put(2); break;
+    case kHook: put(2); break;
+    case kCirc: put(1); put(3); break;
+    case kBreve: put(2); break;
+    case kHorn: put(4); break;
+    default: break;
+  }
+}
+
+}  // namespace
+
+std::vector<uint32_t> decode_utf8(const std::string& utf8) {
+  std::vector<uint32_t> out;
+  size_t i = 0;
+  const auto byte = [&](size_t k) { return uint8_t(utf8[k]); };
+  while (i < utf8.size()) {
+    const uint8_t b0 = byte(i);
+    uint32_t cp = 0;
+    size_t extra = 0;
+    if (b0 < 0x80) {
+      cp = b0;
+    } else if ((b0 & 0xE0) == 0xC0) {
+      cp = b0 & 0x1F;
+      extra = 1;
+    } else if ((b0 & 0xF0) == 0xE0) {
+      cp = b0 & 0x0F;
+      extra = 2;
+    } else if ((b0 & 0xF8) == 0xF0) {
+      cp = b0 & 0x07;
+      extra = 3;
+    } else {
+      out.push_back(0xFFFD);
+      ++i;
+      continue;
+    }
+    if (extra > 0 && i + extra >= utf8.size()) {
+      out.push_back(0xFFFD);
+      break;
+    }
+    bool bad = false;
+    for (size_t k = 1; k <= extra; ++k) {
+      const uint8_t b = byte(i + k);
+      if ((b & 0xC0) != 0x80) { bad = true; break; }
+      cp = (cp << 6) | (b & 0x3F);
+    }
+    if (bad) {
+      out.push_back(0xFFFD);
+      ++i;
+      continue;
+    }
+    // Từ chối overlong / surrogate / ngoài Unicode — không bao giờ "bịa" ký tự.
+    if ((extra == 1 && cp < 0x80) || (extra == 2 && cp < 0x800) || (extra == 3 && cp < 0x10000) ||
+        (cp >= 0xD800 && cp <= 0xDFFF) || cp > 0x10FFFF) {
+      out.push_back(0xFFFD);
+      i += extra + 1;
+      continue;
+    }
+    out.push_back(cp);
+    i += extra + 1;
+  }
+  return out;
+}
+
+int text_height_utf8(int scale) { return scale < 1 ? 11 : 11 * scale; }
+
+int text_width_utf8(const std::string& utf8, int scale) {
+  if (scale < 1) scale = 1;
+  size_t n = decode_utf8(utf8).size();
+  for (size_t k = 0; k < utf8.size(); ++k)
+    if (utf8[k] == '\n') { n = k; break; }  // một dòng như text_width
+  if (n == 0) return 0;
+  return int(n) * 6 * scale - scale;
+}
+
+void draw_text_utf8(const Surface& s, int x, int y, const std::string& utf8, uint32_t argb,
+                    int scale) {
+  if (!valid(s) || scale < 1) return;
+  int cx = x;
+  const int gy = y;  // đỉnh chữ cái — cùng tọa độ với draw_text (ASCII y hệt)
+  for (uint32_t cp : decode_utf8(utf8)) {
+    if (cp == '\n') continue;  // như draw_text: một dòng, tự bỏ ký tự xuống dòng
+    const VietLetter* v = viet_for(cp);
+    char base;
+    if (v) {
+      base = v->base;
+    } else if (cp < 128) {
+      base = char(cp);
+      if (base >= 'a' && base <= 'z') base = char(base - 'a' + 'A');
+    } else {
+      base = '?';  // không bịa glyph: chữ lạ vẽ '?'
+    }
+    const Glyph* g = glyph_for(base);
+    if (!g) g = glyph_for('?');
+    if (g) {
+      for (int row = 0; row < 7; ++row) {
+        const uint8_t bits = g->rows[row];
+        for (int col = 0; col < 5; ++col) {
+          if ((bits >> (4 - col)) & 1u) {
+            fill_rect(s, Rect{cx + col * scale, gy + row * scale, scale, scale}, argb);
+          }
+        }
+      }
+    }
+    if (v) {
+      const uint16_t top = v->top;
+      if (top & kBar) {
+        // Đ: gạch ngang cắt thân chữ ở hàng 1 của glyph.
+        for (int mx = 1; mx <= 3; ++mx)
+          fill_rect(s, Rect{cx + mx * scale, gy + 1 * scale, scale, scale}, argb);
+      } else {
+        const uint16_t vowel = top & kVowelMask;
+        const uint16_t tone = top & kToneMask;
+        if (vowel && tone) {
+          // xếp chồng: nguyên âm sát chữ (hàng dưới của dấu), thanh điệu lên trên
+          draw_mark_base(vowel, s, cx, y - 1 * scale, scale, argb);
+          draw_mark(tone, s, cx, y - 3 * scale, scale, argb);
+        } else if (vowel) {
+          draw_mark(vowel, s, cx, y - 2 * scale, scale, argb);
+        } else if (tone) {
+          draw_mark(tone, s, cx, y - 2 * scale, scale, argb);
+        }
+      }
+      if (v->below & kDotBelow) {
+        // dấu nặng: một chấm dưới chân chữ (ngay hàng dưới glyph)
+        fill_rect(s, Rect{cx + 2 * scale, y + 7 * scale, scale, scale}, argb);
+      }
+    }
+    cx += 6 * scale;
+  }
+}
+
 }  // namespace yui::fb

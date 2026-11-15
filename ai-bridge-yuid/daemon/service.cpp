@@ -368,6 +368,102 @@ Value Daemon::method_telemetry() {
   return telemetry::to_json(reading, advice);
 }
 
+Value Daemon::method_guard(const std::string& op, const Value& p, RpcError& err) {
+  // Guard chống bất thường nền (SECURITY.md §11.1): nạp mẫu tải CPU/GPU của
+  // tiến trình, trả cảnh báo tiếng Việt, và hỏi người dùng
+  // "tiêu diệt / gỡ bỏ / để yên" — quyết định phải có `confirm: true`.
+  if (op == "observe") {
+    guard::ProcessSample s;
+    s.pid = uint64_t(p["pid"].as_int(0));
+    s.name = param_string(p, "name", "?");
+    s.cpu_percent = p["cpu_percent"].as_double(0.0);
+    s.gpu_percent = p["gpu_percent"].as_double(0.0);
+    s.has_window = p["has_window"].as_bool(false);
+    s.caps = uint64_t(p["caps"].as_int(0));
+    s.now_ns = p["now_ns"].as_int(0);
+    const auto alert = guard_.observe(s);
+    Value v(json::Object{});
+    v.set("alerted", bool(alert));
+    if (alert) {
+      v.set("pid", int64_t(alert->pid));
+      v.set("name", alert->name);
+      v.set("reason_vi", alert->reason_vi);
+      v.set("notify_vi", alert->notify_vi);
+      v.set("throttle_percent", int64_t(alert->throttle_percent));
+      v.set("demoted", alert->demoted);
+    }
+    return v;
+  }
+  if (op == "alerts") {
+    Value list(json::Array{});
+    for (const auto& a : guard_.alerts()) {
+      Value e(json::Object{});
+      e.set("pid", int64_t(a.pid));
+      e.set("name", a.name);
+      e.set("reason_vi", a.reason_vi);
+      e.set("notify_vi", a.notify_vi);
+      e.set("throttle_percent", int64_t(a.throttle_percent));
+      e.set("demoted", a.demoted);
+      list.push(std::move(e));
+    }
+    Value v(json::Object{});
+    v.set("count", int64_t(guard_.alerts().size()));
+    v.set("alerts", std::move(list));
+    v.set("audit_entries", int64_t(enforcer_.audit().size()));
+    return v;
+  }
+  if (op == "decide") {
+    const uint64_t pid = uint64_t(p["pid"].as_int(p["id"].as_int(0)));
+    const std::string action = param_string(p, "action");
+    if (pid == 0 || (action != "kill" && action != "remove" && action != "keep")) {
+      err.code = kInvalidParams;
+      err.message = "pid và action (kill|remove|keep) là bắt buộc";
+      return Value(nullptr);
+    }
+    if (!p["confirm"].as_bool(false)) {
+      // Bắt người dùng xác nhận — không bao giờ hành động ngầm.
+      err.code = kDenied;
+      err.message = "needs_confirmation: quyết định với tiến trình " + std::to_string(pid) +
+                    " phải được người dùng xác nhận";
+      err.data.set("needs_confirmation", true);
+      err.data.set("question_vi",
+                   "Bạn muốn tiêu diệt, gỡ bỏ, hay để yên tiến trình " + std::to_string(pid) + "?");
+      Value acts(json::Array{});
+      acts.push(Value("kill"));
+      acts.push(Value("remove"));
+      acts.push(Value("keep"));
+      err.data.set("actions", std::move(acts));
+      return Value(nullptr);
+    }
+    // Đã xác nhận: thực thi + ghi audit qua enforcer (một dòng/kiểu quyết định).
+    const bool was_throttled = guard_.is_throttled(pid);
+    sandbox::Action act;
+    act.kind = "guard." + action;
+    act.target = std::to_string(pid);
+    sandbox::Decision d;
+    d.allowed = true;
+    d.tier = sandbox::Tier::Native;
+    d.reason = action == "kill"
+                   ? "người dùng chọn tiêu diệt tiến trình bị Guard bóp xung"
+               : action == "remove"
+                   ? "người dùng chọn gỡ bỏ tiến trình bị Guard bóp xung"
+                   : "người dùng chọn để yên — tháo bóp xung cho tiến trình";
+    enforcer_.record(sandbox::AuditEntry{int64_t(std::time(nullptr)), "user", act, d});
+    guard_.clear(pid);  // mọi quyết định kết thúc trạng thái theo dõi/bóp xung
+
+    Value v(json::Object{});
+    v.set("done", true);
+    v.set("action", action);
+    v.set("pid", int64_t(pid));
+    v.set("was_throttled", was_throttled);
+    v.set("reason_vi", d.reason);
+    return v;
+  }
+  err.code = kInvalidParams;
+  err.message = "guard op phải là observe | alerts | decide";
+  return Value(nullptr);
+}
+
 Value Daemon::method_os(const std::string& op) {
   Value v(json::Object{});
   if (!has_host_) set_host_snapshot(profile::to_json(profile::probe()));
@@ -410,6 +506,7 @@ Value Daemon::handle(const std::string& method, const Value& params, RpcError& e
   if (text::starts_with(method, "vault.")) return method_vault(method.substr(6), params, err);
   if (text::starts_with(method, "pack.")) return method_pack(method.substr(5), params, err);
   if (method == "sandbox.check") return method_sandbox_check(params, err);
+  if (text::starts_with(method, "guard.")) return method_guard(method.substr(6), params, err);
   if (method == "ime.convert") return method_ime(params, err);
   if (method == "web.search") return method_web_search(params, err);
   if (method == "telemetry.read") return method_telemetry();

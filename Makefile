@@ -33,6 +33,12 @@ LIB_SRC := \
 	kernel-services/codec.cpp \
 	kernel-services/profile.cpp \
 	kernel-services/telemetry.cpp \
+	kernel-services/ed25519.cpp \
+	kernel-services/bundle.cpp \
+	kernel-services/power.cpp \
+	kernel-services/guard.cpp \
+	kernel-services/fsstore.cpp \
+	kernel-services/linuxabi.cpp \
 	vmm-sandbox/sandbox.cpp \
 	pkg-stripper/apppack.cpp \
 	userspace-vi/text.cpp \
@@ -54,7 +60,8 @@ HEADERS := $(wildcard include/yui/*.hpp include/yui/*.h) \
            $(wildcard tests/*.hpp) $(wildcard userspace-vi/*.inc)
 
 TESTS := test_crypto test_codec_json test_core test_sandbox test_ime test_daemon test_tools \
-         test_telemetry test_fb
+         test_telemetry test_fb test_ed25519 test_power test_fsstore test_linuxabi \
+         test_redteam
 
 # `kernel` is declared before `all`, so pin the default goal explicitly.
 .DEFAULT_GOAL := all

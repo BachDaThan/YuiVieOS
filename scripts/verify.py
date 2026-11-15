@@ -46,11 +46,20 @@ REQUIRED_DIRS = [
 REQUIRED_FILES = [
     "Cargo.toml", "Makefile", "README.md", "LICENSE", "include/yui/yui.h",
     "kernel-cap/src/lib.rs", "kernel-cap/src/sha256.rs",
-    "kernel-services/yui-sched/src/lib.rs", "kernel-services/yui-zram/src/lib.rs",
+    "kernel-cap/src/sha512.rs", "kernel-cap/src/ed25519.rs",
+    "kernel-cap/src/keyring.rs", "kernel-cap/src/bundle.rs",
+    "kernel-services/yui-sched/src/lib.rs", "kernel-services/yui-sched/src/guard.rs",
+    "kernel-services/yui-zram/src/lib.rs",
     "kernel-services/yui-zram/src/lz.rs", "kernel-services/yui-zram/src/store.rs",
+    "kernel-services/ed25519.cpp", "kernel-services/bundle.cpp",
+    "kernel-services/power.cpp", "kernel-services/guard.cpp",
+    "kernel-services/fsstore.cpp", "kernel-services/linuxabi.cpp",
+    "include/yui/ed25519.hpp", "include/yui/bundle.hpp",
+    "include/yui/power.hpp", "include/yui/guard.hpp",
+    "include/yui/fsstore.hpp", "include/yui/linuxabi.hpp",
     "docs/ARCHITECTURE.md", "docs/PLAN.md", "docs/PROTOCOL.md",
     "docs/SECURITY.md", "docs/FORMAT-YUIP.md", "docs/BUILD.md",
-    "tests/test_capi.c",
+    "tests/test_capi.c", "tests/test_ed25519.cpp", "tests/test_redteam.cpp",
 ]
 STALE = ["core", "crates", "sandbox", "ui"]  # old layout must not come back
 

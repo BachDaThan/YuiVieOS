@@ -42,4 +42,37 @@ Layout plan(const DisplayInfo& display, const HardwareForUi& hw) {
   return l;
 }
 
+long render_window(const fb::Surface& s, const fb::Rect& r, const std::string& title_utf8,
+                   const std::vector<std::string>& lines, const WindowChrome& c, int scale) {
+  if (!fb::valid(s) || scale < 1 || r.w <= 2 || r.h <= 2) return 0;
+  long drawn = 0;
+  // Thân + viền 1 px (× scale).
+  fb::fill_rect(s, r, c.border);
+  fb::fill_rect(s, fb::Rect{r.x + scale, r.y + scale, r.w - 2 * scale, r.h - 2 * scale},
+                c.body_bg);
+  drawn += long(r.w) * r.h;
+
+  // Thanh tiêu đề: cao đủ cho dòng chữ Việt có dấu (11 px × scale) + 2 px đệm.
+  // Chữ vẽ ở đỉnh glyph — dải dấu nằm phía trên nên lùi vào 3 px trong thanh.
+  const int title_h = fb::text_height_utf8(scale) + 2 * scale;
+  fb::fill_rect(s, fb::Rect{r.x + scale, r.y + scale, r.w - 2 * scale, title_h}, c.title_bg);
+  fb::draw_text_utf8(s, r.x + 2 * scale, r.y + scale + 3 * scale, title_utf8, c.title_fg, scale);
+
+  // Thân: các dòng văn bản tiếng Việt, mỗi dòng một ô 12 px × scale
+  // (3 dấu + 7 chữ + 1 nặng + 1 giãn), cắt đúng mép cửa sổ.
+  const int cell_h = fb::text_height_utf8(scale) + scale;
+  int cell_top = r.y + scale + title_h + scale;
+  for (const auto& line : lines) {
+    if (cell_top + cell_h > r.y + r.h - scale) break;
+    fb::draw_text_utf8(s, r.x + 2 * scale, cell_top + 3 * scale, line, c.text_fg, scale);
+    cell_top += cell_h;
+  }
+  return drawn;
+}
+
+void render_label(const fb::Surface& s, int x, int y, const std::string& text_utf8, uint32_t argb,
+                  int scale) {
+  fb::draw_text_utf8(s, x, y, text_utf8, argb, scale < 1 ? 1 : scale);
+}
+
 }  // namespace yui::ui

@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "yui/guard.hpp"
 #include "yui/graph.hpp"
 #include "yui/json.hpp"
 #include "yui/sandbox.hpp"
@@ -61,6 +62,9 @@ class Daemon {
   const graph::Graph& graph() const { return graph_; }
   graph::Graph& graph() { return graph_; }
   const Options& options() const { return opts_; }
+  // Guard + audit: cho phép test/shell nạp mẫu và xem quyết định.
+  guard::Guard& guard() { return guard_; }
+  const sandbox::Enforcer& enforcer() const { return enforcer_; }
   // Tests and the shell can inject a canned host snapshot.
   void set_host_snapshot(json::Value v) {
     host_ = std::move(v);
@@ -79,11 +83,14 @@ class Daemon {
   json::Value method_web_search(const json::Value& params, RpcError& err);
   json::Value method_os(const std::string& op);
   json::Value method_telemetry();
+  // Guard chống bất thường nền: guard.observe / guard.alerts / guard.decide.
+  json::Value method_guard(const std::string& op, const json::Value& params, RpcError& err);
 
   Options opts_;
   graph::Graph graph_;
   json::Value host_ = json::Value(json::Object{});
   sandbox::Enforcer enforcer_;
+  guard::Guard guard_;
   bool has_host_ = false;
   size_t vault_ops_ = 0;
 };

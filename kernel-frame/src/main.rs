@@ -78,7 +78,15 @@ pub fn kmain(raw_boot: boot::RawBoot) -> ! {
     // Các mốc "[n]" có mục đích thực dụng: nếu chỉ thấy mốc n-1 trên cổng nối
     // tiếp là biết khung chết ở bước nào, không phải đoán.
     match raw_boot {
-        boot::RawBoot::Multiboot(addr) => println!("  Nguon     : multiboot @ {:#x}", addr),
+        boot::RawBoot::Multiboot(addr, magic) => {
+            print!("  Nguon     : ");
+            if magic == 0x36D7_6289 {
+                print!("multiboot 2");
+            } else {
+                print!("multiboot 1");
+            }
+            println!(" @ {:#x} (magic {:#x})", addr, magic)
+        }
         boot::RawBoot::DeviceTree(addr) => println!("  Nguon     : device tree @ {:#x}", addr),
         boot::RawBoot::None => println!("  Nguon     : khong co (firmware khong truyen gi)"),
     }

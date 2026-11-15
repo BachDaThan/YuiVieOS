@@ -16,6 +16,8 @@
 
 extern crate alloc;
 
+pub mod guard;
+
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::cmp::Ordering;

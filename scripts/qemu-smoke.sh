@@ -1,7 +1,7 @@
 #!/bin/sh
 # scripts/qemu-smoke.sh — build nhân, boot trong QEMU và kiểm chứng banner.
 #
-#   ./scripts/qemu-smoke.sh x86_64            # BIOS Legacy (multiboot 1)
+#   ./scripts/qemu-smoke.sh x86_64            # BIOS Legacy (container ELF32 multiboot)
 #   ./scripts/qemu-smoke.sh aarch64           # ARM64 virt (PL011)
 #   ./scripts/qemu-smoke.sh riscv64           # RISC-V 64 virt (OpenSBI)
 #   ./scripts/qemu-smoke.sh x86_64 --build    # build trước rồi mới boot
@@ -71,9 +71,13 @@ esac
 PID=$!
 
 have_all() {
+    # Ba dòng bắt buộc + RAM phải đọc được: "khong doc duoc" nghĩa là firmware
+    # không cung cấp thông tin bộ nhớ (multiboot/DTB) — với QEMU thì luôn có,
+    # nên dòng đó là lỗi, không phải ngoại lệ (xem docs/PLAN.md P2.3).
     grep -q "yui: ready" "$LOG" 2>/dev/null &&
         grep -q "Phan loai" "$LOG" 2>/dev/null &&
-        grep -q "Tang 1" "$LOG" 2>/dev/null
+        grep -q "Tang 1" "$LOG" 2>/dev/null &&
+        ! grep -q "khong doc duoc" "$LOG" 2>/dev/null
 }
 
 deadline=$(( $(date +%s) + TIMEOUT ))

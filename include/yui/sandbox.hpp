@@ -44,6 +44,7 @@ enum Right : uint64_t {
   kRightVault = 1ull << 11,
   kRightGraph = 1ull << 12,
   kRightModel = 1ull << 13,    // run inference through yuid
+  kRightComputeHeavy = 1ull << 21,  // được phép tải CPU/GPU cao kéo dài (CAP_COMPUTE_HEAVY)
   kRightAdmin = 1ull << 20,    // policy administration
 };
 std::string rights_to_string(uint64_t rights);  // "fs.read,net.connect"
@@ -123,6 +124,9 @@ class Enforcer {
   // Escalation attempt simulation: can `app` move from Isolated to MicroVm, etc.
   static bool tier_allows(Tier tier, const std::string& action_kind);
 
+  // Ghi thẳng một dòng audit (guard dùng cho quyết định tiêu diệt/gỡ bỏ/để yên).
+  void record(const AuditEntry& e) const { audit_.push_back(e); }
+
   const std::vector<AuditEntry>& audit() const { return audit_; }
   void clear_audit() { audit_.clear(); }
 
@@ -134,6 +138,48 @@ class Enforcer {
 // suffix; "net" scopes are host suffixes with an optional ":port".  Wildcards
 // ("*") are allowed only as a full scope.  Exposed for testing.
 bool scope_covers(const std::string& scope, const Action& action);
+
+// -------------------------------------------------------- egress filter ---
+// Bộ lọc egress theo năng lực (docs/SECURITY.md §11.2): tiến trình ở chế độ
+// `isolated`/`microvm` KHÔNG được gửi gói tin ra ngoài danh sách cho phép
+// trong `policies/*.json`. MẶC ĐỊNH CHẶN — chỉ rule nạp từ chính sách mới
+// mở đường; mỗi quyết định đều có lý do tiếng Việt để audit.
+struct EgressRequest {
+  std::string domain;  // có thể rỗng nếu chỉ có IP
+  std::string ip;      // IPv4 "a.b.c.d" (hoặc IPv6 dạng chữ) — có thể rỗng
+  uint16_t port = 0;
+};
+
+struct EgressDecision {
+  bool allowed = false;
+  std::string reason_vi;
+  std::string matched_rule;  // rule khớp (khi allowed)
+};
+
+class EgressFilter {
+ public:
+  // Thêm rule cho phép: domain ("api.trithuc.vn" hoặc "*.trithuc.vn", có thể
+  // kèm ":443"), hoặc CIDR IPv4 ("10.0.0.0/8", có thể kèm ":53").
+  void allow_domain(const std::string& pattern_with_optional_port);
+  void allow_cidr(const std::string& cidr_with_optional_port);
+  // Nạp mọi scope "net:..." của một chính sách vào bộ lọc.
+  void add_from_policy(const Policy& policy);
+
+  EgressDecision check(const EgressRequest& r) const;
+  size_t rule_count() const { return rules_.size(); }
+
+  // "10.0.0.5" ∈ "10.0.0.0/8" — so khớp IPv4/CIDR, /32 khi thiếu prefix.
+  static bool ipv4_in_cidr(const std::string& ip, const std::string& cidr);
+
+ private:
+  struct Rule {
+    std::string pattern;
+    uint16_t port = 0;  // 0 = mọi cổng
+    bool is_cidr = false;
+  };
+  std::vector<Rule> rules_;       // allowlist (mặc định không có gì = chặn)
+  std::vector<Rule> deny_rules_;  // deny thắng allow (SECURITY.md)
+};
 
 }  // namespace yui::sandbox
 
