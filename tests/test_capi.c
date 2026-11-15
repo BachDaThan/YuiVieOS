@@ -1,5 +1,5 @@
 /* C11 consumer of libyui — proves the ABI is usable from plain C, not just C++.
- * Build: cc -std=gnu11 -Icore/include test_capi.c libyui.a -lstdc++ -lpthread
+ * Build: cc -std=gnu11 -Iinclude test_capi.c libyui.a -lstdc++ -lpthread
  */
 #include <stdio.h>
 #include <string.h>

@@ -1,9 +1,9 @@
 [package]
 name = "yui-zram"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "YuiVieOS in-RAM compressed swap: YUI-LZ codec + page store (Tầng 2)"
-license = "MIT"
 
 [lib]
 name = "yui_zram"

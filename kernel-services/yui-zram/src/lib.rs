@@ -2,7 +2,7 @@
 //!
 //! Two pieces:
 //!   * [`lz`] — the YUI-LZ block codec. The wire format is byte-identical to the
-//!     C++ implementation in `core/src/codec.cpp` (see docs/FORMAT-YUIP.md), so a
+//!     C++ implementation in `kernel-services/codec.cpp` (see docs/FORMAT-YUIP.md), so a
 //!     page compressed by the kernel can be decompressed by tooling and back.
 //!   * [`store`] — the page store that turns compression into a swap device:
 //!     write/read pages, keep statistics, and fall back to storing a page

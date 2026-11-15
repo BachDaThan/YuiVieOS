@@ -7,8 +7,8 @@ ba điểm nối đã cố định:
 | Thành phần | Trách nhiệm | Trạng thái trong repo |
 |---|---|---|
 | `yui-vmmd` (chưa có trong repo) | tạo VM, gán PCI passthrough, vòng đời | spec trong `vm-manifest.schema.json` |
-| `libyui` | cầu JSON-RPC qua virtio-vsock tới `yuid` | đã có (`core/src/capi`) |
-| Hộp cát chính sách | quyết định trước khi VM được tạo | đã có (`core/src/sandbox`) |
+| `libyui` | cầu JSON-RPC qua virtio-vsock tới `yuid` | đã có (`ai-bridge-yuid/capi.cpp`) |
+| Hộp cát chính sách | quyết định trước khi VM được tạo | đã có (`vmm-sandbox/sandbox.cpp`) |
 
 ## Vì sao chỉ có đặc tả ở đây
 

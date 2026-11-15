@@ -9,7 +9,7 @@
 //   * scrypt (N,r,p)          — memory-hard password stretching for the vault
 //
 // Everything is plain C++17, no exceptions, no allocation in the hot paths,
-// and is validated against published test vectors in core/tests/test_crypto.cpp
+// and is validated against published test vectors in tests/test_crypto.cpp
 // (vectors cross-checked against Python's hashlib).
 #ifndef YUI_CRYPTO_HPP
 #define YUI_CRYPTO_HPP

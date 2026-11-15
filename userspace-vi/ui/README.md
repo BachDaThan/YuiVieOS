@@ -2,13 +2,13 @@
 
 Trạng thái: **khung sườn (skeleton)**. Mã trong `app/` viết xong phần giao tiếp
 và ba màn hình cơ bản, nhưng **chưa được build** trong môi trường phát triển của
-repo (không có Flutter SDK). Đừng coi nó là "đã chạy" — xem `docs/ROADMAP.md`
+repo (không có Flutter SDK). Đừng coi nó là "đã chạy" — xem `docs/PLAN.md`
 mục E1.
 
 ## Chạy thử (khi bạn có Flutter ≥ 3.19)
 
 ```bash
-cd ui/app
+cd userspace-vi/ui/app
 flutter pub get
 flutter run -d linux        # hoặc -d android / -d macos
 ```

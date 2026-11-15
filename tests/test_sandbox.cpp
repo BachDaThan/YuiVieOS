@@ -219,9 +219,9 @@ YUI_TEST(sandbox, policy_json_roundtrip) {
 }
 
 YUI_TEST(sandbox, shipped_policy_files_are_valid) {
-  // The policies that ship in sandbox/policies must parse and behave as the
+  // The policies that ship in vmm-sandbox/policies must parse and behave as the
   // documentation claims. YUI_SOURCE_DIR is injected by the Makefile.
-  const std::string dir = std::string(YUI_SOURCE_DIR) + "/sandbox/policies/";
+  const std::string dir = std::string(YUI_SOURCE_DIR) + "/vmm-sandbox/policies/";
   struct Expect {
     const char* file;
     std::string kind;

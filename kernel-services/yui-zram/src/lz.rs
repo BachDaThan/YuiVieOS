@@ -1,6 +1,6 @@
 //! YUI-LZ: byte-oriented LZ77 with a 64 KiB window.
 //!
-//! Token layout (little-endian, identical to core/src/codec.cpp):
+//! Token layout (little-endian, identical to kernel-services/codec.cpp):
 //!   token = (literal_len << 4) | (match_len - 4)
 //!   either nibble == 15 means "read 0xFF-chained extension bytes"
 //!   literals | 2-byte distance | (match extension)
