@@ -14,9 +14,11 @@ edition = "2021"
 license = "MIT"
 description = "YuiVieOS Beta bare-metal frame: boot, serial console, auto-profiler, capability init"
 
-[lib]
-name = "yui_frame"
-path = "src/lib.rs"
+# Phải là crate BINARY: một crate `lib` chỉ sinh ra `libyui_frame.rlib`, không có
+# mục vào (`_start` nằm trong global_asm của từng arch) và không thể nạp bằng QEMU.
+[[bin]]
+name = "yui-frame"
+path = "src/main.rs"
 
 [dependencies]
 yui-cap = { path = "../kernel-cap" }

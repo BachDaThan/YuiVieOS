@@ -22,7 +22,7 @@ mỗi tệp có lý do bằng tiếng Việt. Tổng: 29 khối, mỗi khối c�
 
 | Tệp | Việc |
 |---|---|
-| `src/lib.rs` | `kmain`: serial → `YuiBootInfo` → profiler → bảng năng lực → màn hình chào |
+| `src/main.rs` | `kmain`: serial → `YuiBootInfo` → profiler → bảng năng lực → màn hình chào |
 | `src/boot.rs` | đọc multiboot 1 (x86_64) và device tree (ARM/RISC-V) → một `BootInfo` |
 | `src/console.rs` | in ra cổng nối tiếp, có spinlock |
 | `src/profiler.rs` | phân loại `may-yeu`/`can-bang`/`may-manh` + k/W, **cùng ngưỡng** với `kernel-services/profile.cpp` |

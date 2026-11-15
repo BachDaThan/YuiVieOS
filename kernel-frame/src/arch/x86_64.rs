@@ -6,6 +6,10 @@
 //! sang mã Rust. Toàn bộ phần đó là `global_asm!` — nghĩa là phần **duy nhất**
 //! của dự án cần assembly, và nó nằm gọn trong một tệp.
 
+// Rust dùng cú pháp Intel cho asm!; cầu nối dưới đây viết theo AT&T nên phải
+// yêu cầu tường minh. Đổi cú pháp cả tệp là một lựa chọn khác, nhưng dễ sai hơn.
+#![allow(unused_unsafe)]
+
 use core::arch::x86_64::__cpuid;
 
 use crate::boot::RawBoot;
@@ -108,7 +112,8 @@ pdpt:
     .skip 4096
 pd:
     .skip 4096
-"#
+"#,
+    options(att_syntax)
 );
 
 /// Khởi tạo cổng nối tiếp COM1 ở 115200 8N1 (QEMU không cần baud nhưng phần cứng thật cần).

@@ -1,5 +1,8 @@
 //! yui-frame — khung phần cứng của YuiVieOS Beta (Tầng 0 + Tầng 1).
 //!
+//! Tệp này là **crate root của một binary** (`[[bin]]` trong Cargo.toml): một
+//! crate `lib` chỉ sinh `.rlib`, không có mục vào để QEMU nhảy tới.
+//!
 //! Nhiệm vụ duy nhất: đưa máy từ trạng thái "firmware vừa nhảy vào" tới trạng
 //! thái "dịch vụ Rust an toàn có thể chạy". Cụ thể:
 //!

@@ -183,7 +183,7 @@ FRAME_UNSAFE_FILES = {
     "boot.rs": "đọc multiboot info / device tree do firmware cấp",
     "allocator.rs": "triển khai GlobalAlloc",
     "splash.rs": "ghi framebuffer tuyến tính do firmware cấp",
-    "lib.rs": "thuộc tính #[global_allocator] cần khung được phép chứa unsafe",
+    "main.rs": "thuộc tính #[global_allocator] và #![no_main] đặt ở crate root",
 }
 
 
@@ -240,15 +240,15 @@ def check_frame() -> None:
     if not frame.is_dir():
         bad("thiếu thư mục kernel-frame")
         return
-    required = ["Cargo.toml", "src/lib.rs", "src/arch/mod.rs", "src/boot.rs",
+    required = ["Cargo.toml", "src/main.rs", "src/arch/mod.rs", "src/boot.rs",
                 "src/console.rs", "src/profiler.rs", "src/cap.rs", "src/splash.rs",
                 "src/allocator.rs"]
     for name in required:
         (ok if (frame / name).is_file() else bad)(f"kernel-frame/{name}")
 
-    lib = (frame / "src/lib.rs").read_text(encoding="utf-8")
+    lib = (frame / "src/main.rs").read_text(encoding="utf-8")
     if "deny(unsafe_code)" in lib.replace(" ", ""):
-        bad("kernel-frame/src/lib.rs: khung phần cứng không thể deny(unsafe_code) — "
+        bad("kernel-frame/src/main.rs: khung phần cứng không thể deny(unsafe_code) — "
             "hãy để lệnh cấm ở các crate an toàn, không ở khung")
     else:
         ok("khung không tuyên bố deny(unsafe_code) (đúng: unsafe nằm ở đây)")
@@ -287,7 +287,7 @@ def check_frame() -> None:
 
     # Lời hứa với CI: banner "yui: ready" phải tồn tại đâu đó trong khung.
     if "yui: ready" not in lib:
-        bad("kernel-frame/src/lib.rs: thiếu banner 'yui: ready' mà qemu-smoke.sh chờ")
+        bad("kernel-frame/src/main.rs: thiếu banner 'yui: ready' mà qemu-smoke.sh chờ")
     else:
         ok("banner 'yui: ready' có trong khung")
 
