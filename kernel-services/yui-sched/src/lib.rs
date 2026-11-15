@@ -303,21 +303,23 @@ mod tests {
         sched.enqueue(Task::new(2, TaskClass::Interactive).with_vruntime(100));
         sched.enqueue(Task::new(3, TaskClass::Interactive).with_vruntime(300));
 
-        assert_eq!(sched.pick(CoreKind::Performance), Some(2));
+        assert_eq!(sched.pick(CoreKind::Performance), Some(2)); // 100 là nhỏ nhất
 
-        // charge() TRẢ VỀ phần bị tính (delta/trọng số) và CỘNG vào vruntime;
-        // nó không "đặt lại" vruntime. Interactive có trọng số 3.
+        // charge() TRẢ VỀ phần bị tính (delta / trọng số) và CỘNG vào vruntime;
+        // nó không đặt lại vruntime. Interactive có trọng số 3.
         assert_eq!(sched.charge(2, 300), Some(100)); // 100 -> 200
-        // 200 vẫn nhỏ nhất nên vẫn chọn 2 — đúng như CFS: chạy tiếp là hợp lệ.
-        assert_eq!(sched.pick(CoreKind::Performance), Some(2));
+        assert_eq!(sched.pick(CoreKind::Performance), Some(2)); // 200 vẫn nhỏ nhất
 
-        assert_eq!(sched.charge(2, 900), Some(300)); // 200 -> 500 (hoà với task 1)
-        // Hoà vruntime thì id nhỏ hơn thắng ⇒ 1.
+        assert_eq!(sched.charge(2, 900), Some(300)); // 200 -> 500
+        assert_eq!(sched.pick(CoreKind::Performance), Some(3)); // 300 < 500
+        assert_eq!(sched.charge(3, 900), Some(300)); // 300 -> 600
+
+        // task 1 và task 2 cùng vruntime 500 ⇒ id nhỏ hơn thắng (tất định).
         assert_eq!(sched.pick(CoreKind::Performance), Some(1));
-
         assert_eq!(sched.charge(1, 600), Some(200)); // 500 -> 700
-        assert_eq!(sched.pick(CoreKind::Performance), Some(3)); // 300 < 500 < 700
-        assert_eq!(sched.picks(), 4);
+        assert_eq!(sched.pick(CoreKind::Performance), Some(2)); // 500 < 600 < 700
+
+        assert_eq!(sched.picks(), 5);
         assert_eq!(sched.len(), 3);
     }
 

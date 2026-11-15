@@ -32,11 +32,15 @@ jobs:
       - name: Báo lỗi thành annotation (đọc được từ API)
         if: failure()
         run: |
-          for f in /tmp/build.log /tmp/test.log; do
+          for f in /tmp/*.log; do
             [ -f "$f" ] || continue
-            grep -nE "error:|FAIL|✗|Segmentation|not found" "$f" | tail -n 25 | \
-              sed 's/%/%25/g; s/\r//g' | cut -c1-400 | \
-              while IFS= read -r line; do echo "::error title=$(basename "$f")::$line"; done
+            echo "::group::$f"
+            sed 's/\x1b\[[0-9;]*m//g' "$f" | grep -nEi "error|✗|panicked|FAIL|not found|undefined reference|cannot find" \
+              | tail -n 30 | sed 's/%/%25/g; s/\r//g' | cut -c1-350 \
+              | while IFS= read -r line; do echo "::error title=log::$line"; done
+            sed 's/\x1b\[[0-9;]*m//g' "$f" | tail -n 12 | sed 's/%/%25/g; s/\r//g' | cut -c1-350 \
+              | while IFS= read -r line; do echo "::error title=log-tail::$line"; done
+            echo "::endgroup::"
           done
       - name: Static verification + smoke runs
         run: make check
@@ -96,10 +100,15 @@ jobs:
       - name: Báo lỗi thành annotation (đọc được từ API)
         if: failure()
         run: |
-          [ -f /tmp/rust.log ] || exit 0
-          grep -nE "^error|error\[E[0-9]+\]|-->|panicked at|FAILED|assertion" /tmp/rust.log | tail -n 30 | \
-            sed 's/%/%25/g; s/\r//g' | cut -c1-400 | \
-            while IFS= read -r line; do echo "::error title=rust::$line"; done
+          for f in /tmp/rust.log; do
+            [ -f "$f" ] || continue
+            sed 's/\x1b\[[0-9;]*m//g' "$f" | grep -nEi "error|✗|panicked|FAIL|not found|cannot find" \
+              | tail -n 30 | sed 's/%/%25/g; s/\r//g' | cut -c1-350 \
+              | while IFS= read -r line; do echo "::error title=rust::$line"; done
+            sed 's/\x1b\[[0-9;]*m//g' "$f" | tail -n 12 | sed 's/%/%25/g; s/\r//g' | cut -c1-350 \
+              | while IFS= read -r line; do echo "::error title=rust-tail::$line"; done
+          done
+
       # Formatter and lints are advisory: the crates were written where no Rust
       # toolchain existed, so style must not block the build before review.
       - name: Formatting (advisory)
@@ -151,10 +160,16 @@ jobs:
       - name: Báo lỗi thành annotation (đọc được từ API)
         if: failure()
         run: |
-          [ -f /tmp/kernel.log ] || exit 0
-          grep -nE "^error|error\[E[0-9]+\]|^ *--> |panicked|cannot find|not found|undefined" /tmp/kernel.log | tail -n 30 | \
-            sed 's/%/%25/g; s/\r//g' | cut -c1-400 | \
-            while IFS= read -r line; do echo "::error title=kernel-${{ matrix.arch }}::$line"; done
+          for f in /tmp/*.log; do
+            [ -f "$f" ] || continue
+            echo "::group::$f"
+            sed 's/\x1b\[[0-9;]*m//g' "$f" | grep -nEi "error|✗|panicked|FAIL|not found|undefined reference|cannot find" \
+              | tail -n 30 | sed 's/%/%25/g; s/\r//g' | cut -c1-350 \
+              | while IFS= read -r line; do echo "::error title=kernel-${{ matrix.arch }}::$line"; done
+            sed 's/\x1b\[[0-9;]*m//g' "$f" | tail -n 12 | sed 's/%/%25/g; s/\r//g' | cut -c1-350 \
+              | while IFS= read -r line; do echo "::error title=kernel-${{ matrix.arch }}-tail::$line"; done
+            echo "::endgroup::"
+          done
       - name: ELF sanity
         run: |
           file "build/kernel/yui-kernel-${{ matrix.arch }}.elf"
