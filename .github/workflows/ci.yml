@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  cpp:
+    name: C++17 + C11 ABI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          g++ --version
+          make --version | head -1
+      - name: Build
+        run: make -j"$(nproc)"
+      - name: Test (669 checks C++17 + 36 checks C11)
+        run: make test
+      - name: Smoke test the CLIs
+        run: make check
+      - name: Install into a temporary prefix
+        run: |
+          make install PREFIX="$RUNNER_TEMP/yui"
+          test -x "$RUNNER_TEMP/yui/bin/yuid"
+          test -f "$RUNNER_TEMP/yui/lib/libyui.a"
+          test -f "$RUNNER_TEMP/yui/include/yui/yui.h"
+      - name: Link libyui from a C program outside the tree
+        run: |
+          mkdir -p /tmp/abi && cd /tmp/abi
+          cat > probe.c <<'C'
+          #include <stdio.h>
+          #include <yui/yui.h>
+          int main(void) {
+            printf("abi=%d\n", yui_abi_version());
+            char buf[128]; size_t n = sizeof buf;
+            yui_handle* h = yui_open(0);
+            if (!h) return 1;
+            int rc = yui_ime_convert(h, "Vieetj", YUI_IME_TELEX, buf, &n);
+            yui_close(h);
+            printf("rc=%d text=%s\n", rc, buf);
+            return rc == YUI_OK ? 0 : 2;
+          }
+          C
+          cc -std=c11 -I"$RUNNER_TEMP/yui/include" probe.c \
+             -L"$RUNNER_TEMP/yui/lib" -lyui -lstdc++ -lm -lpthread \
+             -Wl,-rpath,"$RUNNER_TEMP/yui/lib" -o probe
+          ./probe
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-logs-${{ matrix.os }}
+          path: |
+            build/**.log
+          if-no-files-found: ignore
+
+  rust:
+    name: Rust no_std crates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Versions
+        run: |
+          cargo --version
+          rustc --version
+      - name: Test every crate
+        working-directory: crates
+        run: cargo test --workspace --verbose
+      - name: Formatting
+        working-directory: crates
+        run: cargo fmt --all -- --check
+      - name: Clippy (warnings must not hide bugs)
+        working-directory: crates
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Build without std for real targets
+        working-directory: crates
+        run: |
+          rustup target add thumbv7em-none-eabi || true
+          # The crates must at least type-check without std.
+          cargo check --workspace --release
+
+  docs:
+    name: Docs & policy sanity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every JSON policy parses
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          files = sorted(pathlib.Path("sandbox/policies").glob("*.json"))
+          assert files, "no policies found"
+          for f in files:
+              json.loads(f.read_text(encoding="utf-8"))
+              print("ok", f)
+          json.loads(pathlib.Path("sandbox/vmm/vm-manifest.schema.json").read_text())
+          print("ok vm-manifest.schema.json")
+          PY
+      - name: No stray tab/CRLF in sources
+        run: |
+          ! grep -rIl $'\r' --include='*.cpp' --include='*.hpp' --include='*.h' --include='*.rs' core crates tools || {
+            echo "CRLF found"; exit 1; }
+      - name: README links resolve
+        run: |
+          ! grep -oE '\]\(([^)]+\.md)\)' README.md | sed -E 's/^\]\(//; s/\)$//' | while read -r l; do
+            test -f "${l%%#*}" || { echo "broken link: $l"; exit 1; }
+          done

@@ -1,0 +1,25 @@
+# build output
+build/
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.exe
+
+# rust
+crates/target/
+target/
+Cargo.lock.bak
+
+# editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# scratch
+*.yuip
+*.yuia
+*.yuib
+tmp/
