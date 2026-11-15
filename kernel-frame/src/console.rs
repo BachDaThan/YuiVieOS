@@ -32,19 +32,20 @@ pub fn print(args: fmt::Arguments<'_>) {
     LOCK.store(false, Ordering::Release);
 }
 
-#[macro_export]
+/// Hai macro dưới đây sống trong phạm vi văn bản của crate (`#[macro_use] mod
+/// console;` đứng đầu `lib.rs`), **không** `#[macro_export]` — nếu export thì
+/// tên `print`/`println` sẽ tồn tại đồng thời ở gốc crate và ở đây (lỗi E0255).
 macro_rules! print {
     ($($arg:tt)*) => {
         $crate::console::print(format_args!($($arg)*))
     };
 }
 
-#[macro_export]
 macro_rules! println {
     () => {
-        $crate::print!("\n")
+        print!("\n")
     };
     ($($arg:tt)*) => {
-        $crate::print!("{}\n", format_args!($($arg)*))
+        print!("{}\n", format_args!($($arg)*))
     };
 }

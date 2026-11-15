@@ -20,17 +20,19 @@
 
 extern crate alloc;
 
+// `console` phải đứng đầu và có `#[macro_use]`: `print!`/`println!` chỉ sống
+// trong phạm vi văn bản (textual scope) tính từ đây trở xuống.
+#[macro_use]
+pub mod console;
+
 pub mod allocator;
 pub mod arch;
 pub mod boot;
 pub mod cap;
-pub mod console;
 pub mod profiler;
 pub mod splash;
 
 use core::panic::PanicInfo;
-
-use crate::println;
 
 #[global_allocator]
 static ALLOCATOR: allocator::BumpAllocator = allocator::BumpAllocator::new();

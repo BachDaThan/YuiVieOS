@@ -7,7 +7,6 @@
 //!   * `can-bang` : còn lại
 
 use crate::allocator;
-use crate::println;
 use crate::boot::BootInfo;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
