@@ -7,6 +7,8 @@
 //! Không có bước nào là "giả lập": đây là cùng đoạn mã trong `kernel-cap` mà
 //! Tầng 4 dùng để xác minh thẻ, chỉ khác là chạy ở ring 0.
 
+use crate::console::print_str_no_newline;
+
 use yui_cap::{
     rights_to_string, CapError, CapTable, Capability, RIGHT_FS_READ, RIGHT_FS_WRITE, RIGHT_GRAPH,
 };
