@@ -16,7 +16,7 @@
       <author>YuiVieOS contributors</author>
       <layout>us</layout>
       <longname>Vietnamese (Yui Telex)</longname>
-      <description>Vietnamese Telex input with live preedit</description>
+      <description>Vietnamese Telex input with Preedit or Direct mode</description>
       <symbol>Vi</symbol>
       <rank>80</rank>
     </engine>
@@ -27,7 +27,7 @@
       <author>YuiVieOS contributors</author>
       <layout>us</layout>
       <longname>Vietnamese (Yui VNI)</longname>
-      <description>Vietnamese VNI input with live preedit</description>
+      <description>Vietnamese VNI input with Preedit or Direct mode</description>
       <symbol>Vi</symbol>
       <rank>70</rank>
     </engine>

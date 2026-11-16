@@ -14,6 +14,15 @@ static void check_vni(const std::string& keys, const std::string& expected) {
   CHECK_MSG(got == expected, "vni(\"" + keys + "\") = \"" + got + "\", expected \"" + expected + "\"");
 }
 
+static void apply_replay(std::string& visible, const ime::ReplayEdit& edit) {
+  for (size_t i = 0; i < edit.backspaces; ++i) {
+    size_t pos = visible.size();
+    while (pos > 0 && (static_cast<unsigned char>(visible[pos - 1]) & 0xc0) == 0x80) --pos;
+    if (pos > 0) visible.resize(pos - 1);
+  }
+  visible += edit.text;
+}
+
 YUI_TEST(ime, telex_diacritics) {
   check_telex("aa", "â");
   check_telex("aw", "ă");
@@ -197,6 +206,138 @@ YUI_TEST(ime, editable_composition_buffer) {
   for (char c : std::string("wordx")) CHECK(comp.feed(static_cast<uint32_t>(c)));
   CHECK_EQ(comp.restore(), std::string("wordx"));  // Escape-style literal recovery
   CHECK(comp.empty());
+}
+
+YUI_TEST(ime, direct_mode_exact_telex_replay) {
+  ime::DirectComposition direct;
+  std::string visible;
+  auto feed = [&](uint32_t key, size_t backspaces, const std::string& committed,
+                  const std::string& expected_visible) {
+    ime::ReplayEdit edit;
+    CHECK(direct.feed(key, &edit));
+    CHECK_EQ(edit.backspaces, backspaces);
+    CHECK_EQ(edit.text, committed);
+    apply_replay(visible, edit);
+    CHECK_EQ(visible, expected_visible);
+  };
+
+  feed('d', 0, "d", "d");
+  feed('d', 1, "đ", "đ");  // dd replaces the prior d with one Backspace, then đ
+  ime::ReplayEdit boundary = direct.commit();
+  CHECK_EQ(boundary.backspaces, size_t(0));
+  CHECK_EQ(boundary.text, std::string(""));
+  apply_replay(visible, boundary);
+  CHECK_EQ(visible, std::string("đ"));
+
+  feed('T', 0, "T", "đT");
+  feed('i', 1, "Ti", "đTi");
+  feed('e', 2, "Tie", "đTie");
+  feed('e', 3, "Tiê", "đTiê");
+  feed('n', 3, "Tiên", "đTiên");
+  feed('g', 4, "Tiêng", "đTiêng");
+  feed('s', 5, "Tiếng", "đTiếng");  // each replay deletes the complete prior composition
+
+  boundary = direct.commit();
+  CHECK_EQ(boundary.backspaces, size_t(0));
+  CHECK_EQ(boundary.text, std::string(""));
+  apply_replay(visible, boundary);
+  CHECK_EQ(visible, std::string("đTiếng"));
+}
+
+YUI_TEST(ime, direct_mode_backspace_restore_and_boundaries) {
+  ime::DirectComposition direct;
+  std::string visible;
+  for (char key : std::string("Tieengs")) {
+    ime::ReplayEdit edit;
+    CHECK(direct.feed(static_cast<uint32_t>(key), &edit));
+    apply_replay(visible, edit);
+  }
+  CHECK_EQ(visible, std::string("Tiếng"));
+
+  ime::ReplayEdit edit;
+  CHECK(direct.backspace(&edit));
+  CHECK_EQ(edit.backspaces, size_t(5));
+  CHECK_EQ(edit.text, std::string("Tiêng"));
+  apply_replay(visible, edit);
+  CHECK_EQ(visible, std::string("Tiêng"));
+  CHECK(direct.feed('s', &edit));
+  CHECK_EQ(edit.backspaces, size_t(5));
+  CHECK_EQ(edit.text, std::string("Tiếng"));
+  apply_replay(visible, edit);
+  CHECK_EQ(visible, std::string("Tiếng"));
+
+  edit = direct.restore();
+  CHECK_EQ(edit.backspaces, size_t(5));
+  CHECK_EQ(edit.text, std::string("Tieengs"));
+  apply_replay(visible, edit);
+  CHECK_EQ(visible, std::string("Tieengs"));
+  CHECK(direct.empty());
+
+  // A boundary forgets the active suffix: the next edit cannot backspace into
+  // the preceding word or punctuation that the IBus adapter forwards.
+  CHECK(direct.feed('d', &edit));
+  CHECK_EQ(edit.backspaces, size_t(0));
+  apply_replay(visible, edit);
+  direct.reset();
+  CHECK(direct.feed('a', &edit));
+  CHECK_EQ(edit.backspaces, size_t(0));
+  CHECK_EQ(edit.text, std::string("a"));
+  apply_replay(visible, edit);
+  CHECK_EQ(visible, std::string("Tieengsda"));
+}
+
+YUI_TEST(ime, direct_mode_vni_replay_and_english_restore) {
+  ime::DirectComposition direct(ime::Method::Vni);
+  std::string visible;
+  ime::ReplayEdit edit;
+
+  CHECK(direct.feed('a', &edit));
+  CHECK_EQ(edit.backspaces, size_t(0));
+  CHECK_EQ(edit.text, std::string("a"));
+  apply_replay(visible, edit);
+  CHECK(direct.feed('6', &edit));
+  CHECK_EQ(edit.backspaces, size_t(1));
+  CHECK_EQ(edit.text, std::string("â"));
+  apply_replay(visible, edit);
+  CHECK(direct.feed('1', &edit));
+  CHECK_EQ(edit.backspaces, size_t(1));
+  CHECK_EQ(edit.text, std::string("ấ"));
+  apply_replay(visible, edit);
+  CHECK_EQ(visible, std::string("ấ"));
+
+  edit = direct.commit();
+  CHECK_EQ(edit.backspaces, size_t(0));
+  CHECK_EQ(edit.text, std::string(""));
+
+  for (char key : std::string("window")) {
+    CHECK(direct.feed(static_cast<uint32_t>(key), &edit));
+    apply_replay(visible, edit);
+  }
+  CHECK_EQ(visible, std::string("ấwindow"));
+  edit = direct.commit();
+  CHECK_EQ(edit.backspaces, size_t(0));
+  CHECK_EQ(edit.text, std::string(""));
+  CHECK_EQ(direct.method(), ime::Method::Vni);
+
+  // Direct rendering must retain the same conservative English allowlist as
+  // preedit mode, including terms whose letters otherwise activate Telex.
+  for (const std::string word : {"word", "window", "software", "user", "linux"}) {
+    ime::DirectComposition english;
+    std::string literal;
+    std::string english_visible;
+    for (char key : word) {
+      literal.push_back(key);
+      CHECK(english.feed(static_cast<uint32_t>(key), &edit));
+      CHECK_EQ(edit.backspaces, literal.size() - 1);
+      CHECK_EQ(edit.text, literal);
+      apply_replay(english_visible, edit);
+      CHECK_EQ(english_visible, literal);
+    }
+    edit = english.commit();
+    CHECK_EQ(edit.backspaces, size_t(0));
+    CHECK_EQ(edit.text, std::string(""));
+    CHECK_EQ(english_visible, word);
+  }
 }
 
 YUI_TEST(ime, display_width_of_vietnamese) {

@@ -13,6 +13,7 @@
 #ifndef YUI_IME_HPP
 #define YUI_IME_HPP
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -83,6 +84,36 @@ class Composition {
  private:
   Method method_;
   std::string keys_;
+};
+
+// A direct-mode edit replaces the whole currently rendered composition. The
+// adapter emits `backspaces` BackSpace events, then commits `text`.
+struct ReplayEdit {
+  size_t backspaces = 0;
+  std::string text;
+};
+
+// Telex/VNI composition tracker for clients that cannot display a preedit.
+// Each accepted key produces a Backspace+commit delta; reset() forgets the
+// active word at a boundary without changing text already committed to the app.
+class DirectComposition {
+ public:
+  explicit DirectComposition(Method m = Method::Telex) : composition_(m) {}
+
+  bool feed(uint32_t codepoint, ReplayEdit* edit);
+  bool backspace(ReplayEdit* edit);
+  ReplayEdit commit();
+  ReplayEdit restore();
+  void reset();
+  bool empty() const { return composition_.empty(); }
+  Method method() const { return composition_.method(); }
+  void set_method(Method m);
+
+ private:
+  ReplayEdit replace_rendered(const std::string& next);
+
+  Composition composition_;
+  std::string rendered_;
 };
 
 }  // namespace yui::ime
