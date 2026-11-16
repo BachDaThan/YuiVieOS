@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component>
+  <name>org.freedesktop.IBus.Yui</name>
+  <description>YuiVieOS Vietnamese input methods</description>
+  <exec>@PREFIX@/bin/yui-ibus-engine</exec>
+  <version>0.1.0</version>
+  <author>YuiVieOS contributors</author>
+  <license>MIT</license>
+  <homepage>https://github.com/BachDaThan/YuiVieOSBeta</homepage>
+  <textdomain>yui-ibus-engine</textdomain>
+  <engines>
+    <engine>
+      <name>yui-telex</name>
+      <language>vi</language>
+      <license>MIT</license>
+      <author>YuiVieOS contributors</author>
+      <layout>us</layout>
+      <longname>Vietnamese (Yui Telex)</longname>
+      <description>Vietnamese Telex input with live preedit</description>
+      <symbol>Vi</symbol>
+      <rank>80</rank>
+    </engine>
+    <engine>
+      <name>yui-vni</name>
+      <language>vi</language>
+      <license>MIT</license>
+      <author>YuiVieOS contributors</author>
+      <layout>us</layout>
+      <longname>Vietnamese (Yui VNI)</longname>
+      <description>Vietnamese VNI input with live preedit</description>
+      <symbol>Vi</symbol>
+      <rank>70</rank>
+    </engine>
+  </engines>
+</component>

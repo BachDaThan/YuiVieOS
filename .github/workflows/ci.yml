@@ -25,7 +25,12 @@ jobs:
         run: |
           set -o pipefail
           make -j"$(nproc)" 2>&1 | tee /tmp/build.log
-      - name: Test — 2608 checks C++17 + 61 checks C11 (ABI)
+      - name: Build optional IBus input method adapter
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libibus-1.0-dev
+          make ibus
+      - name: Test — 2632 checks C++17 + 61 checks C11 (ABI)
         run: |
           set -o pipefail
           make test 2>&1 | tee /tmp/test.log
@@ -57,6 +62,9 @@ jobs:
           test -x "$RUNNER_TEMP/yui/bin/yuid"
           test -f "$RUNNER_TEMP/yui/lib/libyui.a"
           test -f "$RUNNER_TEMP/yui/include/yui/yui.h"
+          test -x "$RUNNER_TEMP/yui/bin/yui-ibus-engine"
+          grep -q "$RUNNER_TEMP/yui/bin/yui-ibus-engine" \
+            "$RUNNER_TEMP/yui/share/ibus/component/org.freedesktop.IBus.Yui.xml"
       - name: Link libyui from C outside the tree
         run: |
           mkdir -p /tmp/abi && cd /tmp/abi

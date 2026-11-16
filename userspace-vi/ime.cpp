@@ -302,6 +302,27 @@ std::string convert(const std::string& keystrokes, Method method) {
   return out;
 }
 
+bool Composition::feed(uint32_t codepoint) {
+  const bool ascii_alnum = (codepoint >= 'a' && codepoint <= 'z') ||
+                           (codepoint >= 'A' && codepoint <= 'Z') ||
+                           (codepoint >= '0' && codepoint <= '9');
+  if (!ascii_alnum) return false;
+  keys_.push_back(char(codepoint));
+  return true;
+}
+
+bool Composition::backspace() {
+  if (keys_.empty()) return false;
+  keys_.pop_back();
+  return true;
+}
+
+std::string Composition::commit() {
+  std::string text = preedit();
+  reset();
+  return text;
+}
+
 std::string WordEngine::feed(uint32_t codepoint) {
   const bool boundary = codepoint == ' ' || codepoint == '\t' || codepoint == '\n' ||
                         codepoint == '\r' || codepoint == ',' || codepoint == '.' ||

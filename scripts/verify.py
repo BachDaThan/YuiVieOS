@@ -19,6 +19,7 @@ import json
 import pathlib
 import re
 import sys
+import xml.etree.ElementTree as ET
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 failures: list[str] = []
@@ -40,7 +41,7 @@ def header(msg: str) -> None:
 # --------------------------------------------------------------------------- 1
 REQUIRED_DIRS = [
     "docs", "kernel-cap", "kernel-services", "vmm-sandbox", "ai-bridge-yuid",
-    "pkg-stripper", "userspace-vi", "tools", "arch", "include", "tests",
+    "pkg-stripper", "userspace-vi", "userspace-vi/ibus", "tools", "arch", "include", "tests",
     "scripts", ".github/workflows",
 ]
 REQUIRED_FILES = [
@@ -60,6 +61,9 @@ REQUIRED_FILES = [
     "docs/ARCHITECTURE.md", "docs/PLAN.md", "docs/PROTOCOL.md",
     "docs/SECURITY.md", "docs/FORMAT-YUIP.md", "docs/BUILD.md",
     "tests/test_capi.c", "tests/test_ed25519.cpp", "tests/test_redteam.cpp",
+    "include/yui/ime.hpp", "userspace-vi/ibus/engine.cpp",
+    "userspace-vi/ibus/main.cpp", "userspace-vi/ibus/org.freedesktop.IBus.Yui.xml.in",
+    "tests/test_ime.cpp",
 ]
 STALE = ["core", "crates", "sandbox", "ui"]  # old layout must not come back
 
@@ -101,6 +105,31 @@ def check_policies() -> None:
         ok(str(schema.relative_to(ROOT)))
     except Exception as exc:  # noqa: BLE001
         bad(f"{schema.relative_to(ROOT)}: JSON hỏng: {exc}")
+
+
+def check_ibus_component() -> None:
+    header("IBus component metadata")
+    path = ROOT / "userspace-vi/ibus/org.freedesktop.IBus.Yui.xml.in"
+    try:
+        root = ET.parse(path).getroot()
+    except Exception as exc:  # noqa: BLE001 - report malformed metadata
+        bad(f"{path.relative_to(ROOT)}: XML hỏng: {exc}")
+        return
+
+    component_name = root.findtext("name", default="")
+    exec_path = root.findtext("exec", default="")
+    engines = root.findall("./engines/engine")
+    names = {engine.findtext("name", default="") for engine in engines}
+    if root.tag != "component" or component_name != "org.freedesktop.IBus.Yui":
+        bad(f"{path.relative_to(ROOT)}: component name/root không đúng")
+    elif "@PREFIX@" not in exec_path or not exec_path.endswith("/bin/yui-ibus-engine"):
+        bad(f"{path.relative_to(ROOT)}: exec phải trỏ tới binary theo PREFIX")
+    elif names != {"yui-telex", "yui-vni"}:
+        bad(f"{path.relative_to(ROOT)}: cần đúng hai engine yui-telex/yui-vni, có {sorted(names)}")
+    elif any(engine.findtext("language") != "vi" for engine in engines):
+        bad(f"{path.relative_to(ROOT)}: cả hai engine phải khai báo ngôn ngữ vi")
+    else:
+        ok(f"{path.relative_to(ROOT)}: Telex + VNI, ngôn ngữ vi")
 
 
 # --------------------------------------------------------------------------- 3
@@ -361,7 +390,7 @@ def check_doc_paths() -> None:
 # --------------------------------------------------------------------------- 6
 def check_line_endings() -> None:
     header("định dạng nguồn")
-    exts = {".cpp", ".hpp", ".h", ".c", ".rs", ".json", ".md", ".sh", ".py", ".toml", ".ld", ".yml"}
+    exts = {".cpp", ".hpp", ".h", ".c", ".rs", ".json", ".md", ".sh", ".py", ".toml", ".ld", ".yml", ".xml", ".in"}
     problems = []
     for path in ROOT.rglob("*"):
         if not path.is_file() or path.suffix not in exts:
@@ -383,6 +412,7 @@ def main() -> int:
         return 2
     check_layout()
     check_policies()
+    check_ibus_component()
     check_rust()
     check_frame()
     check_links()

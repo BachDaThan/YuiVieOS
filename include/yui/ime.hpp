@@ -56,6 +56,32 @@ class WordEngine {
   std::string keys_;
 };
 
+// Editable composition buffer for desktop input-method adapters.  It retains
+// the original ASCII keystrokes so backspace can recompute Telex/VNI correctly
+// instead of trying to reverse Vietnamese Unicode transformations.
+class Composition {
+ public:
+  explicit Composition(Method m = Method::Telex) : method_(m) {}
+
+  // Append an ASCII letter or digit. Punctuation/non-ASCII input is left for
+  // the adapter to commit the current composition and forward to the client.
+  bool feed(uint32_t codepoint);
+  bool backspace();
+  std::string preedit() const { return convert_word(keys_, method_); }
+  std::string commit();
+  void reset() { keys_.clear(); }
+  bool empty() const { return keys_.empty(); }
+  Method method() const { return method_; }
+  void set_method(Method m) {
+    method_ = m;
+    reset();
+  }
+
+ private:
+  Method method_;
+  std::string keys_;
+};
+
 }  // namespace yui::ime
 
 #endif  // YUI_IME_HPP

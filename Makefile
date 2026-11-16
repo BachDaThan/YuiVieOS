@@ -9,6 +9,7 @@
 #   make check      test + end-to-end smoke runs + static verification
 #   make verify     static checks only (needs no toolchain but a C compiler)
 #   make install    install into $(PREFIX) (default /usr/local)
+#   make ibus       build the optional IBus adapter (needs libibus-1.0-dev)
 #   make kernel     build the bare-metal frame for ARCH (nightly + QEMU image)
 #   make clean
 
@@ -19,6 +20,9 @@ CFLAGS   ?= -std=gnu11 -O2 -g -Wall -Wextra
 CPPFLAGS += -Iinclude -Itests -Ikernel-services -Iuserspace-vi -D_GNU_SOURCE
 LDFLAGS  ?=
 LDLIBS   ?= -lpthread -lm
+PKG_CONFIG ?= pkg-config
+IBUS_CFLAGS = $(shell $(PKG_CONFIG) --cflags ibus-1.0 2>/dev/null)
+IBUS_LIBS   = $(shell $(PKG_CONFIG) --libs ibus-1.0 2>/dev/null)
 
 BUILD    := build
 BIN      := $(BUILD)/bin
@@ -66,7 +70,23 @@ TESTS := test_crypto test_codec_json test_core test_sandbox test_ime test_daemon
 # `kernel` is declared before `all`, so pin the default goal explicitly.
 .DEFAULT_GOAL := all
 
-.PHONY: all test check verify install clean rust fmt kernel qemu
+.PHONY: all test check verify install install-ibus clean rust fmt kernel qemu ibus
+
+# Optional desktop input method. The core build stays dependency-free; this
+# adapter is built only when explicitly requested.
+ibus:
+	@$(PKG_CONFIG) --exists ibus-1.0 || { \
+		echo "make ibus needs pkg-config and the ibus-1.0 development package" >&2; \
+		exit 1; \
+	}
+	@$(MAKE) --no-print-directory $(BIN)/yui-ibus-engine
+
+$(BIN)/yui-ibus-engine: userspace-vi/ibus/main.cpp userspace-vi/ibus/engine.cpp \
+                       userspace-vi/ibus/engine.hpp $(BIN)/libyui.a
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(IBUS_CFLAGS) -Iuserspace-vi/ibus \
+		-o $@ userspace-vi/ibus/main.cpp userspace-vi/ibus/engine.cpp \
+		$(BIN)/libyui.a $(IBUS_LIBS) $(LDLIBS)
 
 # Bare-metal frame: separate toolchain (nightly + rust-src), separate workspace.
 # Kept out of `all` so a C++ checkout still builds on a machine without Rust.
@@ -155,6 +175,15 @@ install: all
 	install -Dm644 $(BIN)/libyui.a $(DESTDIR)$(PREFIX)/lib/libyui.a
 	install -Dm755 $(BIN)/libyui.so $(DESTDIR)$(PREFIX)/lib/libyui.so
 	install -Dm644 include/yui/yui.h $(DESTDIR)$(PREFIX)/include/yui/yui.h
+	@if test -x "$(BIN)/yui-ibus-engine"; then \
+		$(MAKE) --no-print-directory install-ibus; \
+	fi
+
+install-ibus: ibus
+	install -Dm755 $(BIN)/yui-ibus-engine $(DESTDIR)$(PREFIX)/bin/yui-ibus-engine
+	install -d $(DESTDIR)$(PREFIX)/share/ibus/component
+	sed 's|@PREFIX@|$(PREFIX)|g' userspace-vi/ibus/org.freedesktop.IBus.Yui.xml.in \
+		> $(DESTDIR)$(PREFIX)/share/ibus/component/org.freedesktop.IBus.Yui.xml
 
 # Rust workspace at the repository root: kernel-cap (Tầng 1) and the
 # kernel-services crates (Tầng 2).  Needs cargo; the C++ targets do not.
