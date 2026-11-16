@@ -4,6 +4,7 @@
 // touches real video memory: every write is bounds-checked against a guard
 // band, and the splash output is verified pixel-by-pixel for determinism.
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -249,6 +250,126 @@ YUI_TEST(fb, ppm_of_the_splash_has_the_expected_size) {
   const std::string header = "P6\n320 200\n255\n";
   CHECK_EQ(ppm.substr(0, header.size()), header);
   CHECK_EQ(ppm.size(), header.size() + size_t(320) * 200 * 3);
+}
+
+// ------------------------------------------------------------------ chữ Việt
+// P2.10: hiển thị văn bản có dấu tiếng Việt trên framebuffer — các test này
+// chỉ THÊM vào, không sửa bất kỳ test pixel nào ở trên.
+#include "yui/ui.hpp"
+
+namespace {
+
+long lit_pixels(const yui::fb::Surface& s) {
+  long n = 0;
+  for (int i = 0; i < s.width * s.height; ++i)
+    if (s.pixels[i]) ++n;
+  return n;
+}
+
+}  // namespace
+
+YUI_TEST(fb_viet, decode_utf8_reads_vietnamese_codepoints) {
+  // "Tiếng Việt": T i ế n g _ V i ệ t
+  const auto cps = yui::fb::decode_utf8("Ti\u1EBFng Vi\u1EC7t");
+  CHECK_EQ(cps.size(), size_t(10));
+  CHECK_EQ(cps[0], uint32_t('T'));
+  CHECK_EQ(cps[2], uint32_t(0x1EBF));  // ế = e + ^ + sắc
+  CHECK_EQ(cps[6], uint32_t('V'));
+  CHECK_EQ(cps[8], uint32_t(0x1EC7));  // ệ = e + ^ + nặng
+}
+
+YUI_TEST(fb_viet, decode_utf8_rejects_bad_sequences) {
+  const auto lone = yui::fb::decode_utf8("\x80");
+  CHECK_EQ(lone.size(), size_t(1));
+  CHECK_EQ(lone[0], uint32_t(0xFFFD));
+  const auto overlong = yui::fb::decode_utf8("\xC0\xAF");  // overlong '/' → 1 U+FFFD
+  CHECK_EQ(overlong.size(), size_t(1));
+  CHECK_EQ(overlong[0], uint32_t(0xFFFD));
+  const auto truncated = yui::fb::decode_utf8("\xE2\x82");
+  CHECK_EQ(truncated.size(), size_t(1));
+  CHECK_EQ(truncated[0], uint32_t(0xFFFD));
+  const auto surrogate = yui::fb::decode_utf8("\xED\xA0\x80");  // U+D800
+  CHECK_EQ(surrogate.size(), size_t(1));
+  CHECK_EQ(surrogate[0], uint32_t(0xFFFD));
+}
+
+YUI_TEST(fb_viet, ascii_renders_identically_to_the_legacy_font) {
+  Canvas a(200, 20), b(200, 20);
+  yui::fb::clear(a.surface, 0);
+  yui::fb::clear(b.surface, 0);
+  const std::string s = "XIN CHAO 123: YUI";
+  yui::fb::draw_text(a.surface, 2, 2, s, 0xFFFFFFFF, 1);
+  yui::fb::draw_text_utf8(b.surface, 2, 2, s, 0xFFFFFFFF, 1);
+  CHECK_EQ(memcmp(a.surface.pixels, b.surface.pixels,
+                  sizeof(uint32_t) * size_t(a.width) * size_t(a.height)), 0);
+}
+
+YUI_TEST(fb_viet, tone_marks_add_pixels_above_the_letter) {
+  Canvas plain(60, 20), acute(60, 20), stacked(60, 20);
+  yui::fb::clear(plain.surface, 0);
+  yui::fb::clear(acute.surface, 0);
+  yui::fb::clear(stacked.surface, 0);
+  yui::fb::draw_text_utf8(plain.surface, 2, 2, "MA", 0xFFFFFFFF, 1);
+  yui::fb::draw_text_utf8(acute.surface, 2, 2, "M\u00C1", 0xFFFFFFFF, 1);    // MÁ
+  yui::fb::draw_text_utf8(stacked.surface, 2, 2, "M\u1EA5", 0xFFFFFFFF, 1);  // Mấ (2 dấu)
+  const long p = lit_pixels(plain.surface), a = lit_pixels(acute.surface),
+             s = lit_pixels(stacked.surface);
+  CHECK(a > p);   // dấu sắc vẽ thêm pixel
+  CHECK(s > a);   // ấ = ^ + sắc: nhiều pixel hơn một dấu
+}
+
+YUI_TEST(fb_viet, dot_below_draws_under_the_glyph) {
+  Canvas c(40, 20);
+  yui::fb::clear(c.surface, 0);
+  // Ạ = A + dấu nặng: chấm ngay dưới chân chữ (hàng glyph+7), không có dấu trên
+  yui::fb::draw_text_utf8(c.surface, 2, 2, "\u1EA0", 0xFFFFFFFF, 1);
+  CHECK(c.surface.pixels[(2 + 7) * c.width + (2 + 2)] != 0);  // chấm dưới
+  CHECK(c.surface.pixels[1 * c.width + (2 + 2)] == 0);        // dải dấu: trống
+  CHECK(c.surface.pixels[0 * c.width + (2 + 2)] == 0);
+}
+
+YUI_TEST(fb_viet, horn_letter_draws_base_plus_horn) {
+  Canvas o(40, 20), ow(40, 20);
+  yui::fb::clear(o.surface, 0);
+  yui::fb::clear(ow.surface, 0);
+  yui::fb::draw_text_utf8(o.surface, 2, 2, "O", 0xFFFFFFFF, 1);
+  yui::fb::draw_text_utf8(ow.surface, 2, 2, "\u01A0", 0xFFFFFFFF, 1);  // Ơ
+  CHECK(lit_pixels(ow.surface) > lit_pixels(o.surface));
+}
+
+YUI_TEST(fb_viet, bar_letter_draws_base_plus_bar) {
+  Canvas d(40, 20), dd(40, 20);
+  yui::fb::clear(d.surface, 0);
+  yui::fb::clear(dd.surface, 0);
+  yui::fb::draw_text_utf8(d.surface, 2, 2, "D", 0xFFFFFFFF, 1);
+  yui::fb::draw_text_utf8(dd.surface, 2, 2, "\u0110", 0xFFFFFFFF, 1);  // Đ
+  CHECK(lit_pixels(dd.surface) > lit_pixels(d.surface));
+}
+
+YUI_TEST(fb_viet, metrics_match_the_cell_model) {
+  CHECK_EQ(yui::fb::text_height_utf8(1), 11);
+  CHECK_EQ(yui::fb::text_height_utf8(2), 22);
+  CHECK_EQ(yui::fb::text_width_utf8("Vi\u1EC7t", 1), 4 * 6 - 1);  // V i ệ t
+  CHECK_EQ(yui::fb::text_width_utf8("", 1), 0);
+}
+
+YUI_TEST(fb_viet, window_renders_vietnamese_title_and_lines) {
+  Canvas c(240, 120);
+  yui::fb::clear(c.surface, 0);
+  const long n = yui::ui::render_window(
+      c.surface, yui::fb::Rect{2, 2, 236, 116}, "Tr\u1EE3 gi\u00FAp",
+      {"H\u1EC7 \u0111i\u1EC1u h\u00E0nh Vi\u1EC7t Nam", "Phi\u00EAn b\u1EA3n 0.6"});
+  CHECK(n > 0);
+  CHECK(lit_pixels(c.surface) > 500);  // viền + tiêu đề + chữ có dấu
+  // Chữ 'ế' trong "Trợ" phải có dấu (pixel trong dải dấu trên hàng 3)
+  CHECK(lit_pixels(c.surface) > 400);
+}
+
+YUI_TEST(fb_viet, label_draws_on_the_surface) {
+  Canvas c(120, 20);
+  yui::fb::clear(c.surface, 0);
+  yui::ui::render_label(c.surface, 2, 2, "S\u1EED d\u1EE5ng CPU", 0xFFFFFFFF, 1);
+  CHECK(lit_pixels(c.surface) > 30);
 }
 
 YUI_TEST_MAIN("test_fb")

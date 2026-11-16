@@ -28,9 +28,11 @@ Quyền là **dữ liệu**, không phải một bit toàn cục:
 Capability { object: u32, rights: u32, badge: u32 }
 ```
 
-- 15 quyền có tên trên một `u32`: `fs.read`, `fs.write`, `fs.exec`, `net.connect`,
+- 16 quyền có tên trên một `u32`: `fs.read`, `fs.write`, `fs.exec`, `net.connect`,
   `net.listen`, `input`, `camera`, `mic`, `gpu`, `model`, `graph`, `vault`,
-  `spawn`, `power`, `admin`.
+  `spawn`, `power`, `admin`, `compute.heavy` (được phép tải CPU/GPU cao kéo
+  dài — Guard nền dùng nó để phân biệt tiến trình tính toán hợp lệ với đào
+  coin ngầm, mục 10).
 - **Dẫn xuất chỉ thu hẹp**: `parent.derive(child)` = `parent.rights & child.rights`.
   Rỗng ⇒ `None`. Không có phép toán nào trong crate mở rộng quyền.
 - **Thu hồi bắc cầu**: `revoke(slot)` đánh dấu cả cây con. Một tiến trình bị thu
@@ -135,23 +137,41 @@ bị từ chối. Đường dẫn trong kho YUIA bị kiểm: tuyệt đối và
 **Không** có chữ ký số trong `.yuip`: gói app là *dữ liệu người dùng tự tạo*,
 không phải gói cập nhật hệ thống. Chữ ký nằm ở `.bundle` (mục 6).
 
-## 6. Cập nhật hệ thống (đặc tả, chưa cài đặt)
+## 6. Cập nhật hệ thống (đã cài đặt — clean-room)
 
 ```
 bundle/
-  manifest.json     { "version": "...", "files": [{"path": "...", "sha256": "...", "mode": "0644"}] }
-  manifest.sig      Ed25519(manifest.json)  — khoá phát hành YuiVieOS
+  manifest.json     bản chuẩn (canonical) — ĐÂY là thứ được ký:
+                    {"files":[{"mode":…,"path":…,"sha256":…},…],"key_id":…,"version":…}
+                    (tệp sắp theo path, thứ tự khoá cố định; người ký dựng
+                    manifest dạng chuẩn, bên xác minh TỰ DỰNG LẠI từ các
+                    trường đã phân tích — không bao giờ ký lại chuỗi nhận được)
+  manifest.sig      Ed25519(canonical) 64 byte — khoá phát hành YuiVieOS
   payload/          file thật
 ```
 
-Cài đặt: xác minh chữ ký manifest bằng khoá trong `/etc/yui/trusted-keys/` →
-kiểm từng SHA-256 sau khi giải nén → chỉ ghi vào phân vùng A/B → đổi con trỏ
-boot. Không có mạng: bundle chép qua USB, vẫn xác minh y hệt.
+Cài đặt: tra khoá trong kho `/etc/yui/trusted-keys/` (`<key_id>.pub` = 64 hex)
+→ xác minh chữ ký Ed25519 trên **dạng chuẩn dựng lại** → kiểm SHA-256 từng
+`payload/<path>` → chỉ ghi vào **phân vùng bất biến + khe A/B** → đổi con trỏ
+boot bằng ghi nguyên tử (tmp + fsync + rename). Không có mạng: bundle chép qua
+USB, vẫn xác minh y hệt. Đường dẫn trong manifest bị kiểm trước khi dùng:
+tuyệt đối, `..`, `//` ⇒ từ chối với lý do tiếng Việt.
 
-**Chưa có Ed25519** trong repo (không có thư viện, tự viết đường cong là rủi ro
-cao). Kế hoạch: implement Ed25519 clean-room kèm vector RFC 8032, hoặc dùng
-kernel keyring nếu chạy trên Linux host. Cho tới lúc đó, **đừng** coi `.bundle`
-là đã an toàn — nó mới là đặc tả.
+**Ed25519 đã được cài đặt clean-room** (không dùng thư viện mật mã nào):
+`kernel-services/ed25519.cpp` + `kernel-cap/src/ed25519.rs` — SHA-512
+(FIPS 180-4), số học GF(2^255−19) limb 32-bit, cộng đầy đủ twisted Edwards
+(RFC 8032 §5.1.4). Kiểm chứng bằng **vector chính thức RFC 8032 §7.1**
+(TEST 1/2/3, SHA(abc), TEST 1024 — khóa công khai và chữ ký khớp từng hex) +
+vector FIPS cho SHA-512: `tests/test_ed25519.cpp` (78 check),
+`kernel-cap/src/ed25519.rs` (5 test). Bộ test `.bundle` kèm theo:
+kho khoá CRUD + bền vững, ký/xác minh ngoại tuyến, **5 kịch bản sửa 1 byte**
+(tệp, chữ ký, phiên bản, đường dẫn thoát gốc, khoá lạ) đều bị từ chối, và
+cài đặt khe A/B + quay lui (`tests/test_ed25519.cpp::bundle.*`).
+
+Giới hạn đã biết: Ed25519 bản C++/Rust này tối ưu cho đúng chứ không cho tốc
+độ (trừ dài theo bit); không có chống đo thời gian cho toàn bộ đường cong
+(riêng so MAC dùng so khớp hằng thời gian); sinh số ngẫu nhiên cho khoá do
+phần gọi đảm nhiệm (seed 32 byte).
 
 ## 7. Những gì chưa được bảo vệ
 
@@ -162,7 +182,8 @@ Danh sách này cố ý đầy đủ, vì biết giới hạn quan trọng hơn 
    phải cách ly phần cứng.
 2. **Chưa có micro-VM**: `vmm-sandbox/vmm` là schema + đặc tả. Cách ly game/Android
    ở mức KVM **chưa** tồn tại trong repo.
-3. **Chưa có chữ ký số** cho cập nhật (mục 6).
+3. **Chữ ký cập nhật đã có** (mục 6) nhưng khoá sinh ngẫu nhiên vẫn do phần
+   gọi đảm nhiệm; hạ tầng phân phối khoá (xoay khoá, thu hồi) chưa có.
 4. **Không chống kênh bên**: mọi so sánh mật mã đều hằng thời gian ở mức mã
    nguồn, nhưng CPU có thể vẫn rò rỉ.
 5. **`yuid` tin tiến trình cùng UID**: ai chạy được `yuid` (hoặc thay được
@@ -185,3 +206,54 @@ hiện, và mức ảnh hưởng. Vui lòng **không** mở issue công khai cho
 3. Mọi hàm giải nén/nạp dữ liệu phải: kiểm độ dài → kiểm toàn vẹn → mới parse.
 4. Mọi quyết định cho/không phải có `reason` đọc được bằng tiếng Việt.
 5. Mật mã mới phải kèm vector kiểm thử chuẩn và dòng "giới hạn đã biết" ở mục 4.
+
+## 10. Phòng vệ chủ động (đã cài đặt)
+
+Ba cơ chế dưới đây đều là **chính sách thuần** (Rust an toàn / C++ đối chiếu,
+kiểm thử không cần phần cứng thật) — telemetry thật chỉ là nguồn dữ liệu đầu vào.
+
+### 10.1 Guard chống bất thường nền (đào coin ngầm)
+
+Quy tắc: tiến trình **không có cửa sổ** (headless) **và** không giữ quyền
+`compute.heavy` (CAP_COMPUTE_HEAVY) mà tải CPU hoặc GPU **vượt 70 %** liên tục
+**≥ 15 s** ⇒ bị nghi ngờ chạy ngầm. Hệ thống tự động:
+
+1. hạ xuống lớp ưu tiên đáy (`Idle`/`Background` trong yui-sched);
+2. clock-gating + bóp xung nhịp về **20 %** (`yui-power`, giải phóng khi người
+   dùng chọn "để yên");
+3. ghi audit tiếng Việt;
+4. hỏi người dùng qua `yuid`: **"Bạn muốn tiêu diệt, gỡ bỏ, hay để yên?"** —
+   `guard.decide` **bắt buộc `confirm: true`**, thiếu thì trả
+   `needs_confirmation`, không bao giờ hành động ngầm.
+
+Chuỗi dữ liệu: `telemetry` (tải từng tiến trình) → `guard::Guard`
+(`kernel-services/guard.cpp`, `kernel-services/yui-sched/src/guard.rs`) →
+`yui-power` + `yuid` (`guard.observe`/`guard.alerts`/`guard.decide`).
+Test: `tests/test_redteam.cpp` (kịch bản đào coin, tải nhấp nháy dưới ngưỡng,
+tiến trình có cửa sổ/quyền không bị ảnh hưởng, chuỗi quyết định qua `yuid`).
+
+### 10.2 Bộ lọc egress theo năng lực
+
+Tiến trình ở chế độ `isolated`/`microvm` **mặc định bị chặn** mọi kết nối ra
+ngoài; chỉ đích nằm trong allowlist của `policies/*.json` (`net:host[:port]`,
+`net:*.suffix`, CIDR IPv4) mới đi được. `deny` **thắng** `allow`. Cổng bị kiểm:
+rule chỉ định cổng thì chỉ đúng cổng đó. Mọi quyết định kèm lý do tiếng Việt
+để audit ("chặn kết nối tới … — ngoài phạm vi cho phép của chính sách").
+
+Cài đặt: `vmm-sandbox/sandbox.cpp::EgressFilter` (song song với lớp năng lực
+`Enforcer::check` — token chỉ cấp `net.connect` trong phạm vi khai báo, gọi
+ngoài phạm vi bị từ chối + audit). Test: `tests/test_redteam.cpp`
+(mặc định chặn, wildcard, sai cổng, CIDR, deny thắng allow, khoá hậu tố giả mạo
+`api.trithuc.vn.evil.example`).
+
+### 10.3 Test Red-Team
+
+`tests/test_redteam.cpp` **mô phỏng tấn công thật** thay vì kiểm API từng phần:
+kịch bản đào coin ngầm (phát hiện + bóp xung + hỏi người dùng + xác nhận tiêu
+diệt) và kịch bản rò rỉ dữ liệu (cho phép đúng đích trong chính sách, chặn đích
+xấu ở cả hai lớp: EgressFilter và Enforcer, có audit). Đây là test hồi quy
+bảo vệ chính ba cơ chế trên — sửa Guard/EgressFilter mà test đỏ nghĩa là đã
+làm hỏng một hàng phòng thủ.
+
+Giới hạn đã biết: tải CPU/GPU trong test là **mẫu do test nạp vào**, chưa phải
+cảm biến thật; ngưỡng 70 %/15 s là hằng số cấu hình, chưa tinh chỉnh theo máy.

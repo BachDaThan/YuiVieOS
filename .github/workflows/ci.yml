@@ -25,7 +25,7 @@ jobs:
         run: |
           set -o pipefail
           make -j"$(nproc)" 2>&1 | tee /tmp/build.log
-      - name: Test — 2296 checks C++17 + 61 checks C11 (ABI)
+      - name: Test — 2608 checks C++17 + 61 checks C11 (ABI)
         run: |
           set -o pipefail
           make test 2>&1 | tee /tmp/test.log
@@ -207,10 +207,9 @@ jobs:
     name: QEMU boot (${{ matrix.arch }})
     needs: kernel
     runs-on: ubuntu-24.04
-    # aarch64 và riscv64 boot được thật (banner + profiler + bảng năng lực) nên
-    # là cổng bắt buộc. x86_64 vẫn build và vẫn được boot thử, nhưng KHÔNG chặn
-    # merge: QEMU chỉ nạp multiboot 1 từ ELF32 ("Cannot load x86-64 image, give a
-    # 32bit one") — cần multiboot2 + GRUB hoặc shim 32-bit, xem docs/PLAN.md P2.2.
+    # Cả ba kiến trúc là cổng bắt buộc: x86_64 boot được vì build-kernel.sh
+    # đóng gói ELF64 thành container ELF32 (objcopy -O elf32-i386) cho multiboot 1
+    # của QEMU; header multiboot 2 nằm sẵn cho GRUB2. Xem docs/PLAN.md P2.2.
     continue-on-error: ${{ matrix.required == false }}
     strategy:
       fail-fast: false
@@ -221,7 +220,7 @@ jobs:
           - arch: aarch64
             required: true
           - arch: x86_64
-            required: false
+            required: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -236,15 +235,20 @@ jobs:
         run: |
           set -o pipefail
           YUI_QEMU_LOG=/tmp/qemu-serial.log ./scripts/qemu-smoke.sh ${{ matrix.arch }} --strict 2>&1 | tee /tmp/qemu.log
-      - name: "Lỗi CI: toàn bộ log serial qemu (${{ matrix.arch }})"
+      - name: "Lỗi CI: log serial + log smoke (${{ matrix.arch }})"
         if: failure()
         run: |
-          for f in /tmp/qemu-serial.log; do
-            [ -f "$f" ] || continue
-            # Nối mọi dòng thành MỘT annotation: giới hạn 10 annotation/bước của
-            # GitHub sẽ cắt mất log nếu tách dòng, mà thứ tự dòng lại quan trọng.
-            body="$(sed 's/\x1b\[[0-9;]*m//g' "$f" | sed 's/%/%25/g; s/\r//g' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-1200)"
-            echo "::error title=serial-${{ matrix.arch }}::$body"
+          # Hai dòng annotation: (1) log serial của QEMU, (2) đầu ra của
+          # qemu-smoke.sh (chứa thông báo "BỎ QUA"/lỗi cục bộ). Không bao giờ
+          # để body rỗng — annotation rỗng bị GitHub vứt đi.
+          for f in /tmp/qemu-serial.log /tmp/qemu.log; do
+            if [ -f "$f" ]; then
+              body="$(cat -v "$f" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/%/%25/g; s/\r//g' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-1200)"
+            else
+              body="<khong co $f>"
+            fi
+            [ -n "$body" ] || body="<log rong: $f>"
+            echo "::error title=$(basename "$f")-${{ matrix.arch }}::$body"
           done
 
   # ------------------------------------------------------------- tài liệu ----

@@ -38,7 +38,7 @@ cần thư viện ngoài, không cần Rust.
 
 ```bash
 make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell,yui-splash}
-make test         # 2357 kiểm thử (2296 C++17 + 61 C11 ABI)
+make test         # 2669 kiểm thử (2608 C++17 + 61 C11 ABI)
 make check        # test + 5 smoke run + kiểm tra tĩnh (scripts/verify.sh)
 ```
 
@@ -69,8 +69,8 @@ Tạm biệt — hẹn gặp lại ở YuiVieOS. / Goodbye.
 ```
 docs/                ARCHITECTURE · PLAN · SECURITY · PROTOCOL · FORMAT-YUIP · BUILD
 kernel-frame/        Tầng 0 (Rust no_std, **khung unsafe duy nhất**): boot, serial, profiler, splash
-kernel-cap/          Tầng 1 (Rust no_std): quyền, CapTable, thẻ HMAC, SHA-256
-kernel-services/     Tầng 2: yui-sched/ (LAVD) · yui-zram/ (ZRAM) + codec/crypto/profile
+kernel-cap/          Tầng 1 (Rust no_std): quyền, CapTable, thẻ HMAC, SHA-256/512, Ed25519, keyring, bundle
+kernel-services/     Tầng 2: yui-sched/ (LAVD) · yui-zram/ (ZRAM) + codec/crypto/ed25519/bundle/power/guard/fsstore/linuxabi
 vmm-sandbox/         Tầng 3: bộ thực thi chính sách · policies/ · vmm/ (manifest schema)
 ai-bridge-yuid/      Tầng 4: daemon/ · capi.cpp · reference/ (chờ thay ở P5)
 pkg-stripper/        Tầng 5: Smart App Stripper (apppack)
@@ -97,12 +97,14 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 |---|---|---|---|
 | 0 | Hardware Auto-Profiler: CPU/RAM/GPU/pin/nhiệt → `may-yeu`/`can-bang`/`may-manh` + k/W | ✅ chạy | `kernel-services/profile.cpp`, `tools/profiler` |
 | 0 | Luồng khởi động 3 kiến trúc + linker script | ✅ build 3/3, boot 2/3 | `arch/{x86_64,arm64,riscv64}/linker.ld` |
-| 0 | Khung nhân bare-metal: serial, bộ cấp phát, `YuiBootInfo`, profiler, bảng năng lực trên ring 0 | ✅ boot thật (aarch64, riscv64) / ⛔ x86_64 | `kernel-frame/`; CI `qemu` xanh 2 kiến trúc; x86_64 chặn bởi QEMU multiboot (ELF32) |
-| 0 | Màn hình chào trên framebuffer tuyến tính (font 5×7) | ✅ kiểm thử | `userspace-vi/fb.cpp` (1155 check), `tools/splash`, [`docs/splash.png`](docs/splash.png) |
-| 1 | Bảng năng lực: 15 quyền, dẫn xuất chỉ thu hẹp, thu hồi bắc cầu | ✅ Rust | `kernel-cap/src/lib.rs` |
+| 0 | Khung nhân bare-metal: serial, bộ cấp phát, `YuiBootInfo`, profiler, bảng năng lực trên ring 0 | ✅ boot thật (aarch64, riscv64) / 🔄 x86_64 đã sửa boot path (multiboot2 + ELF32 objcopy), đợi CI xác nhận | `kernel-frame/`; CI `qemu` bắt buộc 3 kiến trúc |
+| 0 | Màn hình chào trên framebuffer tuyến tính (font 5×7) + **chữ Việt có dấu** | ✅ kiểm thử | `userspace-vi/fb.cpp` (1184 check, `fb_viet.*` 29 check), `tools/splash`, [`docs/splash.png`](docs/splash.png) |
+| 1 | Bảng năng lực: 16 quyền (kể cả `compute.heavy`), dẫn xuất chỉ thu hẹp, thu hồi bắc cầu | ✅ Rust | `kernel-cap/src/lib.rs` |
 | 1 | Thẻ năng lực ký HMAC-SHA-256, xác minh hằng thời gian, lỗi có kiểu | ✅ hai phía | `kernel-cap/src/lib.rs`, `vmm-sandbox/sandbox.cpp` |
 | 1 | SHA-256 / HMAC / SHAKE-256 / scrypt tự viết, có vector RFC | ✅ | `kernel-services/crypto.cpp`, `tests/test_crypto.cpp` |
-| 1 | Sovereign Keyring + `.bundle` ký Ed25519 | ❌ chưa có | P2.4 |
+| 1 | Sovereign Keyring + `.bundle` ký Ed25519 (clean-room, vector RFC 8032) | ✅ hai phía | `kernel-services/ed25519.cpp` + `kernel-cap/src/{sha512,ed25519,keyring,bundle}.rs`, `tests/test_ed25519.cpp` (78 check) |
+| 2 | Guard đào coin ngầm (70 %/15 s ⇒ hạ Idle + bóp xung + hỏi người dùng) | ✅ kiểm thử | `kernel-services/guard.cpp`, `yuid` `guard.*`, `tests/test_redteam.cpp` |
+| 2 | Bộ lọc egress theo năng lực (mặc định chặn, allowlist policies/*.json) | ✅ kiểm thử | `vmm-sandbox/sandbox.cpp::EgressFilter`, `tests/test_redteam.cpp` |
 | 2 | Lập lịch chuyển đổi nóng LAVD (P/E-core, tín dụng đánh thức, công bằng) | ✅ Rust | `kernel-services/yui-sched` (9 test) |
 | 2 | ZRAM: codec YUI-LZ + kho trang nén, fallback verbatim | ✅ Rust + C++ | `kernel-services/yui-zram` (8 test), `kernel-services/codec.cpp` |
 | 2 | `yui-frame` (khung unsafe duy nhất) | ✅ boot được (2 kiến trúc) | `kernel-frame/` — 29 khối `unsafe` trong 7 tệp được `verify.sh` kiểm toán |

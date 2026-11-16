@@ -8,6 +8,9 @@
 #define YUI_UI_HPP
 
 #include <string>
+#include <vector>
+
+#include "yui/fb.hpp"
 
 namespace yui::ui {
 
@@ -38,6 +41,28 @@ struct Layout {
 };
 
 Layout plan(const DisplayInfo& display, const HardwareForUi& hw);
+
+// ------------------------------------------------------- cửa sổ / văn bản --
+// Khung cửa sổ vẽ qua framebuffer với tiêu đề + nội dung tiếng Việt ĐẦY ĐỦ
+// DẤU (fb::draw_text_utf8) — "ngôn ngữ hiển thị" của P2.10. Thang máy tính
+// yếu chỉ cần Surface + Rect, không phụ thuộc compositor.
+struct WindowChrome {
+  uint32_t border = 0xFF203040;
+  uint32_t title_bg = 0xFF305070;
+  uint32_t title_fg = 0xFFFFFFFF;
+  uint32_t body_bg = 0xFF101820;
+  uint32_t text_fg = 0xFFD0D8E0;
+};
+
+/// Vẽ khung cửa sổ: viền 1 px (× scale), thanh tiêu đề, thân chứa các dòng
+/// văn bản tiếng Việt. Trả về số pixel đã vẽ (0 nếu surface không hợp lệ).
+long render_window(const fb::Surface& s, const fb::Rect& r, const std::string& title_utf8,
+                   const std::vector<std::string>& lines, const WindowChrome& c = WindowChrome{},
+                   int scale = 1);
+
+/// Vẽ một dòng nhãn tiếng Việt có dấu tại (x, y) — tiện cho status bar.
+void render_label(const fb::Surface& s, int x, int y, const std::string& text_utf8,
+                  uint32_t argb, int scale = 1);
 
 }  // namespace yui::ui
 

@@ -11,6 +11,8 @@
 # tính năng không ổn định. Mọi crate khác của dự án build bằng stable.
 #
 # Đầu ra: build/kernel/yui-kernel-<arch>.elf
+#   * x86_64: thêm build/kernel/yui-kernel-x86_64.elf64 (bản đầy đủ cho GDB);
+#     tệp .elf là container ELF32 mà QEMU `-kernel` nạp được qua multiboot 1.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -64,4 +66,30 @@ RUSTFLAGS="-C relocation-model=static -C target-feature=+strict-align -C link-ar
 SRC="kernel-frame/target/$TARGET/release/yui-frame"
 OUT="build/kernel/yui-kernel-$ARCH.elf"
 cp "$SRC" "$OUT"
-echo "✓ $OUT ($(wc -c <"$OUT") byte)"
+
+if [ "$ARCH" = "x86_64" ]; then
+    # QEMU `-kernel` chỉ nạp multiboot 1 từ ELF32 ("Cannot load x86-64 image,
+    # give a 32bit one"), còn ELF64 đầy đủ thì GDB/objdump đọc tốt. Vì vậy giữ
+    # hai bản: ELF64 gốc để gỡ lỗi, container ELF32 làm ảnh khởi động.
+    # objcopy chỉ đổi "vỏ" ELF (e_ident/e_machine, program headers) — mã máy
+    # 32-bit của _start và phần 64-bit phía sau giữ nguyên từng byte.
+    if ! command -v objcopy >/dev/null 2>&1; then
+        echo "✗ thiếu objcopy (binutils) — cần để đóng gói ảnh boot ELF32 cho x86_64" >&2
+        exit 1
+    fi
+    cp "$OUT" "build/kernel/yui-kernel-x86_64.elf64"
+    objcopy -O elf32-i386 "build/kernel/yui-kernel-x86_64.elf64" "$OUT"
+    echo "✓ $OUT ($(wc -c <"$OUT") byte, container ELF32 cho QEMU -kernel)"
+    echo "  (bản ELF64 đầy đủ: build/kernel/yui-kernel-x86_64.elf64)"
+    # Nếu có grub-file, kiểm luôn tính hợp lệ multiboot của ảnh vừa đóng gói.
+    if command -v grub-file >/dev/null 2>&1; then
+        if grub-file --is-x86-multiboot "$OUT"; then
+            echo "✓ grub-file: ảnh có header multiboot hợp lệ"
+        else
+            echo "✗ grub-file: ảnh KHÔNG phải multiboot hợp lệ" >&2
+            exit 1
+        fi
+    fi
+else
+    echo "✓ $OUT ($(wc -c <"$OUT") byte)"
+fi

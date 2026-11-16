@@ -1,10 +1,13 @@
-//! x86_64 — BIOS Legacy (multiboot 1) → long mode → Rust.
+//! x86_64 — BIOS Legacy (multiboot 1/2) → long mode → Rust.
 //!
-//! QEMU `-kernel` chỉ hiểu multiboot 1 cho x86, và multiboot 1 khởi động ở chế
-//! độ 32-bit. Vì vậy khung này chứa một cầu nối 32→64 bit tối thiểu: bảng trang
-//! nhận dạng 1 GiB với trang 2 MiB, bật PAE + LME + PG, nạp GDT 64-bit rồi nhảy
-//! sang mã Rust. Toàn bộ phần đó là `global_asm!` — nghĩa là phần **duy nhất**
-//! của dự án cần assembly, và nó nằm gọn trong một tệp.
+//! QEMU `-kernel` chỉ nạp multiboot 1 **từ ELF32** ("Cannot load x86-64 image,
+//! give a 32bit one"), còn GRUB2 hiểu multiboot 2. Vì vậy ảnh khởi động có cả
+//! hai header multiboot trong `.multiboot`, và `scripts/build-kernel.sh` đóng
+//! gói ELF64 thành container ELF32 (`objcopy -O elf32-i386`) cho QEMU — nội
+//! dung mã không đổi, chỉ thay "vỏ" ELF. Multiboot 1 lẫn 2 đều nhảy vào
+//! `_start` ở chế độ 32-bit, nên cầu nối 32→64 bit dưới đây dùng chung cho cả
+//! hai đường khởi động. Toàn bộ phần assembly là `global_asm!` — nghĩa là phần
+//! **duy nhất** của dự án cần assembly, và nó nằm gọn trong một tệp.
 
 // Rust dùng cú pháp Intel cho asm!; cầu nối dưới đây viết theo AT&T nên phải
 // yêu cầu tường minh. Đổi cú pháp cả tệp là một lựa chọn khác, nhưng dễ sai hơn.
@@ -20,16 +23,29 @@ core::arch::global_asm!(
     r#"
 .section .multiboot, "a"
 .align 4
-    .long 0x1BADB002          /* magic */
+    .long 0x1BADB002          /* magic multiboot 1 */
     .long 0x00000003          /* align modules + provide mem info */
     .long -(0x1BADB002 + 0x00000003)
+
+/* Header multiboot 2 (GRUB2 `multiboot2`): cùng mục vào _start 32-bit.
+ * checksum = -(magic + arch + length) mod 2^32; end tag bắt buộc. */
+.align 8
+mb2_start:
+    .long 0xE85250D6          /* magic multiboot 2 */
+    .long 0x00000000          /* architecture: i386 */
+    .long mb2_end - mb2_start /* header_length */
+    .long -(0xE85250D6 + 0x00000000 + (mb2_end - mb2_start))
+    .word 0                   /* end tag: type = 0 */
+    .word 0
+    .long 8
+mb2_end:
 
 .section .text.entry, "ax"
 .code32
 .global _start
 _start:
     cli
-    movl %eax, %esi           /* multiboot magic */
+    movl %eax, %esi           /* multiboot magic (0x2BADB002 hoặc 0x36D76289) */
     movl %ebx, %edi           /* multiboot info (physical) */
     movl $stack32_top, %esp
 
@@ -57,6 +73,11 @@ _start:
     movl %edx, (%eax)
     movl $0, 4(%eax)
 
+    /* CR3 = &pml4 — BẮT BUỘC trước khi bật CR0.PG: thiếu bước này CPU dò
+     * bảng trang tại địa chỉ 0 (giá trị reset), hỏng ngay ở lệnh kế tiếp. */
+    movl $pml4, %eax
+    movl %eax, %cr3
+
     /* CR4.PAE */
     movl %cr4, %eax
     orl  $0x20, %eax
@@ -68,9 +89,9 @@ _start:
     orl  $0x100, %eax
     wrmsr
 
-    /* CR0.PG | CR0.PE */
+    /* CR0.PG | CR0.PE (PE đã = 1 từ protected mode, OR lại cho đúng chuẩn) */
     movl %cr0, %eax
-    orl  $0x80010000, %eax
+    orl  $0x80000001, %eax
     movl %eax, %cr0
 
     lgdt gdt64_ptr
@@ -81,8 +102,9 @@ long_mode:
     movq $stack64_top, %rsp
     xorq %rbp, %rbp
     movl %edi, %edi           /* zero-extend the multiboot pointer */
+    movl %esi, %esi           /* zero-extend the multiboot magic */
     movq %rdi, %rdi
-    call kmain_x86
+    call kmain_x86            /* rdi = info, rsi = magic */
 2:
     hlt
     jmp 2b
@@ -181,7 +203,11 @@ pub fn cpu_vendor() -> [u8; 12] {
 }
 
 /// Điểm vào từ assembly (long mode, ngăn xếp đã dựng).
+///
+/// `magic` phân biệt hai giao thức multiboot: `0x2BADB002` = multiboot 1
+/// (QEMU `-kernel`), `0x36D76289` = multiboot 2 (GRUB2). Cả hai đặt con trỏ
+/// info vào tham số đầu; cấu trúc info khác nhau nên `boot::parse` rẽ nhánh.
 #[no_mangle]
-pub extern "C" fn kmain_x86(multiboot_info: u32) -> ! {
-    crate::kmain(RawBoot::Multiboot(multiboot_info as u64))
+pub extern "C" fn kmain_x86(multiboot_info: u32, magic: u32) -> ! {
+    crate::kmain(RawBoot::Multiboot(multiboot_info as u64, magic))
 }

@@ -85,5 +85,39 @@ pub fn cpu_vendor() -> [u8; 12] {
 
 #[no_mangle]
 pub extern "C" fn kmain_arm(dtb: usize) -> ! {
-    crate::kmain(RawBoot::DeviceTree(dtb as u64))
+    // Khởi tạo UART TRƯỚC mọi println!: PL011 chưa bật thì từng byte phải đợi
+    // tới hạn trong serial_write và không phát ra gì cả — cả dải banner sẽ câm.
+    init_console();
+    let mut addr = dtb as u64;
+    if addr == 0 {
+        // QEMU `-kernel` với ảnh ELF: bootloader QEMU coi đây là "ELF không
+        // phải Linux" nên nhảy thẳng vào _start mà KHÔNG đặt x0 (xem
+        // hw/arm/boot.c: "Assume that raw images are linux kernels, and ELF
+        // images are not"), nhưng nó vẫn sinh DTB và đặt ngay tại đầu RAM
+        // (`loader_start` = 0x4000_0000 trên QEMU virt, dưới ảnh nhân ở
+        // 0x4100_0000). U-Boot/UEFI thì truyền x0 đúng chuẩn. Khi x0 = 0,
+        // quét cửa sổ đầu RAM để tìm magic FDT — không thấy thì để 0 và báo
+        // "khong doc duoc", tuyệt đối không bịa số.
+        //
+        // Cửa sổ quét = ĐÚNG khoảng trống dưới ảnh nhân (0x4000_0000 .. 0x4100_
+        // 0000): không được mở rộng vào trong ảnh — hằng FDT_MAGIC nằm trong
+        // .rodata của chính nhân sẽ thành "magic" giả. Khoảng trống 16 MiB cũng
+        // là nơi QEMU cam kết đặt DTB (dtb_start = loader_start, dtb_limit =
+        // image_low_addr).
+        addr = crate::boot::find_fdt(0x4000_0000, 0x100_0000);
+        if addr == 0 {
+            // Chẩn đoán cho CI: in 8 từ đầu tại 0x4000_0000 để biết firmware
+            // (không) đặt gì ở đó — một dòng duy nhất, đọc được từ annotation.
+            let p = 0x4000_0000u64 as *const u32;
+            let mut words = [0u32; 8];
+            for (i, w) in words.iter_mut().enumerate() {
+                *w = unsafe { core::ptr::read_unaligned(p.add(i)) };
+            }
+            println!(
+                "    - chua thay FDT; 8 tu @ 0x40000000: {:#x} {:#x} {:#x} {:#x} {:#x} {:#x} {:#x} {:#x}",
+                words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7]
+            );
+        }
+    }
+    crate::kmain(RawBoot::DeviceTree(addr))
 }

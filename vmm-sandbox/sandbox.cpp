@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
+#include <sstream>
 
 #include "yui/crypto.hpp"
 #include "yui/text.hpp"
@@ -15,12 +17,12 @@ using crypto::Bytes;
 const char* kRightNames[] = {
     "fs.read", "fs.write", "net.connect", "net.listen", "spawn", "gpu",
     "input",   "camera",    "mic",         "location",     "power", "vault",
-    "graph",   "model",     "admin",
+    "graph",   "model",     "admin",       "compute.heavy",
 };
 const uint64_t kRightBits[] = {
     kRightFsRead, kRightFsWrite, kRightNetConnect, kRightNetListen, kRightSpawn, kRightGpu,
     kRightInput,  kRightCamera,  kRightMic,        kRightLocation,  kRightPower, kRightVault,
-    kRightGraph,  kRightModel,   kRightAdmin,
+    kRightGraph,  kRightModel,   kRightAdmin,      kRightComputeHeavy,
 };
 constexpr size_t kRightCount = sizeof(kRightBits) / sizeof(kRightBits[0]);
 
@@ -420,6 +422,145 @@ json::Value Policy::to_json() const {
   v.set("allow_child_processes", allow_child_processes);
   v.set("persistent_storage", persistent_storage);
   return v;
+}
+
+// ---------------------------------------------------------- egress filter --
+void EgressFilter::allow_domain(const std::string& s) {
+  Rule r;
+  std::string pat = s;
+  const size_t col = s.rfind(':');
+  if (col != std::string::npos && col + 1 < s.size() &&
+      s.find_first_not_of("0123456789", col + 1) == std::string::npos) {
+    r.port = uint16_t(std::strtoul(s.c_str() + col + 1, nullptr, 10));
+    pat = s.substr(0, col);
+  }
+  r.pattern = pat;
+  rules_.push_back(r);
+}
+
+void EgressFilter::allow_cidr(const std::string& s) {
+  Rule r;
+  r.is_cidr = true;
+  std::string pat = s;
+  // Cổng tùy chọn sau CIDR: "10.0.0.0/8:53" — cắt ở ':' cuối nếu phần sau
+  // toàn chữ số (CIDR IPv4 không chứa ':').
+  const size_t col = s.rfind(':');
+  if (col != std::string::npos && col + 1 < s.size() &&
+      s.find_first_not_of("0123456789", col + 1) == std::string::npos) {
+    r.port = uint16_t(std::strtoul(s.c_str() + col + 1, nullptr, 10));
+    pat = s.substr(0, col);
+  }
+  r.pattern = pat;
+  rules_.push_back(r);
+}
+
+void EgressFilter::add_from_policy(const Policy& policy) {
+  // Scope trong Policy đã bị Policy::from_json cắt tiền tố ("net:"/"fs:"),
+  // nhưng test/chính sách viết tay có thể giữ nguyên "net:" — chấp nhận cả
+  // hai. Đường dẫn ("/...") là phạm vi fs: không phải egress.
+  auto is_net_spec = [](const std::string& s, std::string* spec) {
+    if (s.rfind("net:", 0) == 0) {
+      *spec = s.substr(4);
+      return !spec->empty();
+    }
+    if (s.rfind("fs:", 0) == 0 || (!s.empty() && (s[0] == '/' || s[0] == '~'))) return false;
+    *spec = s;
+    return !s.empty();
+  };
+  for (const auto& scope : policy.scopes) {
+    std::string spec;
+    if (!is_net_spec(scope, &spec)) continue;
+    // "1.2.3.0/24[:port]" ⇒ CIDR; còn lại là domain (có thể "*.suffix[:port]").
+    if (spec.size() > 3 && spec.find('/') != std::string::npos &&
+        std::isdigit(static_cast<unsigned char>(spec[0])))
+      allow_cidr(spec);
+    else
+      allow_domain(spec);
+  }
+  // deny của chính sách: giữ nguyên tắc "deny thắng grant" — đích nằm trong
+  // deny bị phủ quyết ngay cả khi có allow khớp.
+  for (const auto& d : policy.deny) {
+    std::string spec;
+    if (!is_net_spec(d, &spec)) continue;
+    Rule r;
+    const size_t col = spec.rfind(':');
+    if (col != std::string::npos && col + 1 < spec.size() &&
+        spec.find_first_not_of("0123456789", col + 1) == std::string::npos) {
+      r.port = uint16_t(std::strtoul(spec.c_str() + col + 1, nullptr, 10));
+      spec = spec.substr(0, col);
+    }
+    r.pattern = spec;
+    r.is_cidr =
+        spec.find('/') != std::string::npos && std::isdigit(static_cast<unsigned char>(spec[0]));
+    deny_rules_.push_back(r);
+  }
+}
+
+bool EgressFilter::ipv4_in_cidr(const std::string& ip, const std::string& cidr) {
+  auto parse_v4 = [](const std::string& s, uint32_t* out) -> bool {
+    unsigned a[4];
+    char dot;
+    std::istringstream ss(s);
+    if (!(ss >> a[0] >> dot >> a[1] >> dot >> a[2] >> dot >> a[3])) return false;
+    if (a[0] > 255 || a[1] > 255 || a[2] > 255 || a[3] > 255) return false;
+    std::string extra;
+    if (ss >> extra) return false;
+    *out = (uint32_t(a[0]) << 24) | (uint32_t(a[1]) << 16) | (uint32_t(a[2]) << 8) | a[3];
+    return true;
+  };
+  uint32_t addr = 0, base = 0;
+  if (!parse_v4(ip, &addr)) return false;
+  std::string base_s = cidr;
+  unsigned prefix = 32;
+  const size_t slash = cidr.find('/');
+  if (slash != std::string::npos) {
+    base_s = cidr.substr(0, slash);
+    prefix = unsigned(std::strtoul(cidr.c_str() + slash + 1, nullptr, 10));
+    if (prefix > 32) return false;
+  }
+  if (!parse_v4(base_s, &base)) return false;
+  const uint32_t mask = prefix == 0 ? 0 : (0xFFFFFFFFu << (32 - prefix));
+  return (addr & mask) == (base & mask);
+}
+
+EgressDecision EgressFilter::check(const EgressRequest& r) const {
+  auto match_rule = [&](const Rule& rule) -> bool {
+    if (rule.port != 0 && r.port != 0 && rule.port != r.port) return false;
+    if (rule.is_cidr) return !r.ip.empty() && ipv4_in_cidr(r.ip, rule.pattern);
+    const std::string host = r.domain.empty() ? r.ip : r.domain;
+    return !host.empty() && host_matches(host, rule.pattern);
+  };
+  const std::string target = r.domain.empty() ? r.ip : r.domain;
+  const std::string port_s = r.port ? ":" + std::to_string(r.port) : std::string();
+
+  // Deny thắng allow (docs/SECURITY.md).
+  for (const auto& rule : deny_rules_) {
+    if (match_rule(rule)) {
+      EgressDecision d;
+      d.allowed = false;
+      d.matched_rule = rule.pattern;
+      d.reason_vi = "chặn kết nối tới " + (target.empty() ? std::string("<rỗng>") : target) +
+                    port_s + " — đích nằm trong danh sách deny của chính sách (deny thắng allow)";
+      return d;
+    }
+  }
+  for (const auto& rule : rules_) {
+    if (match_rule(rule)) {
+      EgressDecision d;
+      d.allowed = true;
+      d.matched_rule =
+          rule.pattern + (rule.port ? ":" + std::to_string(rule.port) : std::string());
+      d.reason_vi = "cho phép kết nối tới " + (target.empty() ? std::string("<rỗng>") : target) +
+                    port_s + " — khớp allowlist chính sách (net:" + d.matched_rule + ")";
+      return d;
+    }
+  }
+  EgressDecision d;
+  d.allowed = false;
+  d.reason_vi =
+      "chặn kết nối tới " + (target.empty() ? std::string("<rỗng>") : target) + port_s +
+      " — ngoài phạm vi cho phép của chính sách (cô lập egress, mặc định chặn)";
+  return d;
 }
 
 }  // namespace yui::sandbox

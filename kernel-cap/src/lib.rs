@@ -17,6 +17,10 @@
 extern crate alloc;
 
 pub mod sha256;
+pub mod sha512;
+pub mod ed25519;
+pub mod keyring;
+pub mod bundle;
 
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
@@ -24,6 +28,8 @@ use alloc::vec::Vec;
 use alloc::format;
 
 pub use sha256::{ct_eq, hmac_sha256, sha256};
+pub use ed25519::{public_key, sign, verify};
+pub use sha512::sha512;
 
 // ------------------------------------------------------------------ rights --
 pub const RIGHT_NONE: u64 = 0;
@@ -42,11 +48,12 @@ pub const RIGHT_VAULT: u64 = 1 << 11;
 pub const RIGHT_GRAPH: u64 = 1 << 12;
 pub const RIGHT_MODEL: u64 = 1 << 13;
 pub const RIGHT_ADMIN: u64 = 1 << 20;
+pub const RIGHT_COMPUTE_HEAVY: u64 = 1 << 21;
 
 /// Human-readable list of rights, comma separated — same vocabulary the policy
 /// files and the C++ enforcer use.
 pub fn rights_to_string(rights: u64) -> String {
-    const NAMES: [(u64, &str); 15] = [
+    const NAMES: [(u64, &str); 16] = [
         (RIGHT_FS_READ, "fs.read"),
         (RIGHT_FS_WRITE, "fs.write"),
         (RIGHT_NET_CONNECT, "net.connect"),
@@ -62,6 +69,7 @@ pub fn rights_to_string(rights: u64) -> String {
         (RIGHT_GRAPH, "graph"),
         (RIGHT_MODEL, "model"),
         (RIGHT_ADMIN, "admin"),
+        (RIGHT_COMPUTE_HEAVY, "compute.heavy"),
     ];
     // Built by hand rather than with slice::join: this keeps the crate free of
     // the alloc slice internals and works identically in no_std builds.
@@ -96,6 +104,7 @@ pub fn rights_from_string(s: &str) -> u64 {
             "graph" => RIGHT_GRAPH,
             "model" => RIGHT_MODEL,
             "admin" => RIGHT_ADMIN,
+            "compute.heavy" => RIGHT_COMPUTE_HEAVY,
             _ => RIGHT_NONE,
         };
     }

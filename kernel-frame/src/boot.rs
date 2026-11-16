@@ -17,9 +17,13 @@ pub struct Framebuffer {
 }
 
 /// Thông tin khởi động thô: hoặc multiboot info (x86_64) hoặc DTB (ARM/RISC-V).
+///
+/// `Multiboot` mang kèm magic để phân biệt hai giao thức: `0x2BADB002` là
+/// multiboot 1 (QEMU `-kernel`), `0x36D76289` là multiboot 2 (GRUB2) — hai
+/// định dạng info khác nhau nên `parse` rẽ nhánh theo magic.
 #[derive(Clone, Copy)]
 pub enum RawBoot {
-    Multiboot(u64),
+    Multiboot(u64, u32),
     DeviceTree(u64),
     None,
 }
@@ -85,7 +89,8 @@ pub fn parse(raw: RawBoot) -> BootInfo {
     print!("    - simd: ");
     println_str!(info.simd);
     match raw {
-        RawBoot::Multiboot(addr) => parse_multiboot(&mut info, addr),
+        RawBoot::Multiboot(addr, 0x36D7_6289) => parse_multiboot2(&mut info, addr),
+        RawBoot::Multiboot(addr, _) => parse_multiboot(&mut info, addr),
         RawBoot::DeviceTree(addr) => parse_fdt(&mut info, addr),
         RawBoot::None => {}
     }
@@ -148,6 +153,92 @@ fn parse_multiboot(info: &mut BootInfo, addr: u64) {
     info.harts = 1;
 }
 
+// ---------------------------------------------------------------- multiboot 2
+//
+// GRUB2 `multiboot2` truyền một **luồng thẻ** (tag stream) thay vì bảng cố
+// định: [total_size u32][reserved u32], rồi lần lượt các thẻ
+// [type u32][size u32][payload…, tròn 8 byte], kết thúc bởi thẻ type 0.
+// Thẻ type 4 (basic meminfo) có cùng ngữ nghĩa mem_lower/mem_upper như
+// multiboot 1 — chỉ đọc nó, không bịa gì thêm.
+fn parse_multiboot2(info: &mut BootInfo, addr: u64) {
+    if addr == 0 || addr > u32::MAX as u64 {
+        return;
+    }
+    let base = addr as usize;
+    let total_size = unsafe { core::ptr::read_unaligned(base as *const u32) } as usize;
+    if total_size < 16 || total_size > 1024 * 1024 {
+        println!("    - multiboot2 info vo ly ({} byte), bo qua", total_size);
+        return;
+    }
+    let blob = unsafe { core::slice::from_raw_parts(base as *const u8, total_size) };
+
+    let mut pos = 8usize;  // sau header total_size + reserved
+    let mut guard = 0u32;
+    while pos + 8 <= blob.len() && guard < 10_000 {
+        guard += 1;
+        // Multiboot2: mọi trường là LITTLE-endian (khác FDT).
+        let tag_type = le32(blob, pos);
+        let tag_size = le32(blob, pos + 4) as usize;
+        if tag_size < 8 || pos + tag_size > blob.len() {
+            return;  // thẻ hỏng: dừng, không đọc bừa
+        }
+        match tag_type {
+            0 => break,  // end tag
+            4 => {
+                // basic meminfo: mem_lower (KB dưới 1 MiB), mem_upper (KB trên 1 MiB)
+                if tag_size >= 16 {
+                    let mem_lower = le32(blob, pos + 8) as u64;
+                    let mem_upper = le32(blob, pos + 12) as u64;
+                    info.ram_mb = (mem_lower + mem_upper + 1023) / 1024;
+                    info.ram_source = "multiboot2 meminfo";
+                }
+            }
+            2 => {
+                // bootloader name tag: in tên bootloader ASCII để log tự khai.
+                if tag_size > 8 {
+                    let name = &blob[pos + 8..pos + tag_size];
+                    let mut end = 0;
+                    while end < name.len() && name[end] != 0 {
+                        end += 1;
+                    }
+                    print!("    - bootloader: ");
+                    for &b in &name[..end.min(64)] {
+                        if b.is_ascii_graphic() || b == b' ' {
+                            print!("{}", b as char);
+                        }
+                    }
+                    println!();
+                }
+            }
+            _ => {}  // thẻ khác (mmap, framebuffer…) — chưa dùng, bỏ qua
+        }
+        pos = (pos + tag_size + 7) & !7;
+    }
+    info.harts = 1;
+}
+
+/// Tìm FDT header (magic `0xd00dfeed` đọc big-endian) trong cửa sổ
+/// `[start, start+window)`, bước tròn 8 byte theo yêu cầu alignment của FDT.
+///
+/// Dùng khi firmware **không** truyền con trỏ DTB trong x0 — QEMU đặt DTB
+/// sinh tự động ngay tại đầu RAM (`loader_start`) khi nạp nhân ELF
+/// (`is_linux = false`, không set x0). Trả về 0 nếu không thấy: không bịa.
+pub fn find_fdt(start: u64, window: u64) -> u64 {
+    if start == 0 {
+        return 0;
+    }
+    let mut addr = start;
+    let end = start + window;
+    while addr + 4 <= end {
+        let magic = unsafe { core::ptr::read_unaligned(addr as *const u32) }.swap_bytes();
+        if magic == FDT_MAGIC {
+            return addr;
+        }
+        addr += 8;
+    }
+    0
+}
+
 // ------------------------------------------------------------ ARM / RISC-V --
 //
 // Bộ đọc device tree tối giản: duyệt khối cấu trúc, tìm node "memory" và đọc
@@ -159,6 +250,17 @@ fn be32(bytes: &[u8], offset: usize) -> u32 {
     let mut i = 0;
     while i < 4 {
         v = (v << 8) | bytes[offset + i] as u32;
+        i += 1;
+    }
+    v
+}
+
+// Multiboot2 (khác FDT): trường u32 little-endian.
+fn le32(bytes: &[u8], offset: usize) -> u32 {
+    let mut v = 0u32;
+    let mut i = 0;
+    while i < 4 {
+        v |= (bytes[offset + i] as u32) << (8 * i);
         i += 1;
     }
     v
