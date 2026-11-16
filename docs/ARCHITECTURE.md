@@ -436,10 +436,12 @@ Người dùng luôn thấy dung lượng trước/sau và lý do.
 
 Telex **và** VNI, đặt dấu theo chính tả hiện đại (`hoa` + `f` → `hòa`), không phá
 chữ ASCII (`Xin` không thành `Xín`). Hàm chuyển đổi thuần không qua IPC; buffer
-composition hỗ trợ preedit/backspace/commit. Adapter IBus đăng ký `yui-telex` và
-`yui-vni` (`userspace-vi/ibus/`); kiểu trường mật khẩu/PIN/số/URL/email đi qua
-nguyên trạng. Xây dựng bằng `make ibus` khi có `libibus-1.0-dev`. Gõ trong Firefox
-và LibreOffice, cùng phép đo đầu-cuối < 10 ms/phím, **chưa được xác minh**.
+composition hỗ trợ preedit/backspace/commit, tự khôi phục một allowlist nhỏ trong
+Telex/VNI và Escape commit nguyên văn mọi chuỗi phím. Adapter IBus đăng ký `yui-telex`
+và `yui-vni` (`userspace-vi/ibus/`); kiểu trường mật khẩu/PIN/số/URL/email đi qua
+nguyên trạng. Người dùng báo đã build/đăng ký trên Ubuntu 24.04 và đo D-Bus trung
+bình 7.8 ms/phím (min 7.15, max 10.25). Chưa có xác nhận gõ trong **cả Firefox
+và LibreOffice**; xem P1.4.
 
 ### 7.3 Shell song ngữ (đã có, 15 lệnh)
 
@@ -496,19 +498,20 @@ Nếu thiếu `confirm`, bridge trả `needs_confirmation` + câu tiếng Việt
 
 ```console
 $ make test
-✓ test_ime 108 checks; toàn bộ suite: 2693 checks (2632 C++17 + 61 C11), 0 failed
+✓ test_ime 246 checks; toàn bộ suite: 2831 checks (2770 C++17 + 61 C11), 0 failed
 
 $ make check
 ✓ test suite + scripts/verify.sh + CLI smoke runs
 all checks passed
 ```
 
-Adapter IBus và metadata Telex/VNI đã được thêm; kiểm tra tĩnh xác nhận component
-XML. Chưa build được adapter trong sandbox này: thiếu `pkg-config` và
-`libibus-1.0-dev` (`make ibus` dừng với thông báo dependency thiếu). CI có bước
-cài dependency và build target, nhưng đến khi chạy CI/desktop thật thì chưa tuyên
-bố engine đã chạy trong Firefox/LibreOffice hay đạt < 10 ms/phím. Cũng chưa kiểm
-chứng Rust/QEMU/Flutter ở môi trường cục bộ này.
+Adapter IBus, callback ABI `guint` và metadata Telex/VNI hiện có; XML được kiểm tĩnh.
+Sandbox này vẫn thiếu `pkg-config`/`libibus-1.0-dev`, nên chưa build lại adapter tại
+đây. Người dùng báo Ubuntu 24.04 đã build/đăng ký sau khi áp dụng bản sửa callback và đo
+D-Bus avg 7.8 ms/phím (min 7.15, max 10.25); đây là kết quả bên ngoài, chưa tái
+lập. Chưa có báo cáo Firefox **và** LibreOffice; vì max vượt 10 ms nếu DoD tính
+worst-case, P1.4 vẫn chưa được nhận hoàn tất. Cũng chưa kiểm chứng Rust/QEMU/Flutter
+ở môi trường cục bộ này.
 
 ---
 

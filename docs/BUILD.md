@@ -21,7 +21,7 @@ extension nào ngoài `-D_GNU_SOURCE` (cho `strdup`, socket).
 ```bash
 git clone <repo> YuiVieOS && cd YuiVieOS
 make -j"$(nproc)"        # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell}
-make test                # 2693 kiểm thử (2632 C++17 + 61 C11 ABI) — xem mục 4
+make test                # 2831 kiểm thử (2770 C++17 + 61 C11 ABI) — xem mục 4
 make check               # test + smoke test CLI + kiểm tra tĩnh
 ```
 
@@ -58,8 +58,17 @@ ibus engine yui-telex  # hoặc yui-vni
 ```
 
 Để cài không cần root, dùng `make install PREFIX="$HOME/.local"` (sau khi đã
-chạy `make ibus`). CI có bước build engine; cần kết quả build thực tế. Việc gõ
-trong Firefox và LibreOffice cùng phép đo < 10 ms/phím vẫn cần xác nhận trên desktop Linux.
+chạy `make ibus`). Trên Ubuntu 24.04, người dùng báo build/đăng ký thành công;
+chưa tái lập trong sandbox này. Gõ trong Firefox **và** LibreOffice vẫn cần kiểm
+thực tế; người dùng báo D-Bus trung bình 7.8 ms/phím, min 7.15, max 10.25 — nếu
+DoD là giới hạn từng phím thì max hiện vượt < 10 ms.
+
+Ghi chú headless từ lần chạy Ubuntu 24.04 do người dùng cung cấp (chưa xác minh ở
+sandbox này): GI name là `IBus.Capabilite` (không phải `IBus.Capability`); khởi
+chạy IBus bằng `ibus-daemon --config=/usr/libexec/ibus-memconf --panel=disable`; đặt
+`IBUS_ADDRESS` và `XDG_RUNTIME_DIR` rõ ràng **bên trong** `dbus-run-session`; cài
+vào `PREFIX` tạm (`make install PREFIX="$TMP_PREFIX"`) hoặc `/usr/local` nếu phù
+hợp. Không dùng các chi tiết này làm bằng chứng cho Firefox/LibreOffice desktop.
 
 ### Cài đặt
 
@@ -118,7 +127,7 @@ make test                          # tất cả
 | `test_codec_json` | 102 | YUI-LZ tròn vẹn, biên kích thước, JSON parse/serialize, CRC/SHA |
 | `test_core` | 163 | đồ thị, engine q4/t2 + SIMD, text tiếng Việt, profiler, apppack |
 | `test_sandbox` | 129 | bảng năng lực, thu hồi, token, hộp cát 3 bậc, **4 chính sách mẫu** |
-| `test_ime` | 108 | Telex/VNI, đặt dấu, chỉnh preedit bằng backspace, commit, chữ ASCII nguyên vẹn |
+| `test_ime` | 246 | Telex/VNI, đúng sequence tone, English allowlist auto-restore, backspace, commit và Escape-style literal restore |
 | `test_daemon` | 103 | JSON-RPC, MCP, vault qua RPC, web offline, os.*, telemetry |
 | `test_tools` | 61 | `yui-trim` tròn vẹn + chống zip-slip, strip ELF, ui::plan, shell |
 | `test_telemetry` | 471 | đọc sysfs pin/nhiệt/RAM, ranh giới 20 %/75 °C, quét toàn miền k/W, `telemetry.read` + MCP |
@@ -130,9 +139,10 @@ make test                          # tất cả
 | `test_redteam` | 83 | guard chống đào coin, egress policy, các ca tấn công tích hợp |
 | `test_capi` (C11) | 61 | toàn bộ bề mặt `libyui` gọi từ C thuần: `YUI_E_TOO_SMALL`, hộp cát, `yui_telemetry`, `yui_telemetry_advise` |
 
-Tổng: **2693 check** (2632 C++17 + 61 C11 ABI). CI đã được cấu hình để biên dịch
-adapter qua `make ibus`, nhưng build thành công và kiểm tra Firefox/LibreOffice
-cùng độ trễ đầu-cuối vẫn cần kết quả chạy; đây là các bước nghiệm thu P1.4.
+Tổng: **2831 check** (2770 C++17 + 61 C11 ABI). CI có bước biên dịch adapter
+qua `make ibus`; kết quả build/đăng ký Ubuntu 24.04 được người dùng báo nhưng
+chưa tái lập ở sandbox này. Firefox/LibreOffice và giới hạn latency đầu-cuối vẫn
+cần xác nhận; đó là các bước nghiệm thu P1.4.
 
 Test dùng `YUI_SOURCE_DIR` (Makefile chèn `-DYUI_SOURCE_DIR='"$(CURDIR)"'`) để
 nạp chính sách thật trong `vmm-sandbox/policies/` — nhờ vậy tài liệu và mã không thể
@@ -193,7 +203,7 @@ shim 32-bit trước khi đạt — xem `docs/PLAN.md` P2.2. Job `qemu` của x8
 
 `.github/workflows/ci.yml` chạy build C++/C11, Rust, cross-arch và boot kernel/QEMU
 trên push/PR. Job C++ chạy `make -j`, build adapter IBus (`make ibus`),
-`make test` (**2693 check**), `make check`, cài vào `$RUNNER_TEMP` rồi link
+`make test` (**2831 check**), `make check`, cài vào `$RUNNER_TEMP` rồi link
 chương trình C ngoài cây với `libyui.a`. Job Rust chạy test/build; các job kernel
 và QEMU xác nhận ba kiến trúc theo `docs/PLAN.md` §8.
 

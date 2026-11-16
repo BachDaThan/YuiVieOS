@@ -7,6 +7,7 @@
 #include "yui/ime.hpp"
 
 #include <cctype>
+#include <string_view>
 #include <vector>
 
 #include "yui/text.hpp"
@@ -142,6 +143,36 @@ int vni_tone_key(char c) {
     default: return -1;
   }
 }
+
+// A small, conservative list of common technical terms that would otherwise
+// be mangled by Telex/VNI letter transforms. This is not an English dictionary;
+// Escape restoration below works for any word not covered here.
+constexpr std::string_view kEnglishTerms[] = {
+    "word", "window", "software", "user", "linux", "ubuntu", "firefox",
+    "libreoffice", "chrome", "github", "git", "computer", "keyboard", "hardware",
+    "website", "browser", "python", "rust", "terminal", "server", "desktop",
+    "email", "internet", "password", "update", "input", "output", "application",
+};
+
+bool matches_english_term(const std::string& keys, bool allow_prefix) {
+  if (keys.empty()) return false;
+  for (const std::string_view word : kEnglishTerms) {
+    if (keys.size() > word.size() || (!allow_prefix && keys.size() != word.size())) continue;
+    bool matches = true;
+    for (size_t i = 0; i < keys.size(); ++i) {
+      const unsigned char c = static_cast<unsigned char>(keys[i]);
+      if (c >= 0x80 || char(std::tolower(c)) != word[i]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return true;
+  }
+  return false;
+}
+
+bool is_known_english_word(const std::string& keys) { return matches_english_term(keys, false); }
+bool is_known_english_prefix(const std::string& keys) { return matches_english_term(keys, true); }
 
 // Telex text transformation: dd, aa, ee, oo, aw, ow, uw, and bare w -> ư.
 void telex_text(std::vector<Unit>& units, char c, bool upper) {
@@ -302,6 +333,11 @@ std::string convert(const std::string& keystrokes, Method method) {
   return out;
 }
 
+std::string Composition::preedit() const {
+  if (is_known_english_prefix(keys_)) return keys_;
+  return convert_word(keys_, method_);
+}
+
 bool Composition::feed(uint32_t codepoint) {
   const bool ascii_alnum = (codepoint >= 'a' && codepoint <= 'z') ||
                            (codepoint >= 'A' && codepoint <= 'Z') ||
@@ -318,7 +354,13 @@ bool Composition::backspace() {
 }
 
 std::string Composition::commit() {
-  std::string text = preedit();
+  const std::string text = is_known_english_word(keys_) ? keys_ : convert_word(keys_, method_);
+  reset();
+  return text;
+}
+
+std::string Composition::restore() {
+  std::string text = keys_;
   reset();
   return text;
 }

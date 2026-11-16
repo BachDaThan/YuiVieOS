@@ -38,7 +38,7 @@ cần thư viện ngoài, không cần Rust.
 
 ```bash
 make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell,yui-splash}
-make test         # 2693 kiểm thử (2632 C++17 + 61 C11 ABI)
+make test         # 2831 kiểm thử (2770 C++17 + 61 C11 ABI)
 make check        # test + 5 smoke run + kiểm tra tĩnh (scripts/verify.sh)
 ```
 
@@ -119,10 +119,10 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 4 | 5 công cụ OS MCP `sys_power`/`sys_scheduler`/`sys_app_stripper`/`sys_proc`/`sys_search_vault` + xác nhận | ❌ chưa có (mới có `system_telemetry`) | P4.3 |
 | 4 | Cài đặt tham chiếu graph/vault/engine (**sẽ thay ở P5**) | 🟡 tạm | `ai-bridge-yuid/reference/` |
 | 5 | Smart App Stripper: strip ELF, khử trùng lặp, lọc locale, chống zip-slip | ✅ chạy | `pkg-stripper/apppack.cpp`, `tools/trim` (61 check) |
-| 5 | Bộ gõ Telex **và** VNI, đặt dấu đúng chính tả | ✅ 108 test | `userspace-vi/ime.cpp` |
+| 5 | Bộ gõ Telex **và** VNI, đặt dấu đúng chính tả | ✅ 246 test | `userspace-vi/ime.cpp` |
 | 5 | Shell song ngữ Việt–Anh, 15 lệnh | ✅ chạy | `userspace-vi/shell.cpp` |
 | 5 | Kế hoạch giao diện thích ứng (Framebuffer ⇄ Vulkan/DRM) | ✅ logic + test | `userspace-vi/ui.cpp` |
-| 5 | IBus Telex/VNI engine | 🟡 adapter + test lõi; chưa xác minh Firefox/LibreOffice hoặc < 10 ms/phím | `userspace-vi/ibus/`, P1.4 |
+| 5 | IBus Telex/VNI engine | 🟡 Ubuntu 24.04 build/đăng ký và D-Bus avg 7.8 ms (max 10.25) do người dùng báo; chưa xác minh Firefox/LibreOffice hoặc giới hạn latency | `userspace-vi/ibus/`, P1.4 |
 | 5 | Compositor thật (DRM/Vulkan), App Yui build được | ❌ chưa có (đã có bộ vẽ pixel + màn hình chào) | P2.6, P4.1, P4.5 |
 
 **Chưa kiểm chứng được trong môi trường soạn thảo này**: biên dịch Rust (không có

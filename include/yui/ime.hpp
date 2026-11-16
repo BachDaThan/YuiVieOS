@@ -67,8 +67,11 @@ class Composition {
   // the adapter to commit the current composition and forward to the client.
   bool feed(uint32_t codepoint);
   bool backspace();
-  std::string preedit() const { return convert_word(keys_, method_); }
+  std::string preedit() const;
+  // Commit the converted word, auto-restoring a small conservative set of
+  // common English/technical terms. `restore()` always returns literal keys.
   std::string commit();
+  std::string restore();
   void reset() { keys_.clear(); }
   bool empty() const { return keys_.empty(); }
   Method method() const { return method_; }
