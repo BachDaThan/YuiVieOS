@@ -122,8 +122,20 @@ một kiến trúc.
 | P3.4 | Waydroid-lite | [ ] | Cài 1 APK, chạy, mạng chỉ qua `net.connect` của `yuid` |
 | P3.5 | Bộ test "cố thoát hộp cát" | [ ] | 10 kịch bản (đọc `/etc/shadow`, mở socket, `ptrace`, `mount`, `/proc/self/mem`…) — **10/10 bị chặn**, mỗi cái có log lý do |
 | P3.6 | Driver lạ trong micro-VM | [ ] | Một driver USB mẫu chạy trong VM; crash VM không ảnh hưởng nhân (test bằng cách giết VM) |
+| P3.7 | Rà soát ngữ cảnh và threat model trước khi hardening | [ ] | Đọc đủ `docs/PLAN.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/PROTOCOL.md`, `README.md`, toàn bộ mã `vmm-sandbox/`, `ai-bridge-yuid/`, `kernel-cap/`, `tests/`; ghi baseline, trust boundary, contract hiện tại, rủi ro và quyết định còn mở. Kiểm `git log -n 5` + `git status` trên **nhánh Arena hiện hành**, không chuyển nhánh. Không sửa mã trước khi bước rà soát được duyệt |
+| P3.8 | Lớp 1 — ranh giới capability/syscall + thu hồi bắc cầu | [ ] | Xác minh HMAC/expiry/scope của token theo một contract tương thích `kernel-cap`; phát hiện syscall/boundary anomaly; thu hồi cả họ token/descendants bằng generation/epoch để thao tác revoke là **O(1)** (không duyệt cây), lần verify kế tiếp từ chối toàn bộ token con nhưng không ảnh hưởng họ khác; mọi phát hiện có audit và lý do |
+| P3.9 | Lớp 2 — micro-VM quarantine, freeze rồi huỷ phiên | [ ] | Khi Lớp 1 báo xâm phạm/chạm ngưỡng đã chốt, chuyển `running → frozen/quarantined → destroyed` trước khi xử lý yêu cầu guest kế tiếp; huỷ đúng phiên bị ảnh hưởng, thao tác idempotent, không tạo lớp sandbox lồng nhau; audit ghi đủ nguyên nhân/kết quả. Tích hợp thật phụ thuộc P3.1; mock chỉ dùng unit test, không được tính là bằng chứng containment |
+| P3.10 | Lớp 3 — egress zero-trust, anti-DNS-tunneling, secretless broker | [ ] | Cập nhật schema phiên bản và `policies/*.json`: east-west giữa sandbox mặc định deny; cấm DNS trực tiếp, chỉ resolver/broker nội bộ và tên khớp allowlist chính xác mới được phân giải; từ chối label > 63 octet, tên > 253 octet, tên sai chuẩn hoặc entropy vượt ngưỡng đã hiệu chuẩn; broker giữ bí mật ở vòng ngoài, gắn xác thực sau khi duyệt request và không đưa token/secret vào guest, môi trường hay audit. Cập nhật `docs/SECURITY.md` và `vmm-sandbox/README.md` khi triển khai |
+| P3.11 | Red-team tích hợp cho ba lớp | [ ] | Mở rộng `tests/test_redteam.cpp`: anomaly Lớp 1 → revoke O(1) + freeze/huỷ Lớp 2; token con bị vô hiệu, token ngoài họ còn hiệu lực; chặn peer-to-peer, DNS tunnel/nhãn dài/entropy cao, tên ngoài allowlist và egress ngoài policy; xác nhận request hợp lệ qua broker; audit cả allow/deny. Toàn bộ ca thoát ly bị chặn, không có regression với tên hợp lệ |
 
-**Gate P3:** 10/10 kịch bản thoát hộp cát thất bại; game chạy có số fps; Android app chạy.
+### 5.1 Trình tự hardening Tầng 3 — chỉ lập kế hoạch, chưa triển khai
+
+P2.13 hiện tại đã có `EgressFilter` allowlist cơ bản; các việc P3.7–P3.11 là
+**mở rộng mới**, không được ghi nhận nhầm là đã có transitive revocation, freeze
+phiên micro-VM, lọc DNS theo entropy hay secretless broker. Thứ tự bắt buộc là
+P3.7 → P3.8 → P3.9 → P3.10 → P3.11; không nhảy thẳng tới tuyên bố hoàn tất.
+
+**Gate P3:** 10/10 kịch bản thoát hộp cát thất bại; game chạy có số fps; Android app chạy. Với hardening mới, chỉ qua gate khi P3.7–P3.11 có bằng chứng riêng, toàn bộ kịch bản red-team đạt và containment Lớp 2 được kiểm trên micro-VM thật (P3.1), không chỉ bằng mock.
 
 ---
 
@@ -133,14 +145,66 @@ một kiến trúc.
 |---|---|---|---|
 | P4.1 | Compositor: framebuffer (yếu) + Vulkan/DRM (mạnh) | [ ] | Chuyển chế độ theo profiler không cần đăng nhập lại; 30 fps trên máy 2 GB |
 | P4.2 | Telemetry C-ABI (`yui_telemetry`) hoàn chỉnh | [ ] | 3 test C11; khuyến nghị k/W khớp bảng `ARCHITECTURE.md` §6.3 |
-| P4.3 | 5 công cụ OS MCP + xác nhận người dùng + audit | [ ] | Mỗi công cụ: 1 test thiếu quyền (từ chối), 1 test thiếu `confirm` (`needs_confirmation`), 1 test thành công có audit |
+| P4.3 | 5 công cụ OS MCP + xác nhận người dùng + audit | [ ] | Đạt toàn bộ DoD và ma trận kiểm thử ở §6.1: MCP 2024-11-05/JSON-RPC 2.0, HMAC capability, confirm/deny không side effect, audit cả allow/deny, chạy trong ngân sách runtime 2 GiB, clean-room; `make clean && make -j2 check` xanh |
 | P4.4 | Shell: 25 lệnh, gợi ý lệnh, song ngữ đầy đủ | [ ] | Mọi lệnh có 2 tên; `giúp` liệt kê đủ; test cho từng tên |
 | P4.5 | App Yui (Flutter) build được | [ ] | `flutter build linux` xanh trong CI; 3 màn hình dùng được với `yuid` thật |
 | P4.6 | Trình cài đặt (USB, BIOS + UEFI, A/B) | [ ] | Cài lên máy ảo từ USB, boot lại vào hệ thống đã cài, chữ ký ảnh hợp lệ |
 | P4.7 | Ký số phát hành + `.bundle` | [ ] | Bundle được ký bằng khoá offline; máy từ chối bundle sai chữ ký |
 | P4.8 | Tài liệu người dùng cuối (tiếng Việt, có ảnh) | [ ] | 5 hướng dẫn: cài, gõ tiếng Việt, gọt app, tiết kiệm pin, khôi phục |
 
+### 6.1 Runbook P4.3 — thực hiện theo thứ tự (CHƯA TRIỂN KHAI)
+
+1. **Chốt hợp đồng trước khi viết mã.** P4.3 phải chờ Gate P3 và hoàn tất rà soát
+   P3.7. Giữ MCP `2024-11-05`, JSON-RPC 2.0 (`tools/list`, `tools/call`); `system_telemetry`
+   đã có ở P1.5, không tạo bản sao. Xác định adapter để daemon C++ xác minh đúng
+   contract HMAC của `kernel-cap` (không tự tạo định dạng token/khóa thứ hai).
+2. **Phạm vi quyền và điểm cần xác nhận:**
+
+   | Công cụ | Capability tối thiểu | Hành vi cần gate |
+   |---|---|---|
+   | `sys_power` | `power` | Thay governor/giới hạn sạc/chế độ nguồn |
+   | `sys_scheduler` | `admin` hoặc `power` | Đổi profile lập lịch |
+   | `sys_app_stripper` | `fs.read` + `fs.write` đúng scope | Áp dụng hoặc hoàn tác thay đổi app; preview không ghi |
+   | `sys_proc` | `admin` | Dừng tiến trình; thao tác liệt kê không thay đổi trạng thái |
+   | `sys_search_vault` | `vault` | Xác nhận trước khi trả kết quả nhạy cảm; không trả plaintext khi vault chưa mở khóa |
+
+   Mọi thao tác thay đổi trạng thái cần xác nhận tường minh của người dùng; thiếu
+   xác nhận trả `needs_confirmation`, người dùng từ chối thì không gọi adapter và
+   không tạo side effect. `ARCHITECTURE.md`/`PROTOCOL.md` hiện ghi
+   `sys_search_vault` không cần xác nhận; để đáp ứng ma trận thử từ chối xác nhận
+   cho cả 5 công cụ, kế hoạch này **đề xuất gate trước khi tiết lộ kết quả vault**.
+   Chốt quyết định và cập nhật hợp đồng/tài liệu trước khi triển khai, không để
+   hành vi trong mã khác tài liệu.
+3. **Xác thực capability fail-closed.** Token lấy từ ngữ cảnh phiên đáng tin cậy,
+   không tin token do đối số MCP tự khai; xác minh MAC, subject, quyền, scope,
+   hạn dùng và trạng thái thu hồi. Thiếu/sai/hết hạn/sai scope đều từ chối trước
+   khi gọi OS adapter. Dùng vector kiểm thử chung để chứng minh tương thích với
+   `kernel-cap`; không sao chép hay viết lại thuật toán mật mã.
+4. **Audit đầy đủ nhưng không rò rỉ bí mật.** Ghi mọi lời gọi thành công, bị từ
+   chối, thiếu capability, thiếu/từ chối xác nhận vào `audit.log`. Ghi thời gian,
+   subject, công cụ/thao tác, mã định danh capability, kết quả xác thực/xác nhận,
+   quyết định và lý do; che token/MAC, secret, plaintext và nội dung vault. Test
+   phải chứng minh log có đủ dấu vết và không chứa dữ liệu bí mật.
+5. **Ngân sách máy yếu và clean-room.** Chạy daemon/runtime trong cgroup giới hạn
+   **2 GiB RAM**, stress ít nhất 1.000 lời gọi mỗi công cụ; không OOM, không tăng
+   RSS/queue không giới hạn, đo và lưu p95 latency. Chốt ngưỡng p95 trong P3.7
+   trước khi code để “mượt” có tiêu chí đo được. Chỉ dùng mã nguồn trong repo và
+   thư viện chuẩn/primitive đã có; không vendor/copy mã ngoài, không thêm
+   dependency mới nếu chưa được rà soát license và phê duyệt.
+6. **Kiểm thử độc lập và tích hợp.** Mở rộng `tests/test_daemon.cpp` (đã nằm
+   trong `Makefile`) cho MCP OS; nếu P3.7 chọn tách bộ test, thêm tệp và đăng ký
+   target cùng lúc. Với từng công cụ, kiểm `tools/list`/`tools/call`, lời gọi hợp lệ, thiếu hoặc
+   token sai/hết hạn/sai scope, người dùng từ chối xác nhận (không có side effect),
+   cùng audit của cả allow/deny. Dùng OS adapter giả trong unit test để không
+   dừng tiến trình hay sửa máy host; có kiểm tích hợp riêng cho đường adapter.
+7. **Cổng hoàn tất.** Cập nhật `ARCHITECTURE.md` và `PROTOCOL.md`; chạy
+   `make clean && make -j2 check` từ cây sạch. Chỉ đánh dấu P4.3 `[x]` khi build
+   C++17/C11, `scripts/verify.sh`, toàn bộ test (gồm test mới) và CLI smoke đều
+   pass, đồng thời có log đo ngân sách 2 GiB và p95.
+
 **Gate P4:** một người dùng mới cài được YuiVieOS Beta từ USB và dùng được hằng ngày.
+P4.3 không được coi là xong chỉ vì 5 tên công cụ xuất hiện trong `tools/list`;
+phải đạt đủ xác thực, xác nhận, audit, ngân sách tài nguyên và kiểm thử ở §6.1.
 
 ---
 
