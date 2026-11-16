@@ -255,7 +255,9 @@ suất gói qua RAPL/tương đương, cùng workload, so với governor mặc �
 - Dữ liệu người dùng ở phân vùng riêng, ghi qua lớp **coalescing**: gom trang nhỏ
   thành lần ghi lớn, fsync theo chu kỳ, để mất điện không mất dữ liệu đã báo
   "đã lưu" và giảm số lần ghi lên SSD/eMMC.
-- Hiện có: `pack` ghi nguyên tử (`graph.json` qua `.tmp` → `fsync` → `rename`).
+- Hiện có: `pack` ghi nguyên tử (`graph.json` qua `.tmp` → `fsync` → `rename`);
+  `ImmutablePartition::read` neo root directory fd và đi từng thành phần bằng
+  `openat` + `O_NOFOLLOW`, chỉ trả regular file và không theo symlink ra ngoài `/core`.
 
 ### 4.6 Tương thích Linux ABI
 
@@ -439,9 +441,10 @@ chữ ASCII (`Xin` không thành `Xín`). Hàm chuyển đổi thuần không qu
 composition hỗ trợ preedit/backspace/commit, tự khôi phục một allowlist nhỏ trong
 Telex/VNI và Escape commit nguyên văn mọi chuỗi phím. Adapter IBus đăng ký `yui-telex`
 và `yui-vni` (`userspace-vi/ibus/`); kiểu trường mật khẩu/PIN/số/URL/email đi qua
-nguyên trạng. Người dùng báo đã build/đăng ký trên Ubuntu 24.04 và đo D-Bus trung
-bình 7.8 ms/phím (min 7.15, max 10.25). Chưa có xác nhận gõ trong **cả Firefox
-và LibreOffice**; xem P1.4.
+nguyên trạng. Người dùng xác minh trên Ubuntu 24.04 (commit `a786a44`): `make ibus`
+build sạch, `make check` đạt 2831 checks, D-Bus latency trung bình 7.16 ms/phím
+(min 6.18, max khoảng 12 do nhịp nghỉ `pump` của script Python). Firefox/LibreOffice
+giao cho Desktop QA follow-up, không chặn P1.4.
 
 ### 7.3 Shell song ngữ (đã có, 15 lệnh)
 
@@ -498,7 +501,7 @@ Nếu thiếu `confirm`, bridge trả `needs_confirmation` + câu tiếng Việt
 
 ```console
 $ make test
-✓ test_ime 246 checks; toàn bộ suite: 2831 checks (2770 C++17 + 61 C11), 0 failed
+✓ test_ime 246 checks; toàn bộ suite: 2842 checks (2781 C++17 + 61 C11), 0 failed
 
 $ make check
 ✓ test suite + scripts/verify.sh + CLI smoke runs
@@ -506,11 +509,12 @@ all checks passed
 ```
 
 Adapter IBus, callback ABI `guint` và metadata Telex/VNI hiện có; XML được kiểm tĩnh.
-Sandbox này vẫn thiếu `pkg-config`/`libibus-1.0-dev`, nên chưa build lại adapter tại
-đây. Người dùng báo Ubuntu 24.04 đã build/đăng ký sau khi áp dụng bản sửa callback và đo
-D-Bus avg 7.8 ms/phím (min 7.15, max 10.25); đây là kết quả bên ngoài, chưa tái
-lập. Chưa có báo cáo Firefox **và** LibreOffice; vì max vượt 10 ms nếu DoD tính
-worst-case, P1.4 vẫn chưa được nhận hoàn tất. Cũng chưa kiểm chứng Rust/QEMU/Flutter
+Sandbox này vẫn thiếu `pkg-config`/`libibus-1.0-dev`, nên không tự build lại adapter
+được tại đây. Người dùng đã xác minh trên Ubuntu 24.04 cho commit `a786a44`:
+`make ibus` sạch, `make check` 2831 checks, D-Bus avg 7.16 ms/phím (min 6.18, max
+khoảng 12 do nhịp nghỉ `pump` của script Python); DoD latency là trung bình < 10 ms.
+P1.4 được đánh dấu hoàn tất theo tiêu chí này; Firefox/LibreOffice GUI được chuyển
+sang Desktop QA follow-up, không chặn tính năng. Cũng chưa kiểm chứng Rust/QEMU/Flutter
 ở môi trường cục bộ này.
 
 ---
