@@ -432,11 +432,14 @@ Xem `pkg-stripper/README.md`. Điểm quan trọng về ***chủ quyền***: n�
 hiệu DRM/anti-tamper, stripper **không sửa một byte** và báo `stripped=false`.
 Người dùng luôn thấy dung lượng trước/sau và lý do.
 
-### 7.2 Bộ gõ tại tầng dịch vụ (đã có, 84 check)
+### 7.2 Bộ gõ tại tầng dịch vụ (Telex/VNI + adapter IBus)
 
 Telex **và** VNI, đặt dấu theo chính tả hiện đại (`hoa` + `f` → `hòa`), không phá
-chữ ASCII (`Xin` không thành `Xín`). Hàm thuần ⇒ dùng được ở tầng hiển thị, không
-qua IPC, **không độ trễ**.
+chữ ASCII (`Xin` không thành `Xín`). Hàm chuyển đổi thuần không qua IPC; buffer
+composition hỗ trợ preedit/backspace/commit. Adapter IBus đăng ký `yui-telex` và
+`yui-vni` (`userspace-vi/ibus/`); kiểu trường mật khẩu/PIN/số/URL/email đi qua
+nguyên trạng. Xây dựng bằng `make ibus` khi có `libibus-1.0-dev`. Gõ trong Firefox
+và LibreOffice, cùng phép đo đầu-cuối < 10 ms/phím, **chưa được xác minh**.
 
 ### 7.3 Shell song ngữ (đã có, 15 lệnh)
 
@@ -489,24 +492,23 @@ Nếu thiếu `confirm`, bridge trả `needs_confirmation` + câu tiếng Việt
 
 ---
 
-## 9. Những gì đã kiểm chứng hôm nay
+## 9. Những gì đã kiểm chứng (2026-11-16)
 
 ```console
 $ make test
-✓ test_crypto      28 checks      ✓ test_ime     84 checks
-✓ test_codec_json 102 checks      ✓ test_daemon 102 checks
-✓ test_core       163 checks      ✓ test_tools   61 checks
-✓ test_sandbox    129 checks      OK: test_capi (C11) 36 checks   → 705, 0 failed
+✓ test_ime 108 checks; toàn bộ suite: 2693 checks (2632 C++17 + 61 C11), 0 failed
 
-$ make check      # + smoke: yuid --info, --profile, yui-profiler, shell script
+$ make check
+✓ test suite + scripts/verify.sh + CLI smoke runs
 all checks passed
-
-$ ./scripts/verify.sh     # kiểm cấu trúc, policy JSON, an toàn Rust, liên kết tài liệu
 ```
 
-Chưa kiểm chứng được trong sandbox này: biên dịch Rust (không có `cargo`), khởi
-động QEMU 3 kiến trúc (không có `yui-frame`), build Flutter. Cả ba đều có job
-trong `.github/workflows` và mục tương ứng trong `PLAN.md`.
+Adapter IBus và metadata Telex/VNI đã được thêm; kiểm tra tĩnh xác nhận component
+XML. Chưa build được adapter trong sandbox này: thiếu `pkg-config` và
+`libibus-1.0-dev` (`make ibus` dừng với thông báo dependency thiếu). CI có bước
+cài dependency và build target, nhưng đến khi chạy CI/desktop thật thì chưa tuyên
+bố engine đã chạy trong Firefox/LibreOffice hay đạt < 10 ms/phím. Cũng chưa kiểm
+chứng Rust/QEMU/Flutter ở môi trường cục bộ này.
 
 ---
 

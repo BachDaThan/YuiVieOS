@@ -125,6 +125,36 @@ YUI_TEST(ime, word_engine_incremental) {
   CHECK_EQ(eng.feed('1'), std::string("ấ"));
 }
 
+YUI_TEST(ime, editable_composition_buffer) {
+  ime::Composition comp;
+  CHECK(comp.empty());
+  CHECK(comp.feed('T'));
+  CHECK(comp.feed('i'));
+  CHECK(comp.feed('e'));
+  CHECK(comp.feed('e'));
+  CHECK(comp.feed('n'));
+  CHECK(comp.feed('g'));
+  CHECK(comp.feed('s'));
+  CHECK_EQ(comp.preedit(), std::string("Tiếng"));
+  CHECK(comp.backspace());
+  CHECK_EQ(comp.preedit(), std::string("Tiêng"));
+  CHECK(comp.feed('s'));
+  CHECK_EQ(comp.commit(), std::string("Tiếng"));
+  CHECK(comp.empty());
+  CHECK(!comp.backspace());
+  CHECK(!comp.feed(' '));
+  CHECK(!comp.feed(0x1f600));
+
+  comp.set_method(ime::Method::Vni);
+  CHECK(comp.feed('a'));
+  CHECK(comp.feed('6'));
+  CHECK(comp.feed('1'));
+  CHECK_EQ(comp.preedit(), std::string("ấ"));
+  CHECK(comp.backspace());
+  CHECK_EQ(comp.preedit(), std::string("â"));
+  CHECK_EQ(comp.commit(), std::string("â"));
+}
+
 YUI_TEST(ime, display_width_of_vietnamese) {
   // Pre-composed Vietnamese characters are single code points, width 1 each.
   CHECK_EQ(text::length("Tiếng Việt"), size_t(10));

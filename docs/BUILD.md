@@ -7,8 +7,9 @@
 | `make` (GNU) | có | chỉ dùng biến thường, không có gì đặc biệt |
 | trình biên dịch C++17 | có | `g++ ≥ 10` hoặc `clang++ ≥ 12` |
 | trình biên dịch C11 | để chạy `test_capi` | `cc`, cùng máy |
-| `rustc`/`cargo` ≥ 1.70 | tuỳ chọn | chỉ cần cho `` (Tầng 1–2) |
-| libzstd, GTK, Qt | **không** | repo không cần thư viện ngoài nào |
+| `rustc`/`cargo` ≥ 1.70 | tuỳ chọn | chỉ cần cho workspace Rust (Tầng 1–2) |
+| `pkg-config` + `libibus-1.0-dev` | tuỳ chọn | chỉ cần cho adapter IBus: `make ibus`; build lõi không phụ thuộc |
+| libzstd, GTK, Qt | **không** | không cần cho các target hiện tại |
 
 Đã kiểm trên Debian 12 / g++ 12.2.0 / glibc 2.36 (x86_64). Không dùng GNU
 extension nào ngoài `-D_GNU_SOURCE` (cho `strdup`, socket).
@@ -20,8 +21,8 @@ extension nào ngoài `-D_GNU_SOURCE` (cho `strdup`, socket).
 ```bash
 git clone <repo> YuiVieOS && cd YuiVieOS
 make -j"$(nproc)"        # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell}
-make test                # 2357 kiểm thử (2296 C++17 + 61 C11 ABI) — xem mục 4
-make check               # test + smoke test 4 CLI
+make test                # 2693 kiểm thử (2632 C++17 + 61 C11 ABI) — xem mục 4
+make check               # test + smoke test CLI + kiểm tra tĩnh
 ```
 
 Biến thường dùng:
@@ -44,12 +45,29 @@ Cờ mặc định (giữ nguyên nếu bạn tự đặt `CXXFLAGS`):
 
 `-fPIC` là bắt buộc vì `libyui.so` được link từ cùng object với `libyui.a`.
 
+### Adapter IBus (tuỳ chọn, P1.4)
+
+Adapter dùng IBus C API, không kéo dependency vào các target lõi. Trên Debian/Ubuntu:
+
+```bash
+sudo apt install pkg-config libibus-1.0-dev
+make ibus
+sudo make install       # cài thêm yui-ibus-engine + component XML nếu đã build
+ibus restart
+ibus engine yui-telex  # hoặc yui-vni
+```
+
+Để cài không cần root, dùng `make install PREFIX="$HOME/.local"` (sau khi đã
+chạy `make ibus`). CI có bước build engine; cần kết quả build thực tế. Việc gõ
+trong Firefox và LibreOffice cùng phép đo < 10 ms/phím vẫn cần xác nhận trên desktop Linux.
+
 ### Cài đặt
 
 ```
-$PREFIX/bin/{yuid,yui-profiler,yui-trim,yui-shell}
-$PREFIX/lib/libyui.so.1, libyui.a, libyui.so → libyui.so.1
+$PREFIX/bin/{yuid,yui-profiler,yui-trim,yui-shell,yui-splash}
+$PREFIX/lib/{libyui.so,libyui.a}
 $PREFIX/include/yui/{yui.h,crypto.hpp,…}
+$PREFIX/bin/yui-ibus-engine + $PREFIX/share/ibus/component/*.xml  (optional)
 ```
 
 ---
@@ -100,12 +118,21 @@ make test                          # tất cả
 | `test_codec_json` | 102 | YUI-LZ tròn vẹn, biên kích thước, JSON parse/serialize, CRC/SHA |
 | `test_core` | 163 | đồ thị, engine q4/t2 + SIMD, text tiếng Việt, profiler, apppack |
 | `test_sandbox` | 129 | bảng năng lực, thu hồi, token, hộp cát 3 bậc, **4 chính sách mẫu** |
-| `test_ime` | 84 | Telex, VNI, đặt dấu, chữ ASCII không bị phá |
+| `test_ime` | 108 | Telex/VNI, đặt dấu, chỉnh preedit bằng backspace, commit, chữ ASCII nguyên vẹn |
 | `test_daemon` | 103 | JSON-RPC, MCP, vault qua RPC, web offline, os.*, telemetry |
 | `test_tools` | 61 | `yui-trim` tròn vẹn + chống zip-slip, strip ELF, ui::plan, shell |
 | `test_telemetry` | 471 | đọc sysfs pin/nhiệt/RAM, ranh giới 20 %/75 °C, quét toàn miền k/W, `telemetry.read` + MCP |
-| `test_fb` | 1155 | ghi pixel có chặn biên (guard band), font 5×7, clipping, màn hình chào, xuất PPM |
+| `test_fb` | 1184 | ghi pixel có chặn biên (guard band), font 5×7, tiếng Việt có dấu, clipping, xuất PPM |
+| `test_ed25519` | 78 | SHA-512 FIPS 180-4, Ed25519 RFC 8032, bundle ký/xác minh và chống sửa |
+| `test_power` | 47 | tickless, DVFS, giới hạn nhiệt/pin, clock gating |
+| `test_fsstore` | 37 | lõi chỉ đọc, ghi gộp theo trang, lỗi ghi và đường dẫn traversal |
+| `test_linuxabi` | 38 | phân phối syscall, quyền file, chặn syscall chưa hỗ trợ |
+| `test_redteam` | 83 | guard chống đào coin, egress policy, các ca tấn công tích hợp |
 | `test_capi` (C11) | 61 | toàn bộ bề mặt `libyui` gọi từ C thuần: `YUI_E_TOO_SMALL`, hộp cát, `yui_telemetry`, `yui_telemetry_advise` |
+
+Tổng: **2693 check** (2632 C++17 + 61 C11 ABI). CI đã được cấu hình để biên dịch
+adapter qua `make ibus`, nhưng build thành công và kiểm tra Firefox/LibreOffice
+cùng độ trễ đầu-cuối vẫn cần kết quả chạy; đây là các bước nghiệm thu P1.4.
 
 Test dùng `YUI_SOURCE_DIR` (Makefile chèn `-DYUI_SOURCE_DIR='"$(CURDIR)"'`) để
 nạp chính sách thật trong `vmm-sandbox/policies/` — nhờ vậy tài liệu và mã không thể
@@ -164,15 +191,11 @@ shim 32-bit trước khi đạt — xem `docs/PLAN.md` P2.2. Job `qemu` của x8
 
 ## 6. CI
 
-`.github/workflows/ci.yml` chạy hai job song song:
-
-1. **cpp** — Ubuntu: `make -j`, `make test` (2357 check), `make check`, cài vào `$RUNNER_TEMP`
-   rồi biên dịch một chương trình C nhỏ chống lại `libyui.a` để chắc header C
-   vẫn dùng được từ ngoài.
-2. **rust** — Ubuntu + `cargo` có sẵn: `cargo test --workspace`, `cargo fmt
-   --check`, `cargo clippy -- -D warnings` (clippy chỉ cảnh báo, không chặn).
-
-Cả hai chạy trên mọi push và PR. Không job nào cần mạng sau bước checkout.
+`.github/workflows/ci.yml` chạy build C++/C11, Rust, cross-arch và boot kernel/QEMU
+trên push/PR. Job C++ chạy `make -j`, build adapter IBus (`make ibus`),
+`make test` (**2693 check**), `make check`, cài vào `$RUNNER_TEMP` rồi link
+chương trình C ngoài cây với `libyui.a`. Job Rust chạy test/build; các job kernel
+và QEMU xác nhận ba kiến trúc theo `docs/PLAN.md` §8.
 
 ---
 
