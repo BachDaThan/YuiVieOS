@@ -132,7 +132,7 @@ test: $(addprefix $(OBJ)/test/,$(TESTS)) $(BUILD)/test_capi
 verify:
 	@./scripts/verify.sh
 
-check: test verify
+check: all test verify
 	@echo "── smoke: yuid --info"
 	@./$(BIN)/yuid --info > /dev/null
 	@echo "── smoke: yuid --profile"
