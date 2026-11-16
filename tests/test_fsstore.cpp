@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -107,17 +108,58 @@ YUI_TEST(fsstore, immutable_partition_always_refuses_writes) {
 YUI_TEST(fsstore, immutable_partition_reads_from_its_root) {
   const std::string dir = make_tmpdir();
   CHECK(!dir.empty());
+  const std::string nested_dir = dir + "/modules";
+  CHECK_EQ(::mkdir(nested_dir.c_str(), 0755), 0);
   {
     std::ofstream f(dir + "/module.bin", std::ios::binary);
     f << "\x7f""ELF";
+  }
+  {
+    std::ofstream f(nested_dir + "/nested.bin", std::ios::binary);
+    f << "nested";
   }
   const fsstore::ImmutablePartition core(dir);
   std::vector<uint8_t> out;
   CHECK(core.read("module.bin", &out));
   CHECK_EQ(out.size(), size_t(4));
+  CHECK(core.read("modules/nested.bin", &out));
+  CHECK_EQ(out.size(), size_t(6));
   CHECK(!core.read("../etc/passwd", &out));  // không thoát khỏi gốc
+  std::remove((nested_dir + "/nested.bin").c_str());
   std::remove((dir + "/module.bin").c_str());
+  rmdir(nested_dir.c_str());
   rmdir(dir.c_str());
+}
+
+YUI_TEST(fsstore, immutable_partition_does_not_follow_symlinks) {
+  const std::string root = make_tmpdir();
+  const std::string outside = make_tmpdir();
+  CHECK(!root.empty());
+  CHECK(!outside.empty());
+  if (root.empty() || outside.empty()) return;
+
+  const std::string secret = outside + "/secret.bin";
+  const std::string file_link = root + "/file-link";
+  const std::string dir_link = root + "/dir-link";
+  {
+    std::ofstream f(secret, std::ios::binary);
+    f << "outside-root";
+  }
+  CHECK_EQ(::symlink(secret.c_str(), file_link.c_str()), 0);
+  CHECK_EQ(::symlink(outside.c_str(), dir_link.c_str()), 0);
+
+  const fsstore::ImmutablePartition core(root);
+  std::vector<uint8_t> out{0xAA};
+  CHECK(!core.read("file-link", &out));
+  CHECK(out.size() == 1 && out[0] == 0xAA);  // failed read does not expose partial data
+  CHECK(!core.read("dir-link/secret.bin", &out));
+  CHECK(!core.read("module.bin", nullptr));
+
+  std::remove(file_link.c_str());
+  std::remove(dir_link.c_str());
+  std::remove(secret.c_str());
+  rmdir(root.c_str());
+  rmdir(outside.c_str());
 }
 
 YUI_TEST_MAIN("test_fsstore")

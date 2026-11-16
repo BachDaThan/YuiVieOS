@@ -107,6 +107,7 @@ class ImmutablePartition {
     return "phân vùng lõi /core là chỉ-đọc (bất biến): mọi ghi đều bị từ chối, "
            "chỉ ghi qua /state (WriteCoalescer) mới hợp lệ";
   }
+  // Read a regular file beneath root_; reject symlinks at every path component.
   bool read(const std::string& rel, std::vector<uint8_t>* out) const;
   const std::string& root() const { return root_; }
 

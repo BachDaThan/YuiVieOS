@@ -38,7 +38,7 @@ cần thư viện ngoài, không cần Rust.
 
 ```bash
 make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell,yui-splash}
-make test         # 2831 kiểm thử (2770 C++17 + 61 C11 ABI)
+make test         # 2842 kiểm thử (2781 C++17 + 61 C11 ABI)
 make check        # test + 5 smoke run + kiểm tra tĩnh (scripts/verify.sh)
 ```
 
@@ -108,7 +108,7 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 2 | Lập lịch chuyển đổi nóng LAVD (P/E-core, tín dụng đánh thức, công bằng) | ✅ Rust | `kernel-services/yui-sched` (9 test) |
 | 2 | ZRAM: codec YUI-LZ + kho trang nén, fallback verbatim | ✅ Rust + C++ | `kernel-services/yui-zram` (8 test), `kernel-services/codec.cpp` |
 | 2 | `yui-frame` (khung unsafe duy nhất) | ✅ boot được (2 kiến trúc) | `kernel-frame/` — 29 khối `unsafe` trong 7 tệp được `verify.sh` kiểm toán |
-| 2 | Tickless, DVFS, FS bất biến, Linux ABI | ❌ chưa có | P2.5, P2.7–P2.9 |
+| 2 | Tickless, DVFS, FS bất biến, Linux ABI | 🟡 chính sách + fsstore/ABI model có test; kernel integration và QEMU/hardware QA còn thiếu | P2.5, P2.7–P2.9 |
 | 3 | Hộp cát 3 bậc + audit + 4 policy mẫu có test | ✅ | `vmm-sandbox/` (129 check) |
 | 3 | Manifest micro-VM (JSON Schema) | 🟡 đặc tả | `vmm-sandbox/vmm/` |
 | 3 | VMM thật (KVM), Wine/VKD3D, Waydroid-lite | ❌ chưa có | P3 |
@@ -122,7 +122,7 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 5 | Bộ gõ Telex **và** VNI, đặt dấu đúng chính tả | ✅ 246 test | `userspace-vi/ime.cpp` |
 | 5 | Shell song ngữ Việt–Anh, 15 lệnh | ✅ chạy | `userspace-vi/shell.cpp` |
 | 5 | Kế hoạch giao diện thích ứng (Framebuffer ⇄ Vulkan/DRM) | ✅ logic + test | `userspace-vi/ui.cpp` |
-| 5 | IBus Telex/VNI engine | 🟡 Ubuntu 24.04 build/đăng ký và D-Bus avg 7.8 ms (max 10.25) do người dùng báo; chưa xác minh Firefox/LibreOffice hoặc giới hạn latency | `userspace-vi/ibus/`, P1.4 |
+| 5 | IBus Telex/VNI engine | ✅ Người dùng xác minh Ubuntu 24.04: build sạch, `make check` 2831, D-Bus avg 7.16 ms; Firefox/LibreOffice để Desktop QA follow-up | `userspace-vi/ibus/`, P1.4 |
 | 5 | Compositor thật (DRM/Vulkan), App Yui build được | ❌ chưa có (đã có bộ vẽ pixel + màn hình chào) | P2.6, P4.1, P4.5 |
 
 **Chưa kiểm chứng được trong môi trường soạn thảo này**: biên dịch Rust (không có

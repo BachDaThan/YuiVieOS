@@ -21,7 +21,7 @@ extension nào ngoài `-D_GNU_SOURCE` (cho `strdup`, socket).
 ```bash
 git clone <repo> YuiVieOS && cd YuiVieOS
 make -j"$(nproc)"        # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell}
-make test                # 2831 kiểm thử (2770 C++17 + 61 C11 ABI) — xem mục 4
+make test                # 2842 kiểm thử (2781 C++17 + 61 C11 ABI) — xem mục 4
 make check               # test + smoke test CLI + kiểm tra tĩnh
 ```
 
@@ -58,17 +58,18 @@ ibus engine yui-telex  # hoặc yui-vni
 ```
 
 Để cài không cần root, dùng `make install PREFIX="$HOME/.local"` (sau khi đã
-chạy `make ibus`). Trên Ubuntu 24.04, người dùng báo build/đăng ký thành công;
-chưa tái lập trong sandbox này. Gõ trong Firefox **và** LibreOffice vẫn cần kiểm
-thực tế; người dùng báo D-Bus trung bình 7.8 ms/phím, min 7.15, max 10.25 — nếu
-DoD là giới hạn từng phím thì max hiện vượt < 10 ms.
+chạy `make ibus`). Theo xác minh Ubuntu 24.04 do người dùng cung cấp cho commit
+`a786a44`, `make ibus` build sạch và `make check` đạt 2831 checks; D-Bus latency
+trung bình 7.16 ms/phím (min 6.18, max khoảng 12 do nhịp nghỉ `pump` trong script
+Python), đạt tiêu chí trung bình `<10 ms/phím`. Kiểm thử GUI Firefox/LibreOffice
+được chuyển sang Desktop QA follow-up, không chặn P1.4.
 
-Ghi chú headless từ lần chạy Ubuntu 24.04 do người dùng cung cấp (chưa xác minh ở
-sandbox này): GI name là `IBus.Capabilite` (không phải `IBus.Capability`); khởi
-chạy IBus bằng `ibus-daemon --config=/usr/libexec/ibus-memconf --panel=disable`; đặt
-`IBUS_ADDRESS` và `XDG_RUNTIME_DIR` rõ ràng **bên trong** `dbus-run-session`; cài
-vào `PREFIX` tạm (`make install PREFIX="$TMP_PREFIX"`) hoặc `/usr/local` nếu phù
-hợp. Không dùng các chi tiết này làm bằng chứng cho Firefox/LibreOffice desktop.
+Ghi chú headless từ lần chạy Ubuntu 24.04: GI name là `IBus.Capabilite` (không phải
+`IBus.Capability`); khởi chạy IBus bằng
+`ibus-daemon --config=/usr/libexec/ibus-memconf --panel=disable`; đặt `IBUS_ADDRESS`
+và `XDG_RUNTIME_DIR` rõ ràng **bên trong** `dbus-run-session`; cài vào `PREFIX` tạm
+(`make install PREFIX="$TMP_PREFIX"`) hoặc `/usr/local` nếu phù hợp. Báo cáo GUI
+Firefox/LibreOffice vẫn cần ghi ở Desktop QA.
 
 ### Cài đặt
 
@@ -134,15 +135,16 @@ make test                          # tất cả
 | `test_fb` | 1184 | ghi pixel có chặn biên (guard band), font 5×7, tiếng Việt có dấu, clipping, xuất PPM |
 | `test_ed25519` | 78 | SHA-512 FIPS 180-4, Ed25519 RFC 8032, bundle ký/xác minh và chống sửa |
 | `test_power` | 47 | tickless, DVFS, giới hạn nhiệt/pin, clock gating |
-| `test_fsstore` | 37 | lõi chỉ đọc, ghi gộp theo trang, lỗi ghi và đường dẫn traversal |
+| `test_fsstore` | 48 | lõi chỉ đọc, ghi gộp, nested reads, đường dẫn traversal và chặn symlink escape khi đọc |
 | `test_linuxabi` | 38 | phân phối syscall, quyền file, chặn syscall chưa hỗ trợ |
 | `test_redteam` | 83 | guard chống đào coin, egress policy, các ca tấn công tích hợp |
 | `test_capi` (C11) | 61 | toàn bộ bề mặt `libyui` gọi từ C thuần: `YUI_E_TOO_SMALL`, hộp cát, `yui_telemetry`, `yui_telemetry_advise` |
 
-Tổng: **2831 check** (2770 C++17 + 61 C11 ABI). CI có bước biên dịch adapter
-qua `make ibus`; kết quả build/đăng ký Ubuntu 24.04 được người dùng báo nhưng
-chưa tái lập ở sandbox này. Firefox/LibreOffice và giới hạn latency đầu-cuối vẫn
-cần xác nhận; đó là các bước nghiệm thu P1.4.
+Tổng trong nhánh hiện tại: **2842 check** (2781 C++17 + 61 C11 ABI). CI có bước
+biên dịch adapter qua `make ibus`; bản build Ubuntu 24.04 và phép đo trung bình
+7.16 ms/phím được người dùng xác nhận cho commit `a786a44`, nhưng sandbox này
+không có IBus dev dependencies để tái lập. P1.4 đã đạt DoD; Firefox/LibreOffice
+GUI còn là Desktop QA follow-up, không chặn hoàn tất.
 
 Test dùng `YUI_SOURCE_DIR` (Makefile chèn `-DYUI_SOURCE_DIR='"$(CURDIR)"'`) để
 nạp chính sách thật trong `vmm-sandbox/policies/` — nhờ vậy tài liệu và mã không thể
@@ -203,7 +205,7 @@ shim 32-bit trước khi đạt — xem `docs/PLAN.md` P2.2. Job `qemu` của x8
 
 `.github/workflows/ci.yml` chạy build C++/C11, Rust, cross-arch và boot kernel/QEMU
 trên push/PR. Job C++ chạy `make -j`, build adapter IBus (`make ibus`),
-`make test` (**2831 check**), `make check`, cài vào `$RUNNER_TEMP` rồi link
+`make test` (**2842 check**), `make check`, cài vào `$RUNNER_TEMP` rồi link
 chương trình C ngoài cây với `libyui.a`. Job Rust chạy test/build; các job kernel
 và QEMU xác nhận ba kiến trúc theo `docs/PLAN.md` §8.
 

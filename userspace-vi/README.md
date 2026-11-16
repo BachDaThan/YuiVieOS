@@ -39,8 +39,9 @@ và `make check` tiếp tục chỉ dùng toolchain hiện có.
 ## Trạng thái
 
 - [x] Telex/VNI + đặt dấu + shell song ngữ + kế hoạch UI
-- [~] IBus engine Telex/VNI + preedit/backspace/restore. Theo kết quả Ubuntu 24.04
-  do người dùng cung cấp: `make ibus` và đăng ký engine thành công; D-Bus latency
-  trung bình 7.8 ms/phím (min 7.15, max 10.25). Chưa có kết quả Firefox **và**
-  LibreOffice cùng lúc; giữ P1.4 ở `[~]` đến khi đủ kiểm thử ứng dụng.
+- [x] P1.4 IBus Telex/VNI + preedit/backspace/English auto-restore/Escape-restore.
+  Người dùng xác minh trên Ubuntu 24.04 (commit `a786a44`): `make ibus` build sạch,
+  `make check` 2831 checks, D-Bus avg 7.16 ms/phím (min 6.18; max ~12 do nhịp nghỉ
+  `pump` trong script Python), đạt tiêu chí latency trung bình < 10 ms/phím.
+  Firefox/LibreOffice GUI được chuyển sang Desktop QA follow-up, không chặn P1.4.
 - [ ] Bộ vẽ framebuffer + Vulkan/DRM (P2.6)
