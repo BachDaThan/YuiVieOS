@@ -20,7 +20,7 @@ chặn (ghi rõ chặn bởi gì).
 
 | Phase | Nội dung | Trạng thái |
 |---|---|---|
-| **P0** | Nền móng: monorepo, hợp đồng cổng chờ, test C++/C11, CI | ✅ xong (670 check lúc đó, nay 2693) |
+| **P0** | Nền móng: monorepo, hợp đồng cổng chờ, test C++/C11, CI | ✅ xong (670 check lúc đó, nay 2831) |
 | **P1** | Chạy thật trên Linux host: `yuid` service, IBus, stripper, telemetry, OS MCP | 🟡 2/10 xong; P1.4 và P1.6 đang làm |
 | **P2** | Rust framekernel + 3 kiến trúc + QEMU + năng lượng + FS + Linux ABI | 🟡 khung nhân **boot thật** trên aarch64 + riscv64 (CI xanh); x86_64 chặn bởi QEMU multiboot |
 | **P3** | VMM sandbox (Wine/VKD3D, Waydroid-lite) | ⬜ chưa bắt đầu |
@@ -73,7 +73,7 @@ chạy như một tầng dịch vụ trên Linux: bộ gõ, stripper, trợ lý,
 | P1.1 | `yuid` chạy như systemd service + socket activation | [x] | `systemctl start yuid` xanh; socket `0600`; `yuid --serve-once` vẫn qua test |
 | P1.2 | ZRAM dùng thật qua `/dev/zram0` (module có sẵn của host) | [ ] | 200 MB dữ liệu văn phòng → < 80 MB; đọc lại **đúng từng byte**; `zramctl` xác nhận |
 | P1.3 | `libyui` publish: `pkg-config`, `soname` ổn định, ví dụ C + Python | [ ] | `pkg-config --cflags --libs yui` chạy ngoài cây; ví dụ Python gọi `ime.convert` |
-| P1.4 | Bộ gõ thành IBus/Fcitx5 engine | [~] | **Đã có source:** IBus adapter C++17 đăng ký Telex/VNI, preedit/backspace/commit và bỏ qua trường nhạy cảm; có target `make ibus` + bước build trong CI. **Còn thiếu để qua DoD:** build thành công, gõ thật trong Firefox **và** LibreOffice đúng dấu, đo độ trễ đầu-cuối < 10 ms/phím |
+| P1.4 | Bộ gõ thành IBus/Fcitx5 engine | [~] | **Đã có source:** IBus adapter C++17 đăng ký Telex/VNI, preedit/backspace/commit, Escape-restore và bỏ qua trường nhạy cảm; có target `make ibus` + CI build. Người dùng báo Ubuntu 24.04 đã build/đăng ký engine và đo D-Bus trung bình 7.8 ms/phím (min 7.15, max 10.25); chưa tái lập độc lập. Còn thiếu: xác nhận gõ đúng trong Firefox **và** LibreOffice; làm rõ/đạt tiêu chí latency < 10 ms (giá trị max đã vượt ngưỡng nếu DoD là worst-case) |
 | P1.5 | Telemetry Hook (P4.2 của `ARCHITECTURE.md` §6.3) | [x] | `telemetry.read` + `system_telemetry` MCP đọc sysfs thật; máy này không có pin ⇒ `present:false`; `tests/test_telemetry.cpp` **471 check** (ranh giới 20 % / 75 °C, pin thấp, GPU nóng, quét toàn miền k/W, RPC + MCP); `test_capi` 61 check phủ `yui_telemetry`/`yui_telemetry_advise`. **Chưa** đối chiếu được trên máy có pin thật — ghi rõ, không tô hồng |
 | P1.6 | Smart Stripper trên app thật | [~] | Electron ≥ 35 % nhỏ hơn và **chạy được**; app có DRM: `stripped=false`, 0 byte bị sửa |
 | P1.7 | Đóng gói `.deb` + AppImage/Flatpak | [ ] | Cài trên Ubuntu 22.04 sạch, `yui-shell` chạy, gỡ sạch |
@@ -245,7 +245,7 @@ phải đạt đủ xác thực, xác nhận, audit, ngân sách tài nguyên v�
 | P5.6 | Nạp `.yui v3` | `mmap` tệp qua `yuid`, kiểm `fs.read` đúng đường dẫn; test: tệp 1 GB mở < 50 ms, RAM tăng < 5 MB |
 | P5.7 | Bật dịch vụ nền `yuid` | `systemctl enable --now yuid`, socket `0600`, `yuid --info` liệt kê engine thật |
 | P5.8 | Bật điều khiển tiếng Việt qua MCP | test 5 công cụ với câu tiếng Việt có dấu **và** không dấu; mỗi hành động có audit + xác nhận |
-| P5.9 | Kiểm hồi quy toàn bộ | `make test` 2693 check xanh (2632 C++17 + 61 C11); thêm test tích hợp: 1 câu lệnh tiếng Việt → hành động OS thật |
+| P5.9 | Kiểm hồi quy toàn bộ | `make test` 2831 check xanh (2770 C++17 + 61 C11); thêm test tích hợp: 1 câu lệnh tiếng Việt → hành động OS thật |
 | P5.10 | Ghi lại số đo | thời gian phản hồi, RAM tăng thêm, k/W thực tế ở 3 chế độ máy |
 
 ### 7.3 Điều kiện thoát (rollback)
@@ -296,7 +296,7 @@ File: `.github/workflows/ci.yml`. Sáu job, chạy song song trên mọi push/PR
 
 | Job | Chạy gì | Pass khi |
 |---|---|---|
-| `cpp` | `make -j`, `make ibus`, `make test`, `make check`, `make install` vào prefix tạm, link `libyui.a` từ chương trình C ngoài cây | **2693** check pass (2632 C++17 + 61 C11); IBus adapter build + install; chương trình C in `abi=1` |
+| `cpp` | `make -j`, `make ibus`, `make test`, `make check`, `make install` vào prefix tạm, link `libyui.a` từ chương trình C ngoài cây | **2831** check (2770 C++17 + 61 C11); IBus build/install; chương trình C in `abi=1` |
 | `rust` | `cargo test --workspace`, `cargo build --release`; fmt/clippy advisory | 0 test fail |
 | `docs` | `scripts/verify.sh`: policy JSON parse, không CRLF, liên kết README, không `unsafe` trong crate nhân | tất cả xanh |
 | `cross-arch` | `cargo check --workspace --target {aarch64-unknown-linux-gnu, riscv64gc-unknown-linux-gnu}` | cả hai target type-check |
@@ -413,6 +413,7 @@ Thứ tự đề xuất, theo giá trị cho người dùng thật và độ r�
 | 2026-11-15 | P2.12–P2.13 (`[x]`) — 3 phòng vệ | Guard đào coin (`guard.cpp` + `yui-sched/src/guard.rs` + `yuid` `guard.*`), EgressFilter (`sandbox.cpp`), `tests/test_redteam.cpp` **83 check**; `compute.heavy` vào bảng quyền (15→16, C++/Rust/docs); `docs/SECURITY.md` §6 thành "đã cài đặt" + §10 mô tả 3 cơ chế. Tổng `make test` **2669 check** (2608 C++17 + 61 C11), 2357 cũ giữ xanh 100% |
 | 2026-11-16 | Rà soát kế hoạch (không đổi mã) | Đối chiếu 2 đợt tư vấn Gemini (5 ý AIOS, 5 lỗ hổng, shell POSIX, phần cứng thật, TPM/PQC/IOMMU, game/Minecraft, máy HP Compaq, ngách yếu/doanh nghiệp, cập nhật A/B, phát hành bằng GitHub Actions) với mã: **15 lệnh** shell (không phải 25 mục tiêu); `fork`/`execve` trong `linuxabi.cpp` trả `EPERM`; `profile.cpp::classify` chỉ có 3 lớp, máy 512 MB và 3 GB cùng là `may-yeu`; `yui.h` có 25 khai báo (P5.4 cũ ghi 12); engine (`yui.cpp`) có 17 hàm và trùng 2 tên hàm (`yui_version`, `yui_free`; cùng chữ ký, khác ngữ nghĩa) với `libyui` của OS. Thêm P2.14–P2.15, P3.12, P4.9–P4.13, P5.11–P5.16, Phase P6, §13–§14. **Chưa chạy `make test`** vì chỉ sửa tài liệu; **đã chạy `scripts/verify.sh`** trên bản sao repo có file mới: *tất cả kiểm tra tĩnh đạt* (lần đầu đỏ 2 chỗ vì nhắc tới tệp chưa tồn tại; đã sửa chữ) |
 | 2026-11-16 | P1.4 (`[~]`) — IBus Telex/VNI | Thêm `ime::Composition` cho preedit/backspace/commit, adapter đăng ký hai engine IBus và metadata component; `test_ime` **108 check**; `make test` **2693 check / 0 fail**, `make check` và `scripts/verify.sh` xanh. XML được kiểm tĩnh. **Chưa build được `make ibus`** vì sandbox thiếu `pkg-config`/`libibus-1.0-dev`; chưa chạy Firefox/LibreOffice, chưa đo < 10 ms/phím. P1.4 giữ `[~]`, không nhận DoD hoàn tất |
+| 2026-11-16 | P1.4 follow-up (`[~]`) | Sửa IBus `set_content_type` ABI về `guint`; xác nhận tone cần phím lệnh: `cac` giữ nguyên, `cacs` → `các`, `tats` → `tát`, `nats` → `nát`, `mawms` → `mắm`, `cawps` → `cắp`; thêm regression tests. `Composition` tự giữ allowlist `word/window/software/user/linux` và Escape trả nguyên chuỗi phím. `make test`: **2831 check / 0 fail**, `test_ime` **246**. Người dùng báo build/register Ubuntu 24.04 và D-Bus avg 7.8 ms, min 7.15, max 10.25; chưa tái lập tại đây; Firefox/LibreOffice chưa có kết quả, latency max vượt ngưỡng nếu strict worst-case. P1.4 vẫn `[~]` |
 
 ---
 
@@ -423,7 +424,7 @@ Cách đọc: `đã kiểm` = mình đối chiếu với mã/kế hoạch trong 
 | # | Gợi ý | Đối chiếu | Quyết định |
 |---|---|---|---|
 | C1 | `yui-shell` chỉ là shell nội bộ, thiếu terminal POSIX | **Đã kiểm, đúng:** 15 lệnh (`userspace-vi/shell.cpp`), không pipe/chuyển hướng/job. Gemini ghi nhầm Linux ABI là "P2.9" (đúng là **P2.7**; P2.9 là ZRAM trong nhân). Quan trọng: `fork`/`execve` ở `linuxabi.cpp` hiện trả `EPERM`, nên trên nhân riêng shell chưa sinh được tiến trình | **P4.12**: làm trên Linux host trước; nhân riêng sau P2.7 |
-| C2 | "Sẵn sàng 50%/40%/10%/15%" và "hoàn thiện 45%/75%/90%/100%" | Không có phương pháp đo | **Bỏ.** Dùng số thật: 2693 check, 2/3 kiến trúc boot QEMU, bảng trạng thái ở đầu file |
+| C2 | "Sẵn sàng 50%/40%/10%/15%" và "hoàn thiện 45%/75%/90%/100%" | Không có phương pháp đo | **Bỏ.** Dùng số thật: 2831 check, 2/3 kiến trúc boot QEMU, bảng trạng thái ở đầu file |
 | C3 | Chiến lược lai: Linux ABI + Wayland/Vulkan thay vì viết lại phần mềm | Đúng hướng, trùng P2.7, P3, P4.1. Wayland chưa có task riêng | Giữ; Wayland vào backlog (§14.2) |
 | C4 | Thiếu driver thật (NVMe, AHCI, xHCI/HID, mạng, Wi-Fi, ACPI, âm thanh) là rào cản lớn nhất | **Đúng**, và §10 (v1.0) cố ý không gồm phần cứng thật. "Dùng nhân Linux tối giản làm lớp phần cứng" thực chất là **đường P1 đã có** | **Phase P6**: virtio trước, rồi UEFI, NVMe/AHCI, xHCI/HID, mạng, ACPI. **Wi-Fi và GPU không viết**: dùng driver Linux trong micro-VM (P3.6) hoặc USB-Ethernet/tethering |
 | C5 | TPM 2.0 + Secure Boot chuẩn 2023 | Hướng đúng. Nhưng "ký bằng chứng chỉ chuẩn mới" **không tự làm được**: PC bật Secure Boot chỉ nạp bộ nạp mà CA firmware tin ký (thường qua `shim` đã được Microsoft ký) hoặc người dùng tự đăng ký khoá. Chuyện chứng chỉ 2011 hết hạn: **chưa tự kiểm** | **P6.8** chỉ là đặc tả (tệp `SECURE-BOOT.md` sẽ tạo trong thư mục docs); chưa code |

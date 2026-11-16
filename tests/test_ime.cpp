@@ -42,6 +42,13 @@ YUI_TEST(ime, telex_tones) {
 YUI_TEST(ime, telex_real_words) {
   check_telex("chaof", "chào");
   check_telex("banj", "bạn");
+  // Repeated onset/coda consonants are not special; the tone key is explicit.
+  check_telex("cac", "cac");
+  check_telex("cacs", "các");
+  check_telex("tats", "tát");
+  check_telex("nats", "nát");
+  check_telex("mawms", "mắm");
+  check_telex("cawps", "cắp");
   check_telex("toans", "toán");
   check_telex("hoas", "hóa");
   check_telex("hoaf", "hòa");  // modern placement on the first vowel of an open cluster
@@ -72,6 +79,7 @@ YUI_TEST(ime, vni_basics) {
   check_vni("a4", "ã");
   check_vni("a5", "ạ");
   check_vni("Tie61ng Vie65t", "Tiếng Việt");
+  check_vni("cac1", "các");
   check_vni("cha2o", "chào");
   check_vni("hoa1", "hóa");
   check_vni("d9a8ng", "đăng");
@@ -104,6 +112,33 @@ YUI_TEST(ime, passthrough_and_boundaries) {
   // Uppercase tone keys still work: S is sắc and only acts once a vowel exists.
   CHECK_EQ(ime::telex("OS"), std::string("Ó"));
   CHECK_EQ(ime::telex("YuiVie"), std::string("YuiVie"));
+}
+
+YUI_TEST(ime, english_auto_restore) {
+  for (const std::string word : {"word", "window", "software", "user", "linux"}) {
+    ime::Composition comp;
+    std::string typed;
+    for (char c : word) {
+      typed.push_back(c);
+      CHECK(comp.feed(static_cast<uint32_t>(c)));
+      CHECK_EQ(comp.preedit(), typed);
+    }
+    CHECK_EQ(comp.commit(), word);
+  }
+
+  for (const std::string word : {"WORD", "Software", "Linux"}) {
+    ime::Composition comp;
+    for (char c : word) CHECK(comp.feed(static_cast<uint32_t>(c)));
+    CHECK_EQ(comp.commit(), word);
+  }
+
+  // The same safeguard applies in VNI mode, whose letter transforms overlap Telex.
+  for (const std::string word : {"word", "window", "software", "user", "linux"}) {
+    ime::Composition comp(ime::Method::Vni);
+    for (char c : word) CHECK(comp.feed(static_cast<uint32_t>(c)));
+    CHECK_EQ(comp.preedit(), word);
+    CHECK_EQ(comp.commit(), word);
+  }
 }
 
 YUI_TEST(ime, word_engine_incremental) {
@@ -153,6 +188,15 @@ YUI_TEST(ime, editable_composition_buffer) {
   CHECK(comp.backspace());
   CHECK_EQ(comp.preedit(), std::string("â"));
   CHECK_EQ(comp.commit(), std::string("â"));
+
+  comp.set_method(ime::Method::Telex);
+  for (char c : std::string("window")) CHECK(comp.feed(static_cast<uint32_t>(c)));
+  CHECK_EQ(comp.preedit(), std::string("window"));
+  CHECK_EQ(comp.commit(), std::string("window"));
+
+  for (char c : std::string("wordx")) CHECK(comp.feed(static_cast<uint32_t>(c)));
+  CHECK_EQ(comp.restore(), std::string("wordx"));  // Escape-style literal recovery
+  CHECK(comp.empty());
 }
 
 YUI_TEST(ime, display_width_of_vietnamese) {

@@ -64,22 +64,35 @@ void update_preedit(YuiIBusEngine* self) {
   g_object_unref(text);
 }
 
+void emit_commit(IBusEngine* engine, const std::string& value) {
+  if (value.empty()) {
+    hide_preedit(engine);
+    return;
+  }
+
+  IBusText* text = ibus_text_new_from_string(value.c_str());
+  if (!text) return;
+  // Keep one owned reference: the IBus API consumes floating objects.
+  g_object_ref_sink(text);
+  ibus_engine_hide_preedit_text(engine);
+  ibus_engine_commit_text(engine, text);
+  g_object_unref(text);
+}
+
 void commit_composition(YuiIBusEngine* self) {
   if (!self->composition || self->composition->empty()) {
     hide_preedit(IBUS_ENGINE(self));
     return;
   }
+  emit_commit(IBUS_ENGINE(self), self->composition->commit());
+}
 
-  const std::string value = self->composition->preedit();
-  IBusText* text = ibus_text_new_from_string(value.c_str());
-  if (text) {
-    // Keep one owned reference: the IBus API consumes floating objects.
-    g_object_ref_sink(text);
+void restore_composition(YuiIBusEngine* self) {
+  if (!self->composition || self->composition->empty()) {
     hide_preedit(IBUS_ENGINE(self));
-    ibus_engine_commit_text(IBUS_ENGINE(self), text);
-    g_object_unref(text);
+    return;
   }
-  self->composition->reset();
+  emit_commit(IBUS_ENGINE(self), self->composition->restore());
 }
 
 gboolean has_shortcut_modifier(guint modifiers) {
@@ -104,7 +117,7 @@ gboolean process_key_event(IBusEngine* base, guint keyval, guint keycode, guint 
 
   const gboolean shortcut = has_shortcut_modifier(modifiers);
   if (!shortcut && keyval == IBUS_KEY_Escape && !self->composition->empty()) {
-    clear_composition(self);
+    restore_composition(self);
     return TRUE;
   }
   if (!shortcut && keyval == IBUS_KEY_BackSpace && !self->composition->empty()) {
@@ -135,13 +148,16 @@ void focus_out(IBusEngine* base) {
   if (parent->focus_out) parent->focus_out(base);
 }
 
-void set_content_type(IBusEngine* base, IBusInputPurpose purpose, IBusInputHints hints) {
+// IBusEngineClass declares this virtual with guint arguments (not the
+// IBusInputPurpose/IBusInputHints enum typedefs); keep the exact ABI signature
+// so C++ builds don't need an unsafe function-pointer cast.
+void set_content_type(IBusEngine* base, guint purpose, guint hints) {
   YuiIBusEngine* self = self_of(base);
   (void)hints;
 
   // Never transform or retain text in password, PIN, numeric, URL, or email
   // fields. Clear (do not commit) any pending preedit before switching modes.
-  switch (purpose) {
+  switch (static_cast<IBusInputPurpose>(purpose)) {
     case IBUS_INPUT_PURPOSE_DIGITS:
     case IBUS_INPUT_PURPOSE_NUMBER:
     case IBUS_INPUT_PURPOSE_PHONE:
