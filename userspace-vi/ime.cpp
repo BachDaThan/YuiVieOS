@@ -365,6 +365,54 @@ std::string Composition::restore() {
   return text;
 }
 
+ReplayEdit DirectComposition::replace_rendered(const std::string& next) {
+  ReplayEdit edit;
+  edit.backspaces = text::length(rendered_);
+  edit.text = next;
+  rendered_ = next;
+  return edit;
+}
+
+bool DirectComposition::feed(uint32_t codepoint, ReplayEdit* edit) {
+  if (!edit || !composition_.feed(codepoint)) return false;
+  *edit = replace_rendered(composition_.preedit());
+  return true;
+}
+
+bool DirectComposition::backspace(ReplayEdit* edit) {
+  if (!edit || !composition_.backspace()) return false;
+  *edit = replace_rendered(composition_.preedit());
+  return true;
+}
+
+ReplayEdit DirectComposition::commit() {
+  if (composition_.empty()) return {};
+  const std::string committed = composition_.commit();
+  ReplayEdit edit;
+  if (committed != rendered_) edit = replace_rendered(committed);
+  rendered_.clear();  // committed text is no longer an active composition
+  return edit;
+}
+
+ReplayEdit DirectComposition::restore() {
+  if (composition_.empty()) return {};
+  const std::string literal = composition_.restore();
+  ReplayEdit edit;
+  if (literal != rendered_) edit = replace_rendered(literal);
+  rendered_.clear();  // restored literal text is no longer an active composition
+  return edit;
+}
+
+void DirectComposition::reset() {
+  composition_.reset();
+  rendered_.clear();  // boundary: leave the already-committed client text untouched
+}
+
+void DirectComposition::set_method(Method method) {
+  composition_.set_method(method);
+  rendered_.clear();
+}
+
 std::string WordEngine::feed(uint32_t codepoint) {
   const bool boundary = codepoint == ' ' || codepoint == '\t' || codepoint == '\n' ||
                         codepoint == '\r' || codepoint == ',' || codepoint == '.' ||
