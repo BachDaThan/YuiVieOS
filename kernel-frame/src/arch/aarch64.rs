@@ -85,6 +85,9 @@ pub fn cpu_vendor() -> [u8; 12] {
 
 #[no_mangle]
 pub extern "C" fn kmain_arm(dtb: usize) -> ! {
+    // Khởi tạo UART TRƯỚC mọi println!: PL011 chưa bật thì từng byte phải đợi
+    // tới hạn trong serial_write và không phát ra gì cả — cả dải banner sẽ câm.
+    init_console();
     let mut addr = dtb as u64;
     if addr == 0 {
         // QEMU `-kernel` với ảnh ELF: bootloader QEMU coi đây là "ELF không
@@ -92,14 +95,16 @@ pub extern "C" fn kmain_arm(dtb: usize) -> ! {
         // hw/arm/boot.c: "Assume that raw images are linux kernels, and ELF
         // images are not"), nhưng nó vẫn sinh DTB và đặt ngay tại đầu RAM
         // (`loader_start` = 0x4000_0000 trên QEMU virt, dưới ảnh nhân ở
-        // 0x4008_0000). U-Boot/UEFI thì truyền x0 đúng chuẩn. Khi x0 = 0,
+        // 0x4100_0000). U-Boot/UEFI thì truyền x0 đúng chuẩn. Khi x0 = 0,
         // quét cửa sổ đầu RAM để tìm magic FDT — không thấy thì để 0 và báo
         // "khong doc duoc", tuyệt đối không bịa số.
         //
-        // Cửa sổ quét mở rộng 64 MiB (không chỉ phần trước ảnh nhân): QEMU
-        // bỏ qua DTB không lọt "gap" trước ảnh, nhưng firmware thật có thể
-        // đặt DTB bất kỳ đâu trong RAM thấp. Thấy magic ở đâu thì đọc ở đó.
-        addr = crate::boot::find_fdt(0x4000_0000, 0x400_0000);
+        // Cửa sổ quét = ĐÚNG khoảng trống dưới ảnh nhân (0x4000_0000 .. 0x4100_
+        // 0000): không được mở rộng vào trong ảnh — hằng FDT_MAGIC nằm trong
+        // .rodata của chính nhân sẽ thành "magic" giả. Khoảng trống 16 MiB cũng
+        // là nơi QEMU cam kết đặt DTB (dtb_start = loader_start, dtb_limit =
+        // image_low_addr).
+        addr = crate::boot::find_fdt(0x4000_0000, 0x100_0000);
         if addr == 0 {
             // Chẩn đoán cho CI: in 8 từ đầu tại 0x4000_0000 để biết firmware
             // (không) đặt gì ở đó — một dòng duy nhất, đọc được từ annotation.
