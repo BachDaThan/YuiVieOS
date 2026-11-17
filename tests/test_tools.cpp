@@ -465,4 +465,83 @@ YUI_TEST(shell, command_suggestions_levenshtein) {
   CHECK(r2.find("Có phải bạn muốn dùng") == std::string::npos);
 }
 
+static std::string run_cli_cmd(const std::string& cmd) {
+  FILE* pipe = ::popen((cmd + " 2>&1").c_str(), "r");
+  if (!pipe) return "";
+  char buffer[512];
+  std::string result;
+  while (::fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+    result += buffer;
+  }
+  ::pclose(pipe);
+  return result;
+}
+
+YUI_TEST(update, yui_update_cli_end_to_end) {
+  const std::string bin = std::string(YUI_SOURCE_DIR) + "/build/bin/yui-update";
+
+  // 1. Trợ giúp song ngữ
+  const std::string help_out = run_cli_cmd(bin + " --trogiup");
+  CHECK(help_out.find("Quản lý cập nhật hệ thống A/B") != std::string::npos);
+  CHECK(help_out.find("yui-update status") != std::string::npos);
+  CHECK(help_out.find("yui-update apply") != std::string::npos);
+  CHECK(help_out.find("yui-update rollback") != std::string::npos);
+
+  // 2. Thư mục thử nghiệm
+  const std::string tmp = mkdtemp_dir("update-cli");
+  const std::string keyring_dir = tmp + "/keys";
+  const std::string priv_file = tmp + "/priv.key";
+  const std::string payload_dir = tmp + "/payload";
+  const std::string bundle_dir = tmp + "/bundle";
+  const std::string state_dir = tmp + "/state";
+
+  write_file(payload_dir + "/sys.bin", "yui-os-image\n");
+  write_file(payload_dir + "/version.txt", "3.0.0\n");
+
+  // 3. keygen
+  const std::string keygen_out = run_cli_cmd(bin + " keygen --id sovereign-key --out-keyring " +
+                                             keyring_dir + " --out-priv " + priv_file);
+  CHECK(keygen_out.find("Đã sinh cặp khoá chủ quyền") != std::string::npos);
+  CHECK(!read_file(keyring_dir + "/sovereign-key.pub").empty());
+  CHECK(!read_file(priv_file).empty());
+
+  // 4. sign bundle
+  const std::string sign_out = run_cli_cmd(bin + " sign " + payload_dir + " --out " + bundle_dir +
+                                           " --key " + priv_file + " --key-id sovereign-key" +
+                                           " --version 3.0.0 --stream os");
+  CHECK(sign_out.find("Đã đóng gói và ký số thành công") != std::string::npos);
+  CHECK(!read_file(bundle_dir + "/manifest.json").empty());
+  CHECK(!read_file(bundle_dir + "/manifest.sig").empty());
+
+  // 5. check / verify
+  const std::string check_out = run_cli_cmd(bin + " check " + bundle_dir + " --keyring " + keyring_dir);
+  CHECK(check_out.find("Bundle hợp lệ") != std::string::npos);
+  CHECK(check_out.find("sovereign-key") != std::string::npos);
+  CHECK(check_out.find("3.0.0") != std::string::npos);
+
+  // 6. apply deferred
+  const std::string apply_out = run_cli_cmd(bin + " apply " + bundle_dir + " --keyring " + keyring_dir +
+                                            " --state-dir " + state_dir + " --stream os");
+  CHECK(apply_out.find("chờ kích hoạt") != std::string::npos);
+
+  // 7. status checking
+  const std::string status1 = run_cli_cmd(bin + " status --state-dir " + state_dir + " --stream os");
+  CHECK(status1.find("Khe hoạt động : A") != std::string::npos);
+  CHECK(status1.find("khe B (sẽ kích hoạt ở lần khởi động tới)") != std::string::npos);
+
+  // 8. commit pending
+  const std::string commit_out = run_cli_cmd(bin + " commit --state-dir " + state_dir + " --stream os");
+  CHECK(commit_out.find("Đã kích hoạt") != std::string::npos);
+
+  const std::string status2 = run_cli_cmd(bin + " status --state-dir " + state_dir + " --stream os");
+  CHECK(status2.find("Khe hoạt động : B (phiên bản 3.0.0") != std::string::npos);
+
+  // 9. rollback
+  const std::string roll_out = run_cli_cmd(bin + " rollback --state-dir " + state_dir + " --stream os");
+  CHECK(roll_out.find("quay lui") != std::string::npos);
+
+  const std::string status3 = run_cli_cmd(bin + " status --state-dir " + state_dir + " --stream os");
+  CHECK(status3.find("Khe hoạt động : A") != std::string::npos);
+}
+
 YUI_TEST_MAIN("test_tools")

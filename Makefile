@@ -98,7 +98,7 @@ qemu:
 	./scripts/qemu-smoke.sh $(ARCH) --build
 
 all: $(BIN)/yuid $(BIN)/libyui.a $(BIN)/libyui.so \
-     $(BIN)/yui-profiler $(BIN)/yui-trim $(BIN)/yui-shell $(BIN)/yui-splash
+     $(BIN)/yui-profiler $(BIN)/yui-trim $(BIN)/yui-shell $(BIN)/yui-splash $(BIN)/yui-update
 
 $(OBJ)/%.o: %.cpp $(HEADERS)
 	@mkdir -p $(dir $@)
@@ -136,6 +136,10 @@ $(BIN)/yui-splash: $(OBJ)/tools/splash/main.o $(BIN)/libyui.a
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
+$(BIN)/yui-update: $(OBJ)/tools/update/main.o $(BIN)/libyui.a
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
+
 $(OBJ)/test/%: tests/%.cpp $(BIN)/libyui.a
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -DYUI_SOURCE_DIR='"$(CURDIR)"' -o $@ $< $(BIN)/libyui.a $(LDLIBS)
@@ -164,6 +168,9 @@ check: all test verify
 	@echo "── smoke: splash → PPM"
 	@./$(BIN)/yui-splash --width 320 --height 200 --out /tmp/yui-splash.ppm > /dev/null
 	@test -s /tmp/yui-splash.ppm
+	@echo "── smoke: yui-update"
+	@./$(BIN)/yui-update --trogiup > /dev/null
+	@./$(BIN)/yui-update status --state-dir /tmp/smoke-update > /dev/null
 	@echo "all checks passed"
 
 install: all
@@ -172,6 +179,7 @@ install: all
 	install -Dm755 $(BIN)/yui-trim $(DESTDIR)$(PREFIX)/bin/yui-trim
 	install -Dm755 $(BIN)/yui-shell $(DESTDIR)$(PREFIX)/bin/yui-shell
 	install -Dm755 $(BIN)/yui-splash $(DESTDIR)$(PREFIX)/bin/yui-splash
+	install -Dm755 $(BIN)/yui-update $(DESTDIR)$(PREFIX)/bin/yui-update
 	install -Dm644 $(BIN)/libyui.a $(DESTDIR)$(PREFIX)/lib/libyui.a
 	install -Dm755 $(BIN)/libyui.so $(DESTDIR)$(PREFIX)/lib/libyui.so
 	install -Dm644 include/yui/yui.h $(DESTDIR)$(PREFIX)/include/yui/yui.h

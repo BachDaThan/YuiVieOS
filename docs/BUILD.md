@@ -127,20 +127,20 @@ make test                          # tất cả
 | `test_crypto` | 28 | SHA-256/HMAC/SHAKE/scrypt với vector RFC, vault tròn vẹn, sai khoá/hỏng tag |
 | `test_codec_json` | 102 | YUI-LZ tròn vẹn, biên kích thước, JSON parse/serialize, CRC/SHA |
 | `test_core` | 163 | đồ thị, engine q4/t2 + SIMD, text tiếng Việt, profiler, apppack |
-| `test_sandbox` | 129 | bảng năng lực, thu hồi, token, hộp cát 3 bậc, **4 chính sách mẫu** |
-| `test_ime` | 246 | Telex/VNI, đúng sequence tone, English allowlist auto-restore, backspace, commit và Escape-style literal restore |
-| `test_daemon` | 103 | JSON-RPC, MCP, vault qua RPC, web offline, os.*, telemetry |
-| `test_tools` | 61 | `yui-trim` tròn vẹn + chống zip-slip, strip ELF, ui::plan, shell |
+| `test_sandbox` | 238 | bảng năng lực, thu hồi, token, hộp cát 3 bậc, **4 chính sách mẫu**, 10 kịch bản sandbox escape, AppSignatureGate, ThirdPartyImeHost |
+| `test_ime` | 7149 | Telex/VNI, đúng sequence tone, English allowlist auto-restore, backspace, commit và DirectComposition NFC common-prefix optimization |
+| `test_daemon` | 1218 | JSON-RPC, 14 công cụ MCP (9 data + 5 OS sys_*), xác nhận người dùng, sanitized audit.log, stress 1.000 lời gọi |
+| `test_tools` | 309 | `yui-trim`, strip ELF, ui::plan, shell song ngữ 25 lệnh + Levenshtein, `yui-update` CLI trọn vẹn |
 | `test_telemetry` | 471 | đọc sysfs pin/nhiệt/RAM, ranh giới 20 %/75 °C, quét toàn miền k/W, `telemetry.read` + MCP |
 | `test_fb` | 1184 | ghi pixel có chặn biên (guard band), font 5×7, tiếng Việt có dấu, clipping, xuất PPM |
-| `test_ed25519` | 78 | SHA-512 FIPS 180-4, Ed25519 RFC 8032, bundle ký/xác minh và chống sửa |
+| `test_ed25519` | 132 | SHA-512 FIPS 180-4, Ed25519 RFC 8032, sign_bundle ngoại tuyến, multi-stream A/B update, deferred reboot, atomic rollback |
 | `test_power` | 47 | tickless, DVFS, giới hạn nhiệt/pin, clock gating |
-| `test_fsstore` | 48 | lõi chỉ đọc, ghi gộp, nested reads, đường dẫn traversal và chặn symlink escape khi đọc |
-| `test_linuxabi` | 38 | phân phối syscall, quyền file, chặn syscall chưa hỗ trợ |
-| `test_redteam` | 83 | guard chống đào coin, egress policy, các ca tấn công tích hợp |
+| `test_fsstore` | 96 | lõi chỉ đọc, ghi gộp, nested reads, chặn symlink escape, CowStore copy-on-write snapshot, RansomwareDetector |
+| `test_linuxabi` | 89 | phân phối syscall, quyền file, mmap file/anon W^X, futex, epoll, i386 nr_from32 |
+| `test_redteam` | 231 | guard chống đào coin, egress policy, IdleGuard thu hồi quyền khi nhàn rỗi, keylogger injection defense |
 | `test_capi` (C11) | 61 | toàn bộ bề mặt `libyui` gọi từ C thuần: `YUI_E_TOO_SMALL`, hộp cát, `yui_telemetry`, `yui_telemetry_advise` |
 
-Tổng trong nhánh hiện tại: **2842 check** (2781 C++17 + 61 C11 ABI). CI có bước
+Tổng trong nhánh hiện tại: **11.518 check** (11.457 C++17 + 61 C11 ABI). CI có bước
 biên dịch adapter qua `make ibus`; bản build Ubuntu 24.04 và phép đo trung bình
 7.16 ms/phím được người dùng xác nhận cho commit `a786a44`, nhưng sandbox này
 không có IBus dev dependencies để tái lập. P1.4 đã đạt DoD; Firefox/LibreOffice
