@@ -522,4 +522,111 @@ YUI_TEST(redteam, idle_guard_6_scenarios) {
   CHECK(!idle_guard.is_throttled(1006));
 }
 
+// ------------------------------------------------------------- P3.13 red-team --
+// Tấn công giả lập: Bộ gõ bên thứ ba (IBus/Fcitx5 plugin giả) cố đánh cắp
+// mật khẩu, ghi lén nhật ký phím và mở socket exfiltration ra C2 server.
+namespace {
+class EvilKeyloggerImeEngine : public sandbox::IThirdPartyImeEngine {
+ public:
+  const std::string& app_id() const override { return id_; }
+  std::string compose_key(uint32_t codepoint) override {
+    ++intercepted_keystrokes_;
+    stolen_keystrokes_ += static_cast<char>(codepoint);
+    return std::string(1, static_cast<char>(codepoint));
+  }
+  void reset() override { stolen_keystrokes_.clear(); }
+  size_t keystrokes_received() const override { return intercepted_keystrokes_; }
+  const std::string& stolen() const { return stolen_keystrokes_; }
+
+ private:
+  std::string id_ = "ime:evil-keylogger-plugin";
+  std::string stolen_keystrokes_;
+  size_t intercepted_keystrokes_ = 0;
+};
+}  // namespace
+
+YUI_TEST(redteam, third_party_ime_keylogger_attack_is_thwarted_and_audited) {
+  EvilKeyloggerImeEngine evil_engine;
+  sandbox::Enforcer enforcer;
+  const int64_t now = 1'700'000'000;
+
+  // IME độc hại bị cô lập trong hộp cát với chính sách chuẩn:
+  // Chỉ quyền input.compose, không net, chỉ fs riêng
+  const sandbox::Policy policy = sandbox::ThirdPartyImeHost::create_default_policy(
+      "ime:evil-keylogger-plugin", "/home/user/.config/evil-ime");
+  sandbox::ThirdPartyImeHost host(&evil_engine, policy, &enforcer);
+
+  // Giai đoạn 1: Người dùng gõ mật khẩu ngân hàng và mã PIN
+  const std::string sensitive_inputs[] = {
+      "P@ssw0rd2026!",  // Password
+      "123456",         // PIN
+      "9876543210",     // OTP / DigitsOnly
+  };
+
+  for (char c : sensitive_inputs[0]) {
+    host.process_keystroke(c, sandbox::InputFieldKind::Password, now);
+  }
+  for (char c : sensitive_inputs[1]) {
+    host.process_keystroke(c, sandbox::InputFieldKind::Pin, now);
+  }
+  for (char c : sensitive_inputs[2]) {
+    host.process_keystroke(c, sandbox::InputFieldKind::DigitsOnly, now);
+  }
+
+  // Kết quả: Mã độc nhận đúng 0 phím từ tất cả các trường nhạy cảm!
+  CHECK_EQ(evil_engine.keystrokes_received(), size_t(0));
+  CHECK(evil_engine.stolen().empty());
+  CHECK_EQ(host.suppressed_keystrokes_count(),
+           sensitive_inputs[0].size() + sensitive_inputs[1].size() + sensitive_inputs[2].size());
+
+  // Giai đoạn 2: Người dùng gõ văn bản thông thường ("Xin chao Yui")
+  const std::string text = "Xin chao";
+  for (char c : text) {
+    host.process_keystroke(c, sandbox::InputFieldKind::NormalText, now);
+  }
+  CHECK_EQ(evil_engine.keystrokes_received(), text.size());
+  CHECK_EQ(evil_engine.stolen(), text);
+
+  // Giai đoạn 3: Mã độc cố mở socket gửi dữ liệu về C2
+  const sandbox::Decision d_c2 = host.check_engine_action(
+      {"net.connect", "c2.evil-stealer.org:443"}, now);
+  CHECK(!d_c2.allowed);
+  CHECK(d_c2.reason.find("chính sách không cấp quyền") != std::string::npos);
+
+  // Giai đoạn 4: Mã độc cố đọc /home để tìm SSH private key
+  const sandbox::Decision d_ssh = host.check_engine_action(
+      {"fs.read", "/home/user/.ssh/id_ed25519"}, now);
+  CHECK(!d_ssh.allowed);
+  CHECK(d_ssh.reason.find("không bao phủ") != std::string::npos);
+
+  // Giai đoạn 5: Mã độc cố ghi nhật ký phím lén vào /home/user/keystrokes.log
+  const sandbox::Decision d_log = host.check_engine_action(
+      {"fs.write", "/home/user/keystrokes.log"}, now);
+  CHECK(!d_log.allowed);
+  CHECK(d_log.reason.find("không bao phủ") != std::string::npos);
+
+  // Giai đoạn 6: Mã độc cố nạp module nhân hoặc leo thang quyền
+  const sandbox::Decision d_mod = host.check_engine_action(
+      {"kernel.module", "/tmp/rootkit.ko"}, now);
+  CHECK(!d_mod.allowed);
+
+  // Toàn bộ các nỗ lực xâm phạm đều được ghi nhận vào nhật ký kiểm toán (audit log)
+  CHECK(enforcer.audit().size() > 0);
+  size_t denied_audits = 0;
+  size_t allowed_audits = 0;
+  for (const auto& a : enforcer.audit()) {
+    CHECK_EQ(a.subject, std::string("ime:evil-keylogger-plugin"));
+    if (!a.decision.allowed) {
+      ++denied_audits;
+    } else {
+      ++allowed_audits;
+    }
+    CHECK(!a.decision.reason.empty());
+  }
+  // 8 phím văn bản thường được phép
+  CHECK_EQ(allowed_audits, text.size());
+  // Mọi phím nhạy cảm và mọi hành động xâm phạm (mạng, đọc trộm ssh, ghi trộm file...) đều bị chặn
+  CHECK(denied_audits >= 29 + 4);
+}
+
 YUI_TEST_MAIN("test_redteam")

@@ -313,3 +313,42 @@ trước máy tính để thu thập dữ liệu nhạy cảm (`include/yui/guar
    - Ứng dụng có cửa sổ đang chạy (nghe nhạc/xem phim) ⇒ không báo nhầm;
    - Thao tác chập chờn trước ngưỡng thời gian rảnh ⇒ không kích hoạt giả mạo,
      chỉ kích hoạt khi thực sự đủ điều kiện rảnh.
+
+### 10.6 An ninh Bộ gõ bên thứ ba (Third-Party IME Sandbox — P3.13)
+
+Bộ gõ (IME) là một trong những thành phần có nguy cơ rò rỉ dữ liệu cao nhất vì
+tiếp nhận mọi phím gõ của người dùng. Để bảo vệ an toàn nhưng vẫn cho phép người
+dùng cài đặt các engine bộ gõ mở rộng từ bên thứ ba (IBus/Fcitx5):
+
+1. **Hộp cát cô lập bắt buộc**: Engine IME bên thứ ba luôn chạy trong hộp cát `isolated`
+   với quyền năng lực tối thiểu duy nhất là `input.compose` (`kRightInputCompose`),
+   chỉ được đọc/ghi trong thư mục cấu hình riêng (`~/.config/<ime-id>`),
+   **tuyệt đối không có quyền mạng** (`net:*` trong deny) và không có quyền `admin`.
+2. **Quy tắc cứng ở tầng OS bảo vệ trường nhạy cảm**: Trình môi giới `ThirdPartyImeHost`
+   tại tầng OS chặn đứng phím gõ trước khi chuyển tới engine ngoài:
+   - Khi con trỏ nằm ở các trường nhạy cảm: **mật khẩu (Password)**, **mã PIN (Pin)**,
+     **số thẻ / OTP (DigitsOnly)**, **địa chỉ web (Url)**, và **thư điện tử (Email)**:
+     Hệ thống chuyển **0** phím tới engine ngoài (engine hoàn toàn không nhận được phím,
+     không có dữ liệu để ghi lén hay học từ điển).
+   - Tự động ghi nhật ký kiểm toán (audit log) tiếng Việt nêu rõ lý do bảo vệ.
+3. **Phòng vệ Red-Team**: Ngăn chặn toàn diện các hành vi của keylogger đội lốt bộ gõ:
+   - Cố mở socket mạng exfiltration ra ngoài C2 ⇒ bị Enforcer chặn ngay lập tức;
+   - Cố đọc trộm khoá bí mật SSH (`~/.ssh/id_ed25519`) hay tài liệu người dùng ⇒ bị chặn;
+   - Cố ghi nhật ký phím lén ra ngoài thư mục riêng ⇒ bị chặn.
+
+### 10.7 Thẩm định chữ ký gói cài đặt và hộp cát mặc định (App Signature Gate — P3.12)
+
+Áp dụng mô hình bảo vệ zero-trust đối với mọi phần mềm cài đặt vào hệ thống:
+
+1. **Gói ký hợp lệ bởi khoá chủ quyền (Sovereign Keyring)**:
+   Xác minh chữ ký số Ed25519 trên chuỗi canonical dựng lại của manifest.
+   Nếu hợp lệ, gói được cài đặt và áp dụng chính sách riêng đã qua thẩm duyệt.
+2. **Gói ký sai hoặc bị can thiệp (Tampered / Invalid Signature)**:
+   Nếu chữ ký không khớp hoặc nội dung manifest bị sửa dù chỉ 1 byte:
+   TỪ CHỐI cài đặt ngay lập tức, ghi rõ lý do cảnh báo can thiệp.
+3. **Gói không có chữ ký hoặc ký bằng khoá lạ (Unsigned / Untrusted Key)**:
+   Bắt buộc người dùng phải xác nhận qua hộp thoại tin cậy. Nếu người dùng đồng ý:
+   Gói bị đưa vào hộp cát `isolated` ở chế độ ngắt mạng hoàn toàn (`net: none`),
+   tước toàn bộ quyền `admin` và `power`, chỉ cho phép đọc/ghi trong thư mục dữ liệu riêng
+   (`/home/user/app-data/<app_id>`).
+
