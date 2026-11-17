@@ -16,19 +16,21 @@ chặn (ghi rõ chặn bởi gì).
 - Cuối mỗi phase có **cổng ra phase (gate)**: không sang phase sau khi gate chưa xanh.
 - Khi làm xong: sửa `[ ]` → `[x]`, thêm một dòng bằng chứng vào §12.
 
-### Trạng thái hiện tại (2026-11-16)
+### Trạng thái hiện tại (2026-11-17)
 
 | Phase | Nội dung | Trạng thái |
 |---|---|---|
-| **P0** | Nền móng: monorepo, hợp đồng cổng chờ, test C++/C11, CI | ✅ xong (670 check lúc đó, nay 2842) |
-| **P1** | Chạy thật trên Linux host: `yuid` service, IBus, stripper, telemetry, OS MCP | 🟡 3/10 xong; P1.6 đang làm |
-| **P2** | Rust framekernel + 3 kiến trúc + QEMU + năng lượng + FS + Linux ABI | 🟡 khung nhân boot thật trên aarch64 + riscv64; x86_64 boot path đã sửa, còn chờ CI/QEMU xác nhận |
-| **P3** | VMM sandbox (Wine/VKD3D, Waydroid-lite) | ⬜ chưa bắt đầu |
-| **P4** | UX & phát hành (compositor, installer, ký số) | ⬜ chưa bắt đầu |
+| **P0** | Nền móng: monorepo, hợp đồng cổng chờ, test C++/C11, CI | ✅ xong (670 check lúc đó, nay **3055** = 2994 C++17 + 61 C11; mình chạy lại 2026-11-17, 0 fail) |
+| **P1** | Chạy thật trên Linux host: `yuid` service, IBus, stripper, telemetry, OS MCP | 🟡 3/12 xong (P1.1, P1.4, P1.5); P1.6 một phần; P1.11–P1.12 mới (Direct mode) |
+| **P2** | Rust framekernel + 3 kiến trúc + QEMU + năng lượng + FS + Linux ABI | 🟡 khung nhân boot thật cả 3 kiến trúc trong QEMU: aarch64 + riscv64 trên CI; **x86_64 boot được theo log Kaggle của bạn (2026-11-17)**, còn chờ đối chiếu job CI `qemu` + UEFI |
+| **P3** | VMM sandbox (Wine/VKD3D, Waydroid-lite) | ⬜ chưa bắt đầu (+4 task đề xuất 2026-11-17: P3.13–P3.16) |
+| **P4** | UX & phát hành (compositor, installer, ký số) | ⬜ chưa bắt đầu (+P4.14 cửa sổ liền mạch) |
 | **P5** | *(dự trữ)* Tích hợp AI vào hệ điều hành | 🔒 chờ lệnh kích hoạt |
-| **P6** | *(đề xuất 2026-11-16, chờ bạn duyệt)* Phần cứng thật, hồ sơ máy siêu yếu, hồ sơ game, hệ tệp tương thích (§14) | ⬜ chưa bắt đầu |
+| **P6** | *(đề xuất 2026-11-16, chờ bạn duyệt)* Phần cứng thật, hồ sơ máy siêu yếu, hồ sơ game, hệ tệp tương thích (§14); +3 mục nghiên cứu 2026-11-17 (shader, Box64/FEX, token chữ ký số) | ⬜ chưa bắt đầu |
 
 > **Cập nhật 2026-11-16 (rà soát kế hoạch, không đổi mã):** đối chiếu kế hoạch với một đợt tư vấn ngoài (Gemini) và với mã của `Adaptive-MoE`/`Y-App`. **Không có task cũ nào bị đổi mã hay đổi trạng thái.** Thêm: P2.14–P2.15, P3.12, P4.9–P4.13, P5.11–P5.16 (P5 vẫn 🔒), Phase **P6** (phần cứng thật) và §13–§14 (đánh giá + backlog). Kế hoạch phía AI nằm ở `Adaptive-MoE/docs/PLAN.md` (mục 6 là cầu nối).
+
+> **Cập nhật 2026-11-17 (nâng cấp kế hoạch sau đợt tư vấn thứ ba + log test của bạn):** đối chiếu với mã thật của `main` (commit `2217b35`, gồm `e885ac9` Direct IBus). **Không có task cũ nào bị đổi mã hay đổi trạng thái; chỉ sửa các con số đã lỗi thời** (số check 2842 → **3055**, số test Rust, mục trạng thái). **Thêm 12 task, tất cả `[ ]` và chờ bạn duyệt:** P0.14; P1.11, P1.12; P3.13–P3.16; P4.14; P5.17 (P5 vẫn 🔒); P6.14–P6.16. **Thêm** §5.2 (thiết kế P3.13–P3.16), §7.7 (chỉ dẫn cho tác tử AI thi công P5) và §13 mục C30–C41 (đánh giá lời tư vấn). Bằng chứng nằm ở §12 (dòng 2026-11-17).
 
 ---
 
@@ -42,6 +44,7 @@ chặn (ghi rõ chặn bởi gì).
 | P0.4 | Không có `unsafe` trong crate nhân | `grep -rn unsafe kernel-cap kernel-services` chỉ ra `deny(unsafe_code)` | verify.sh bước 3 |
 | P0.5 | CI chạy trên mọi push | 5 job: cpp, rust, docs, cross-arch, qemu | GitHub Actions |
 | P0.6 | Tài liệu ↔ mã không lệch | mỗi khẳng định "đã có" trong `ARCHITECTURE.md` trỏ tới tệp/test tồn tại | verify.sh bước 5 |
+| P0.14 | **Tầng 1–2 không dependency ngoài** (giữ nguyên tắc "lõi sạch" bằng máy) *(đề xuất 2026-11-17)* | [ ] | `scripts/verify.py` thêm bước: mọi mục `[dependencies]` của `kernel-cap` và `kernel-services/*` chỉ được là `path = ...` trong repo; `kernel-frame` chỉ được phụ thuộc `yui-cap`. Hiện **đã đúng** (đã kiểm: cả 3 crate có `[dependencies]` rỗng, `kernel-frame` chỉ có `yui-cap`). DoD: thêm tạm `foo = "1"` vào một crate ⇒ `verify.sh` **đỏ** và nêu tên crate; gỡ ra ⇒ xanh. Dependency mới ở Tầng 3 trở lên vẫn phải duyệt giấy phép theo §6.1 mục 5 |
 
 ---
 
@@ -51,8 +54,8 @@ chặn (ghi rõ chặn bởi gì).
 |---|---|---|---|
 | P0.7 | Monorepo sạch: `docs/ kernel-cap/ kernel-services/ vmm-sandbox/ ai-bridge-yuid/ pkg-stripper/ userspace-vi/ tools/ arch/ include/ tests/ scripts/ .github/workflows/` | [x] | `ls -F` |
 | P0.8 | Hợp đồng cổng chờ: JSON-RPC `/run/yuid.sock`, C-ABI `libyui`, MCP `2024-11-05` | [x] | `tests/test_daemon.cpp` (102), `tests/test_capi.c` (36) |
-| P0.9 | Capability: quyền, dẫn xuất, thu hồi, thẻ ký HMAC (Rust + C++ đối chiếu) | [x] | `kernel-cap/src/lib.rs` (6 test), `tests/test_sandbox.cpp` (129) |
-| P0.10 | Chính sách lập lịch LAVD + ZRAM (Rust `no_std`, deny unsafe) | [x] | `kernel-services/yui-{sched,zram}` (9 + 8 test) |
+| P0.9 | Capability: quyền, dẫn xuất, thu hồi, thẻ ký HMAC (Rust + C++ đối chiếu) | [x] | `kernel-cap/src/lib.rs` (6 test lúc đầu; **`kernel-cap` nay 23 test** theo log Kaggle của bạn 2026-11-17), `tests/test_sandbox.cpp` (129) |
+| P0.10 | Chính sách lập lịch LAVD + ZRAM (Rust `no_std`, deny unsafe) | [x] | `kernel-services/yui-{sched,zram}` (9 + 8 test lúc đầu; **nay 13 + 8** theo log Kaggle 2026-11-17) |
 | P0.11 | Vietnamese: Telex/VNI, fold, shell song ngữ, kế hoạch UI | [x] | `tests/test_ime.cpp` (84), `tests/test_tools.cpp` (61) |
 | P0.12 | Smart App Stripper: strip ELF, khử trùng lặp, lọc locale, chống zip-slip | [x] | `pkg-stripper/apppack.cpp`, `tools/trim` |
 | P0.13 | Tài liệu: `ARCHITECTURE.md`, `SECURITY.md`, `PROTOCOL.md`, `FORMAT-YUIP.md`, `BUILD.md`, `PLAN.md` | [x] | `docs/` |
@@ -62,7 +65,7 @@ chặn (ghi rõ chặn bởi gì).
 
 ---
 
-## 3. Phase P1 — Chạy thật trên Linux host (🟡 2/10 xong; 2 việc một phần)
+## 3. Phase P1 — Chạy thật trên Linux host (🟡 3/12 xong; 1 việc một phần)
 
 Mục tiêu chiến lược: **có người dùng thật trước khi có nhân riêng.** YuiVieOS Beta
 chạy như một tầng dịch vụ trên Linux: bộ gõ, stripper, trợ lý, quản lý năng lượng.
@@ -80,6 +83,12 @@ chạy như một tầng dịch vụ trên Linux: bộ gõ, stripper, trợ lý,
 | P1.8 | MCP dùng thật với một client | [ ] | Agent ngoài gọi `graph_upsert` → `graph_query` thấy dữ liệu; log chứng minh |
 | P1.9 | Audit log người đọc được | [ ] | `audit.log` có ≥ 3 mục thật; mỗi mục có lý do tiếng Việt và **không** chứa bí mật |
 | P1.10 | Đo nền: thời gian khởi động dịch vụ, RAM của `yuid` | [ ] | `yuid` < 8 MB RSS khi rảnh; khởi động < 200 ms (đo bằng `systemd-analyze` + `/proc/pid/status`) |
+| P1.11 | **Direct mode: nghiệm thu trên ứng dụng thật + gõ nhanh** *(đề xuất 2026-11-17)* | [ ] | Bằng chứng hiện có (commit `e885ac9`): `test_ime` **459** check, `YUI_IME_MODE=direct` được nhận, chuỗi mẫu `dd`/`Tieengs`/`window` ra đúng (`đ`, `Tiếng`, `window` giữ nguyên) với 34 BackSpace — nhưng đó là **chạy bằng script Python điều khiển engine**, chưa phải ứng dụng thật. DoD: trên Ubuntu 24.04, ≥ 6 ứng dụng (Firefox, Chromium/Chrome, LibreOffice Writer, gedit hoặc Kate, gnome-terminal, một app Electron) × 2 chế độ (Preedit, Direct) × 3 tốc độ gõ (chậm, ~8, ~15 phím/giây) gõ cùng đoạn 200 từ tiếng Việt: bảng **số ký tự sai/thừa/thiếu** (số, không ghi "ổn"). Kiểm thêm: nhấp chuột giữa từ (reset đúng, **không xoá** nội dung đã commit), chọn vùng rồi gõ, dán, và **Ctrl+Z sau Direct** (mỗi phím có thành 1 bước hoàn tác không?). Kết luận ghi thành danh sách "ứng dụng khuyên dùng Direct" (0 lỗi ở 15 phím/giây) và "dùng Preedit". **Preedit vẫn là mặc định** |
+| P1.12 | **Direct mode: chỉ gửi phần sai khác (giữ tiền tố chung)** *(đề xuất 2026-11-17)* | [ ] | Hiện `DirectComposition::replace_rendered` xoá **cả từ đang gõ** rồi commit lại cả từ ⇒ số BackSpace tăng theo bình phương độ dài từ. Tái tính tay trên đúng chuỗi trong log của bạn: **34 BackSpace** (khớp số bạn báo) so với **5** nếu giữ tiền tố chung (`Tiên`→`Tiêng` không xoá gì; chỉ `Tiêng`→`Tiếng` xoá 3). DoD: `replace_rendered` tính tiền tố chung theo điểm mã (chuỗi NFC) và chỉ phát `backspaces` = phần đuôi cũ + commit phần đuôi mới; **không đổi** cấu trúc `ReplayEdit` nên adapter IBus giữ nguyên. Test: ≥ 200 chuỗi gõ ngẫu nhiên (Telex + VNI, có `ươ`, `đ`, hoa/thường) mô phỏng áp `ReplayEdit` lên một bộ đệm ⇒ văn bản cuối **y hệt** bản thay cả từ ở mọi bước, tổng BackSpace **không lớn hơn**, và chuỗi mẫu trên ra đúng 5. `test_ime` cũ vẫn xanh (459 + mới). Giảm số sự kiện còn giảm cơ hội **chạy đua** giữa BackSpace (chuyển tiếp bất đồng bộ) và commit ở ứng dụng chậm |
+
+**Lưu ý P1 (2026-11-17):**
+- *Direct mode (P1.4, `e885ac9`)* là tuỳ chọn thêm, không thay đổi nghiệm thu P1.4. Nó cần IBus surrounding text để biết caret đổi chỗ; ứng dụng không gửi thông tin này thì từ đang gõ có thể không được reset khi bạn nhấp chuột. Đây là lý do P1.11 phải đo trên ứng dụng thật chứ không chỉ script.
+- *P1.6 (Smart Stripper)*: kết quả "≥ 35 %" mới đo trên cây thư mục mẫu (5 tệp → 187 B, nhật ký 2026-11-15), **chưa** trên một app Electron thật. Quy tắc mới: Stripper chạy **cục bộ trên bản người dùng đã có**; **không phân phối lại** bản đã gọt của phần mềm có giấy phép cấm sửa/chia lại (nhiều phần mềm Việt phổ biến là đóng nguồn). Kho ứng dụng một chạm chỉ gồm gói mà giấy phép cho phép.
 
 **Gate P1:** một người không phải lập trình viên gõ tiếng Việt được bằng YuiVieOS
 trên máy thật, và một app được gọt chạy bình thường. Ghi lại ảnh + số đo.
@@ -92,7 +101,7 @@ trên máy thật, và một app được gọt chạy bình thường. Ghi lạ
 |---|---|---|---|
 | P2.0 | Workspace Rust `kernel-cap` + `kernel-services/*`, `deny(unsafe_code)` | [x] | `cargo test --workspace` (CI); `grep unsafe` rỗng; `kernel-frame` **ngoài** workspace để `--workspace` vẫn chỉ chạy trên host |
 | P2.1 | `yui-frame`: khung duy nhất chứa `unsafe` (asm, MMU, ngắt, MMIO) | [x] | `kernel-frame/` là crate **duy nhất** có `unsafe`: 29 khối, tất cả nằm trong 7 tệp có tên + lý do ở `scripts/verify.py::FRAME_UNSAFE_FILES` (tệp khác có `unsafe` ⇒ `verify.sh` đỏ); mọi crate khác vẫn `deny(unsafe_code)`. Boot thật trong QEMU trên aarch64 + riscv64 — job CI `qemu` xanh |
-| P2.2 | `yui-boot` + nhân tối thiểu, x86_64 (BIOS Legacy + UEFI) | [~] | **Đã sửa đường boot QEMU x86_64**: header Multiboot2 (24 byte + end tag, checksum `-(0xE85250D6+24)`) đặt cạnh Multiboot1; cầu 32→64 mở rộng edi/esi thành `kmain_x86(u32,u32)` phân biệt magic `0x2BADB002`/`0x36D76289`; `parse_multiboot2` đọc **little-endian** (đã sửa lỗi be32); `build-kernel.sh` xuất `.elf64` + `objcopy -O elf32-i386` ra `.elf` cho QEMU `-kernel`; job CI `qemu` **bắt buộc** cả 3 kiến trúc. **Còn đợi:** CI `kernel`+`qemu` xanh xác nhận boot thật (sandbox dev không có QEMU — không claim thay). UEFI chưa làm |
+| P2.2 | `yui-boot` + nhân tối thiểu, x86_64 (BIOS Legacy + UEFI) | [~] | **Đã sửa đường boot QEMU x86_64**: header Multiboot2 (24 byte + end tag, checksum `-(0xE85250D6+24)`) đặt cạnh Multiboot1; cầu 32→64 mở rộng edi/esi thành `kmain_x86(u32,u32)` phân biệt magic `0x2BADB002`/`0x36D76289`; `parse_multiboot2` đọc **little-endian** (đã sửa lỗi be32); `build-kernel.sh` xuất `.elf64` + `objcopy -O elf32-i386` ra `.elf` cho QEMU `-kernel`; job CI `qemu` **bắt buộc** cả 3 kiến trúc. **Còn đợi:** CI `kernel`+`qemu` xanh xác nhận boot thật (sandbox dev không có QEMU — không claim thay). UEFI chưa làm. **Bằng chứng mới (2026-11-17, log Kaggle của bạn; Claude không chạy QEMU):** kernel x86_64 build **42.272 byte** (ELF32) + ELF64, QEMU x86_64 *boot được, profiler chạy, bảng năng lực sống*; aarch64 113.112 byte và riscv64 79.176 byte cũng boot. Vì DoD ghi "CI `kernel`+`qemu` xanh", task **giữ `[~]`** cho tới khi bạn xác nhận job CI x86_64 xanh (và UEFI chưa làm) |
 | P2.3 | ARM64 + RISC-V 64 ở mức "ready" | [x] | Cả hai **boot thật trong QEMU** (job CI `qemu` xanh): in `yui: ready`, `Phan loai`, `Tang 1`. riscv64 đọc RAM từ device tree; aarch64 nhận `x0 = 0` (QEMU không truyền DTB cho ELF `-kernel`) nên tự quét FDT (`find_fdt`) trong cửa sổ `0x4000_0000±512 KiB`, không có thì in `RAM: 0 MiB — khong doc duoc`, **không bịa số** |
 | P2.4 | Sovereign Keyring + Ed25519 clean-room cho `.bundle` | [x] | **Xong, có bằng chứng test**: Ed25519 clean-room (`kernel-services/ed25519.cpp` ~600 dòng + `kernel-cap/src/ed25519.rs`) khớp **vector RFC 8032 §7.1** (TEST 1/2/3/SHA(abc)/1024 — pub + sig khớp từng hex) và SHA-512 khớp FIPS 180-4: `tests/test_ed25519.cpp` **78 check xanh**; kho khoá + `.bundle` ký/xác minh ngoại tuyến + 5 kịch bản sửa 1 byte đều từ chối + cài khe A/B + quay lui (`bundle.*`); bản Rust `keyring.rs`/`bundle.rs` có test song song. **Còn thiếu (ngoài phạm vi bản này):** cài bundle thật trong QEMU |
 | P2.5 | Năng lượng: full tickless + DVFS mỗi nhân + clock gating | [~] | **Chính sách đã cài + test 47 check** (`include/yui/power.hpp`, `kernel-services/power.cpp`, `tests/test_power.cpp`): tickless 0 wakeup định kỳ khi rảnh, kế hoạch ngủ theo deadline (halt/deep/suspend), bảng OPP 3 loại máy, DVFS theo tải/nhiệt/pin/trần tiến trình, clock-gating GPU/NPU khi quá nhiệt 75 °C, bóp xung per-task. Nguồn dữ liệu = `telemetry.cpp`. **Còn thiếu:** đo trên nhân thật (0 wakeup/10 s, ≥ 20 % W gói) — không có phần cứng trong sandbox, không claim thay |
@@ -133,6 +142,10 @@ một kiến trúc.
 | P3.10 | Lớp 3 — egress zero-trust, anti-DNS-tunneling, secretless broker | [ ] | Cập nhật schema phiên bản và `policies/*.json`: east-west giữa sandbox mặc định deny; cấm DNS trực tiếp, chỉ resolver/broker nội bộ và tên khớp allowlist chính xác mới được phân giải; từ chối label > 63 octet, tên > 253 octet, tên sai chuẩn hoặc entropy vượt ngưỡng đã hiệu chuẩn; broker giữ bí mật ở vòng ngoài, gắn xác thực sau khi duyệt request và không đưa token/secret vào guest, môi trường hay audit. Cập nhật `docs/SECURITY.md` và `vmm-sandbox/README.md` khi triển khai |
 | P3.11 | Red-team tích hợp cho ba lớp | [ ] | Mở rộng `tests/test_redteam.cpp`: anomaly Lớp 1 → revoke O(1) + freeze/huỷ Lớp 2; token con bị vô hiệu, token ngoài họ còn hiệu lực; chặn peer-to-peer, DNS tunnel/nhãn dài/entropy cao, tên ngoài allowlist và egress ngoài policy; xác nhận request hợp lệ qua broker; audit cả allow/deny. Toàn bộ ca thoát ly bị chặn, không có regression với tên hợp lệ |
 | P3.12 | Chính sách mặc định cho ứng dụng **không có chữ ký hợp lệ** *(đề xuất)* | [ ] | Ứng dụng/gói không ký (hoặc ký bằng khoá không tin cậy) ⇒ vào hộp cát `net: none`, không thẻ `admin`/`power`, người dùng phải xác nhận cài. 3 test: không ký ⇒ không mạng; ký sai ⇒ từ chối; ký đúng ⇒ theo policy riêng. Dựa trên Ed25519 của P2.4 |
+| P3.13 | **Bộ gõ/IME bên thứ ba** chạy trong hộp cát *(đề xuất 2026-11-17)* | [ ] | Engine IBus/Fcitx5 **không phải của YuiVieOS** chạy trong hộp cát `isolated`: quyền duy nhất `input.compose` (nhận phím, trả chuỗi); không `net`; không `fs` ngoài thư mục dữ liệu riêng. Quy tắc cứng nằm ở **lớp YuiVieOS**, không do engine quyết: trường mật khẩu/PIN/số/URL/email **không bao giờ** chuyển phím tới engine ngoài. Red-team: engine giả mở socket, đọc `/home`, ghi log phím ⇒ bị chặn + audit; gõ vào trường mật khẩu ⇒ engine ngoài nhận **0** phím. Lý do ưu tiên: bộ gõ thấy **mọi** phím, mức nhạy cảm cao hơn trình duyệt. Bộ gõ riêng của YuiVieOS (mã trong repo, có test) không bắt buộc vào hộp cát |
+| P3.14 | **Snapshot micro-VM + "warm pool"** (khôi phục nhanh thay vì khởi động nguội) *(đề xuất)* | [ ] | **Đo, không cam kết "dưới 1 giây".** Trên micro-VM mẫu, 20 lần mỗi cách: khởi động nguội vs khôi phục snapshot (p50/p95), RAM chiếm, và so **hai cách lưu**: trong RAM nén (ZRAM) vs tệp snapshot trên đĩa nạp lười bằng mmap. Bắt buộc: (1) sau khôi phục phải **gieo lại RNG + cấp ID/MAC mới** (test: hai bản khôi phục từ một snapshot cho hai chuỗi ngẫu nhiên và ID khác nhau); (2) snapshot gắn băm, **sửa 1 byte ⇒ từ chối khôi phục**; (3) không chia sẻ snapshot giữa ứng dụng/người dùng khác nhau (snapshot chứa bộ nhớ, tức cả bí mật); (4) tắt warm pool ở lớp `may-yeu`/`sieu-yeu` (nối P6.2). **Go (đề xuất):** khôi phục p95 ≤ 25 % thời gian khởi động nguội; không thì `[-]`. Phụ thuộc P3.1 |
+| P3.15 | **Policy gợi ý khi đóng gói** (`policies/<app>.proposed.json`) *(đề xuất)* | [ ] | `yui-trim` phát tệp gợi ý gồm 3 nguồn có nhãn riêng: (a) đích **khai báo** trong manifest, (b) tên miền **quét từ chuỗi** trong bộ cài (độ tin cậy thấp: tên ghép lúc chạy, nén hay mã hoá sẽ lọt), (c) đích **ghi nhận khi chạy thử** trong hộp cát với egress "chặn và ghi". Tệp **không bao giờ tự bật**: người dùng duyệt từng đích (kèm lý do tiếng Việt). Test: gói mẫu có 3 tên miền chuỗi tĩnh + 1 tên ghép lúc chạy ⇒ 3 có nguồn (b), 1 chỉ có nguồn (c); tệp sinh ra parse được theo schema và **deny vẫn thắng allow**. Danh sách chặn quảng cáo công cộng chỉ dùng cho app có mức `net` rộng, và chỉ sau khi đọc giấy phép của danh sách đó |
+| P3.16 | **Chế độ Tương thích theo ứng dụng + thẻ phiên (session capability) + sinkhole DNS** *(đề xuất; theo yêu cầu của bạn 2026-11-17)* | [ ] | (a) Bật/tắt riêng từng app (giao diện + một lệnh `yui-shell`, tên 2 ngôn ngữ chốt khi làm); **mặc định TẮT**; app khác không bị ảnh hưởng. (b) **Sinkhole ở tầng DNS**: tên bị chặn ⇒ NXDOMAIN hoặc địa chỉ không định tuyến + từ chối kết nối ngay (test: app nhận lỗi < 100 ms (đề xuất) thay vì treo). **Không MITM TLS**; "HTTP 200 rỗng" chỉ dùng cho HTTP thuần hoặc qua broker P3.10. (c) Khi app đang hoạt động bị chặn ≥ N lần trong M giây (host tự quan sát `EgressFilter`, **không cần app báo lỗi**), hiện **một** thông báo qua đường tin cậy P4.13: "Ứng dụng này cần kết nối tới `<tên miền>`. Mở quyền tạm thời **15 phút** (mặc định)?" kèm **ô nhập thời gian tuỳ chọn** và lựa chọn "đến khi đóng ứng dụng"; trần thời gian (đề xuất 8 giờ). (d) Thẻ là con của thẻ phiên; **thu hồi O(1)** theo epoch (P3.8) khi hết hạn, khi đóng app hoặc khi bạn thu hồi. (e) Chống làm phiền: tối đa 1 lần hỏi/app/5 phút; từ chối 3 lần ⇒ ngừng hỏi (có thể mở lại trong Cài đặt); audit mọi hỏi/cấp/từ chối/thu hồi. (f) Test: hết hạn ⇒ egress chặn lại; đóng app ⇒ thẻ vô hiệu, thẻ họ khác còn nguyên; app giả gửi click tổng hợp để tự duyệt ⇒ bị bỏ qua. Phạm vi cấp là **đúng tên miền đã hiển thị**, không phải "cả mạng quảng cáo". Phụ thuộc P3.8, P3.10, P4.13 |
 
 ### 5.1 Trình tự hardening Tầng 3 — chỉ lập kế hoạch, chưa triển khai
 
@@ -142,6 +155,14 @@ phiên micro-VM, lọc DNS theo entropy hay secretless broker. Thứ tự bắt 
 P3.7 → P3.8 → P3.9 → P3.10 → P3.11; không nhảy thẳng tới tuyên bố hoàn tất.
 
 **Gate P3:** 10/10 kịch bản thoát hộp cát thất bại; game chạy có số fps; Android app chạy. Với hardening mới, chỉ qua gate khi P3.7–P3.11 có bằng chứng riêng, toàn bộ kịch bản red-team đạt và containment Lớp 2 được kiểm trên micro-VM thật (P3.1), không chỉ bằng mock.
+
+### 5.2 Ghi chú thiết kế P3.13–P3.16 (2026-11-17)
+
+- **Vì sao P3.15 không phải "danh sách chặn quảng cáo":** `EgressFilter` của bạn đã **chặn mặc định và chỉ cho đích trong allowlist** (deny thắng allow). Với app trong hộp cát `isolated`/`microvm`, tên miền quảng cáo vốn đã bị chặn; thứ còn thiếu là **allowlist ban đầu** cho app thật sự cần mạng. Vì vậy P3.15 đề xuất allowlist (có người duyệt), không phải denylist.
+- **Vì sao không trả "HTTP 200 rỗng" cho HTTPS (P3.16b):** giả được một phản hồi HTTPS hợp lệ đòi hỏi chen vào TLS (MITM) bằng chứng chỉ giả; việc đó phá chính mô hình zero-trust và nhiều app ghim chứng chỉ sẽ vẫn lỗi. Sinkhole DNS + từ chối nhanh cho kết quả "app thất bại gọn" mà không phải chen vào mã hoá. Ứng dụng dùng DoH tự mang theo đã bị chặn bởi P3.10 (cấm DNS trực tiếp).
+- **Vì sao hộp thoại cấp quyền phải qua đường tin cậy (P4.13):** nếu app vẽ được hộp thoại giống hệt thì tự "bấm đồng ý" cho mình; đó là lý do P3.16 phụ thuộc P4.13 và có test click tổng hợp.
+- **Snapshot (P3.14):** con số "khôi phục trong vài chục mili giây" của Firecracker/crosvm (theo hiểu biết công khai, **chưa tra lại hôm nay**) là của micro-VM nhỏ; guest chạy Wine + game lớn hơn nhiều và phải nạp trang theo nhu cầu. Rủi ro thường bị bỏ qua: hai VM khôi phục từ **cùng snapshot** dùng chung trạng thái entropy nếu không gieo lại.
+- **Bộ gõ (P3.13):** hộp cát cho IME ngoài **không thay được** quy tắc "trường mật khẩu không bao giờ tới engine ngoài"; hai thứ cần cả hai.
 
 ---
 
@@ -162,6 +183,7 @@ P3.7 → P3.8 → P3.9 → P3.10 → P3.11; không nhảy thẳng tới tuyên b
 | P4.11 | Build tái lập được + SBOM *(đề xuất)* | [ ] | Hai lần build từ cùng commit (cố định `SOURCE_DATE_EPOCH`, đường dẫn, thứ tự) cho **sha256 trùng** của `libyui.a`, `yuid`, ảnh nhân; sinh danh mục thành phần + giấy phép tự động (hiện không dependency ngoài ⇒ danh mục phải nói đúng điều đó) |
 | P4.12 | `yui-shell` lai POSIX (pipe, chuyển hướng, nền, `kill`) *(đề xuất)* | [ ] | Hai chế độ trong cùng shell: lệnh Việt–Anh nội bộ (hiện **15 lệnh**, mục tiêu P4.4 là 25) và chuyển tiếp lệnh POSIX. **Trên Linux host (P1)** chạy được ngay bằng `posix_spawn` trong hộp cát; **trên nhân riêng** phải chờ P2.7 (`fork`/`execve` hiện trả `EPERM`). DoD: 20 kịch bản (ống dẫn, chuyển hướng `>` `>>` `<`, chạy nền `&`, `jobs`, `kill`, biến môi trường, trích dẫn); dòng không nhận ra **không tự chạy**; mọi lệnh đi qua cùng `Daemon` như GUI/MCP |
 | P4.13 | Đường xác nhận **tin cậy** (chống giả click / clickjacking) *(đề xuất)* | [ ] | Hộp thoại xác nhận của `sys_*` do compositor/nhân vẽ; chỉ nhận sự kiện từ **thiết bị vật lý** do nhân gắn thẻ; ứng dụng không chen được bằng sự kiện tổng hợp. Test: ứng dụng giả gửi click tổng hợp ⇒ bị bỏ qua + audit. **Không** dùng nhịp gõ/sinh trắc hành vi làm căn cứ xác nhận (độ tin cậy thấp, là dữ liệu nhạy cảm, và không chặn được kẻ chen vào đường nhập) |
+| P4.14 | **Cửa sổ liền mạch** (cửa sổ app trong micro-VM hiện trên compositor chủ) *(đề xuất 2026-11-17)* | [ ] | Cửa sổ app Windows/Android hiện như cửa sổ thường. **Tiêu đề + viền do chủ vẽ**, kèm nhãn mức tin cậy + tên app lấy từ manifest — guest **không** đổi được (cách Qubes OS làm; WSLg/crosvm dùng đường truyền khác, theo hiểu biết công khai). Test: guest cố vẽ hộp thoại giả giống hộp thoại hệ thống, che nhãn, đọc điểm ảnh cửa sổ khác, đọc clipboard khi không có thao tác ⇒ **thất bại + audit**; clipboard và kéo-thả đi qua môi giới có xác nhận. Đo **độ trễ nhập (ms) và fps** so với cửa sổ gốc, ghi vào §12 (không cam kết "như bản gốc"). Phụ thuộc P3.1, P4.1, P4.13; đường truyền (virtio-gpu hay proxy Wayland) chọn **sau khi đo**; thành phần ngoài phải duyệt theo §6.1 mục 5. Gộp mục Wayland của §14.2 |
 
 ### 6.1 Runbook P4.3 — thực hiện theo thứ tự (CHƯA TRIỂN KHAI)
 
@@ -232,6 +254,7 @@ phải đạt đủ xác thực, xác nhận, audit, ngân sách tài nguyên v�
 - [ ] `ai-bridge-yuid` giữ nguyên tên phương thức và mã lỗi C-ABI (không phá hợp đồng)
 - [ ] Có mạng tới GitHub **hoặc** có sẵn bản sao hai repo AI trên máy
 - [ ] *(đề xuất 2026-11-16)* Phía `Adaptive-MoE`: P9-15 (cổng gắn: `libyui_engine` + `yui_features`) và P9-8 (fuzz bộ đọc `.yui`) đã xong; khuyến nghị thêm P9-4 và P9-7
+- [ ] *(đề xuất 2026-11-17)* Nếu làm P5.17: `Adaptive-MoE` P9-18 (công cụ web của agent ở chế độ `broker`, không tự mở socket) đã xong; phía OS cần P3.16 (thẻ phiên) và P4.13 (đường xác nhận tin cậy)
 
 ### 7.2 Runbook (thực hiện tuần tự, có kiểm sau mỗi bước)
 
@@ -245,7 +268,7 @@ phải đạt đủ xác thực, xác nhận, audit, ngân sách tài nguyên v�
 | P5.6 | Nạp `.yui v3` | `mmap` tệp qua `yuid`, kiểm `fs.read` đúng đường dẫn; test: tệp 1 GB mở < 50 ms, RAM tăng < 5 MB |
 | P5.7 | Bật dịch vụ nền `yuid` | `systemctl enable --now yuid`, socket `0600`, `yuid --info` liệt kê engine thật |
 | P5.8 | Bật điều khiển tiếng Việt qua MCP | test 5 công cụ với câu tiếng Việt có dấu **và** không dấu; mỗi hành động có audit + xác nhận |
-| P5.9 | Kiểm hồi quy toàn bộ | `make test` 2842 check xanh (2781 C++17 + 61 C11); thêm test tích hợp: 1 câu lệnh tiếng Việt → hành động OS thật |
+| P5.9 | Kiểm hồi quy toàn bộ | `make test` **≥ 3055** check xanh (2994 C++17 + 61 C11; con số tăng khi có test mới, **không được giảm**); thêm test tích hợp: 1 câu lệnh tiếng Việt → hành động OS thật |
 | P5.10 | Ghi lại số đo | thời gian phản hồi, RAM tăng thêm, k/W thực tế ở 3 chế độ máy |
 
 ### 7.3 Điều kiện thoát (rollback)
@@ -287,6 +310,20 @@ Mình đã clone `Adaptive-MoE` và `Y-App` **chỉ trong môi trường làm vi
 | P5.14 | Lớp bọc `EngineBackend` (`yui/engine.hpp` ↔ `libyui_engine.so`) | [ ] | Cùng hợp đồng JSON-RPC với `--reference-engine`; `test_daemon` 102 check xanh với **cả hai** backend |
 | P5.15 | Chọn hướng đồ thị/vault thật | [ ] | Quyết một trong hai (kb_core C++ của Adaptive-MoE, hoặc giữ bản tham chiếu OS); test round-trip `export`/`import` |
 | P5.16 | Dịch tiếng Việt → lệnh POSIX **có xác nhận** (nối P4.12) | [ ] | Bộ ≥ 100 câu; lệnh nguy hiểm (`rm -rf /`, `dd`, `mkfs`, `chmod -R 777 /`…) bị chặn **100%** trong test; mọi lệnh qua xác nhận + hộp cát; công bố **độ chính xác đo được**, không cam kết 100% |
+| P5.17 | Công cụ web của tác tử đi qua **thẻ phiên** (không tự mở mạng) *(đề xuất 2026-11-17)* | [ ] | `web_search`/`fetch` của `yui_agent.py` ở chế độ `broker` (`Adaptive-MoE` P9-18) gửi qua `yuid`; **chưa có thẻ ⇒ trả câu "chưa được cấp quyền mạng"** (model không bị câm); có thẻ phiên (P3.16, mặc định 15 phút) ⇒ chạy; thu hồi ⇒ lần gọi kế bị từ chối. Red-team: nội dung web chứa `<tool>sys_power …</tool>` không nâng được quyền; audit ghi mọi lần cấp. Giữ nguyên §7.4: không tự động bật mạng |
+
+### 7.7 Chỉ dẫn cho tác tử AI thi công P5 (đề xuất 2026-11-17; **vẫn 🔒**)
+
+Dành cho một tác tử AI (hoặc một cuộc chat mới) được giao làm P5. Đọc hết mục này trước khi làm bất cứ thứ gì.
+
+1. **Kích hoạt:** chỉ khi người dùng nhắn đúng câu **"Tích hợp AI vào hệ điều hành"**. Không có câu đó ⇒ dừng và nói P5 đang khoá. Không tự suy ra từ lời nhắc gián tiếp.
+2. **Đọc trước:** §7 của file này, `Adaptive-MoE/docs/PLAN.md` mục 6, `Adaptive-MoE/docs/OS_BRIDGE.md` (khi P9-15 xong), `include/yui/yui.h`, `ai-bridge-yuid/` và `reference/README.md`.
+3. **Bước 0 — kiểm điều kiện vào (§7.1):** `make test` (phải **≥ 3055 check, 0 fail**), `make check`, `scripts/verify.sh`, `git log -n 5` + `git status` trên **nhánh hiện hành** (không chuyển nhánh). Dán lệnh + đầu ra vào §12. Điều kiện nào đỏ ⇒ **dừng và báo**, không làm tiếp.
+4. **Làm đúng thứ tự P5.1 → P5.10, mỗi bước một lượt:** chạy lệnh trong cột "Lệnh / tiêu chí", dán lệnh + đầu ra vào §12, **rồi mới** đánh `[x]`. Không gộp bước, không đánh `[x]` khi chưa có bằng chứng (nguyên tắc đầu file này).
+5. **Được sửa:** `ai-bridge-yuid/` (thêm lớp `EngineBackend`, P5.14), `vendor/`, `tests/` (chỉ **thêm** test mới), `docs/`. **Cấm:** `kernel-cap/`, `kernel-services/`, `kernel-frame/`; `daemon/` (đúng `reference/README.md`); đổi tên/chữ ký hàm đã có trong `include/yui/yui.h`; nhúng trọng số mô hình; cấp quyền `admin`; bật mạng cho `web_search`; đặt công cụ `sys_*` trong Python.
+6. **Dừng và hỏi người dùng khi:** một test cũ đỏ; cần khoá/quyền/mạng chưa được cấp; một bước đòi sửa vùng cấm; số đo xấu hơn mốc (ví dụ `yuid` > 8 MB RSS khi rảnh, P1.10); engine báo thiếu `yui_features` (P9-15 chưa xong).
+7. **Mẫu báo cáo sau mỗi bước (5 dòng):** *Việc đã làm · Lệnh đã chạy · Kết quả (số thật) · Chưa kiểm được · Rủi ro còn lại.* Không viết "đã chạy" khi chưa chạy; môi trường soạn thảo thường **không có `cargo`/`qemu`**, phần Rust/QEMU xác nhận bằng CI.
+8. **Hoàn tác:** `yuid --reference-engine` đưa hệ thống về trạng thái trước P5 trong một lệnh (§7.3).
 
 ---
 
@@ -296,7 +333,7 @@ File: `.github/workflows/ci.yml`. Sáu job, chạy song song trên mọi push/PR
 
 | Job | Chạy gì | Pass khi |
 |---|---|---|
-| `cpp` | `make -j`, `make ibus`, `make test`, `make check`, `make install` vào prefix tạm, link `libyui.a` từ chương trình C ngoài cây | **2842** check (2781 C++17 + 61 C11); IBus build/install; chương trình C in `abi=1` |
+| `cpp` | `make -j`, `make ibus`, `make test`, `make check`, `make install` vào prefix tạm, link `libyui.a` từ chương trình C ngoài cây | **3055** check (2994 C++17 + 61 C11); IBus build/install; chương trình C in `abi=1` |
 | `rust` | `cargo test --workspace`, `cargo build --release`; fmt/clippy advisory | 0 test fail |
 | `docs` | `scripts/verify.sh`: policy JSON parse, không CRLF, liên kết README, không `unsafe` trong crate nhân | tất cả xanh |
 | `cross-arch` | `cargo check --workspace --target {aarch64-unknown-linux-gnu, riscv64gc-unknown-linux-gnu}` | cả hai target type-check |
@@ -344,6 +381,9 @@ in lý do.
 | Mở rộng phạm vi (game, dựng 3D, doanh nghiệp, RTOS) khi chưa có phần cứng thật | Trượt cả P2 lẫn gate v1.0; một người không theo nổi | §14 chia **làm ngay / nghiên cứu / không làm**; mỗi hạng mục nghiên cứu có Go/No-Go đo được trước khi viết mã |
 | Khoá ký phát hành nằm trong CI | Chiếm CI = ký được bản cập nhật giả cho mọi máy | Khoá ký **ngoại tuyến** (P4.7, P4.10); CI chỉ build/test/sinh manifest chưa ký |
 | Tin số liệu "trước/sau" từ tư vấn ngoài | Hứa hẹn FPS/điện năng không đo được | Mọi con số hiệu năng phải do `P6.1`/`P6.11` đo; không ghi vào README khi chưa có |
+| Snapshot/warm pool nhân bản trạng thái (cùng entropy, cùng ID, chứa bí mật) | Hai VM đoán được số ngẫu nhiên của nhau; lộ dữ liệu giữa ứng dụng | P3.14: gieo lại RNG + ID mới, băm snapshot, không chia sẻ giữa ứng dụng/người dùng |
+| Bộ gõ bên thứ ba thấy mọi phím, kể cả mật khẩu | Keylogger hợp pháp hoá dưới dạng bộ gõ | P3.13: hộp cát + trường mật khẩu không bao giờ tới engine ngoài |
+| Hộp thoại cấp quyền bị app giả mạo hoặc bị làm phiền liên tục | Người dùng bấm đồng ý theo phản xạ, hoặc app tự duyệt | P4.13 (đường tin cậy) + giới hạn tần suất hỏi + phạm vi đúng tên miền (P3.16) |
 
 ---
 
@@ -375,10 +415,16 @@ P1.4 đã hoàn tất theo tiêu chí latency trung bình; kiểm thử GUI Fire
 1. **P2.8 FS bất biến** — nhánh hiện tại siết đọc `/core` bằng `openat` + `O_NOFOLLOW`
    để chặn symlink escape; kế tiếp cần kiểm thử flush/power-loss trên QEMU với disk image.
 2. **P2.2 x86_64 boot** — đường Multiboot/ELF đã sửa; cần build + boot QEMU xanh để xác nhận,
-   rồi mới tính UEFI. Môi trường này hiện không có `cargo`/`qemu-system-*`.
+   rồi mới tính UEFI. Môi trường này hiện không có `cargo`/`qemu-system-*`. *(2026-11-17: log Kaggle của bạn cho thấy x86_64 đã boot trong QEMU; còn đợi job CI + UEFI.)*
 3. **P2.5 tickless/DVFS** — nối policy hiện có vào timer/driver nhân và đo wakeup/năng lượng.
 4. **P2.7 Linux ABI** — bổ sung mmap/futex/epoll và kiểm bằng userspace thật.
 5. **P2.9 ZRAM** — tích hợp vào kernel, đo nén 200 MB trong QEMU với RAM 512 MB.
+
+*Việc nhỏ, độc lập, làm xen kẽ được (đề xuất 2026-11-17; không chặn P2):*
+
+6. **P1.12** (Direct mode chỉ gửi phần sai khác; mã nhỏ, test bằng `make test`, mình làm được ở máy mình) rồi **P1.11** (bạn đo trên ứng dụng thật).
+7. **P0.14** (cổng "Tầng 1–2 không dependency ngoài"; vài chục dòng trong `verify.py`).
+8. Chưa làm P3.13–P3.16, P4.14, P6.14–P6.16 cho tới khi bạn duyệt; P3 cần P3.1 (`yui-vmmd`) nên chưa thể bắt đầu sớm.
 
 Mỗi mục giữ trạng thái `[~]`/`[ ]` cho tới khi bằng chứng đúng DoD xuất hiện; ghi kết quả
 vào nhật ký dưới đây. Không nhận boot/đo phần cứng thay cho CI hoặc thiết bị thật.
@@ -410,6 +456,8 @@ vào nhật ký dưới đây. Không nhận boot/đo phần cứng thay cho CI 
 | 2026-11-16 | P1.4 follow-up (`[~]`) | Sửa IBus `set_content_type` ABI về `guint`; xác nhận tone cần phím lệnh: `cac` giữ nguyên, `cacs` → `các`, `tats` → `tát`, `nats` → `nát`, `mawms` → `mắm`, `cawps` → `cắp`; thêm regression tests. `Composition` tự giữ allowlist `word/window/software/user/linux` và Escape trả nguyên chuỗi phím. `make test`: **2831 check / 0 fail**, `test_ime` **246**. Người dùng báo build/register Ubuntu 24.04 và D-Bus avg 7.8 ms, min 7.15, max 10.25; chưa tái lập tại đây; Firefox/LibreOffice chưa có kết quả, latency max vượt ngưỡng nếu strict worst-case. P1.4 vẫn `[~]` |
 | 2026-11-16 | P1.4 (`[x]`) — nghiệm thu Ubuntu 24.04 | Người dùng xác nhận commit `a786a44`: `make ibus` build không cần patch tay; `make check` **2831 checks**, `test_ime` **246**, English auto-restore, Escape-restore, `các`/`mắm` hoạt động; D-Bus avg **7.16 ms/phím**, min **6.18**, max ~12 do nhịp nghỉ `pump` của script Python. Latency DoD được xác nhận là trung bình < 10 ms. GUI Firefox/LibreOffice chuyển sang Desktop QA follow-up, không chặn P1.4 |
 | 2026-11-16 | P2.8 (`[~]`) — chống symlink escape khi đọc /core | `ImmutablePartition::read` mở root dir rồi đi path từng phần tử với `openat` + `O_NOFOLLOW`, chỉ cho regular files, kiểm cùng inode giữa `fstatat`/`openat`, không ghi output một phần khi lỗi; thêm tests symlink file/dir và nested regular path. `test_fsstore` **48 checks**; `make test` **2842**, `make check` xanh. Còn tích hợp kernel và power-loss QEMU test 20 lần; sandbox không có `cargo`/`qemu-system-*` |
+| 2026-11-17 | Nghiệm thu log Kaggle của bạn (commit `e885ac9`, bản `main`) | **Số liệu bạn báo:** C++/C11 xanh toàn bộ; `test_crypto` 28, `test_codec_json` 102, `test_core` 163, `test_sandbox` 129, `test_ime` 246 (lần chạy đầu) rồi **459** (lần sau, bản Direct), `test_daemon` 103, `test_tools` 61, `test_telemetry` 471, `test_fb` 1184, `test_power` 47; Rust `kernel-cap` **23**, `yui-sched` **13**, `yui-zram` **8** (0 fail); kernel build x86_64 42.272 B (ELF32) + ELF64, aarch64 113.112 B, riscv64 79.176 B; QEMU **cả 3 kiến trúc boot**, profiler chạy, bảng năng lực sống; tổng thời gian notebook 302,9 s. Direct mode: `YUI_IME_MODE=direct` được nhận; chuỗi commit `d, đ, T, Ti, Tie, Tiê, Tiên, Tiêng, Tiếng, w … window`, tổng **34** BackSpace. **Mình đối chiếu:** (1) chạy lại `make test` + `make check` trên bản sao `main`: 2994 C++17 + 61 C11 = **3055 check, 0 fail**, số theo từng file **trùng log của bạn**; (2) tính tay số BackSpace của chuỗi trên: replay cả từ = **34** (khớp log), giữ tiền tố chung = **5** ⇒ P1.12. **Mình không làm được:** `cargo`, QEMU, `make ibus` (thiếu công cụ/`libibus-1.0-dev`), và đọc trạng thái CI trên GitHub (API hết hạn mức) ⇒ Rust/kernel/QEMU ở đây là **số do bạn báo**, chưa có đối chiếu CI từ phía mình. Kết luận: P1.4 giữ `[x]`; P2.2 giữ `[~]`; P2.3 giữ `[x]` |
+| 2026-11-17 | Nâng cấp kế hoạch (không đổi mã) | Đánh giá đợt tư vấn thứ ba của Gemini (§13 C30–C41). Thêm 12 task (xem đầu file), §5.2, §7.7. Sửa số lỗi thời: 2842 → 3055 (P0, P5.9, §8), số test `kernel-cap`/`yui-sched`, bảng trạng thái P1 (3/12; tiêu đề §3 lệch 2/10). `[x]`/`[~]` của task cũ **không đổi**. **Đã chạy `scripts/verify.sh`** trên bản sao repo có tệp mới: *tất cả kiểm tra tĩnh đạt* (liên kết nội bộ, đường dẫn trích trong docs, không CRLF). Không chạy lại `make test` vì chỉ sửa tài liệu |
 
 
 ---
@@ -449,6 +497,18 @@ Cách đọc: `đã kiểm` = mình đối chiếu với mã/kế hoạch trong 
 | C27 | Xác thực bằng **nhịp gõ/hành vi sinh trắc** chống giả click | Độ tin cậy thấp, là dữ liệu nhạy cảm, và không chặn được kẻ chen vào đường nhập. Cách đúng chống giả click là **đường nhập tin cậy** | **P4.13**; không dùng sinh trắc hành vi |
 | C28 | Bộ lập lịch bằng model ML nhỏ qua `sched_ext` | Không dựa vào `sched_ext` (nhân riêng); chưa có dữ liệu vết; đặt suy luận trong đường lập lịch tăng độ trễ | **Hoãn** |
 | C29 | RISC-V RVV; gọi `libyui.a` từ nhân Rust | `engine.hpp` của OS đã dò `rvv`, nhưng `yui.cpp` chưa có kernel RVV (chạy mã thuần). Nhân `no_std` không link được engine (cần libc, luồng, mmap) | RVV: backlog, đo bằng QEMU `-cpu rv64,v=true`; engine chỉ ở user-space (§7.5 mục 7) |
+| C30 | **Dịch `.exe`/`.apk` sang định dạng gốc YuiVieOS** (AOT/JIT) để mượt | Gemini kết luận đúng: dịch mã CPU chỉ cần khi **khác kiến trúc** (Rosetta 2 dịch lúc cài/mở lần đầu, Box64/FEX trên ARM64/RISC-V — theo hiểu biết công khai); nút thắt thật là **API/ABI** (Win32, DirectX, Android Runtime ⇒ Wine/Proton/Waydroid) và **driver GPU + anti-cheat** (không "dịch" được; xem C14). **Nhưng Gemini nói như đã có, mà thực tế chưa:** (1) Linux ABI P2.7 mới là bảng syscall (`[~]`, 38 check), **chưa** chạy busybox/coreutils/python3; (2) "mở tệp 1 GB < 50 ms bằng mmap" là **DoD của P5.6 (đang khoá)**, chưa đo; (3) "Stripper giảm ≥ 35 % Electron" là DoD của P1.6 `[~]`, mới đo trên cây mẫu | **Không làm** `[-]`. Không viết 3 điều trên vào README như thành tựu |
+| C31 | **"Lõi sạch tuyệt đối — ứng dụng nhốt hộp cát"**: Tầng 0–2 không thư viện ngoài; phần mềm văn phòng/trình duyệt chạy `isolated`/`microvm` | Đúng hướng và **đã là nguyên tắc** (`ARCHITECTURE.md`, §7.4). Đã kiểm: `kernel-cap`, `kernel-services/*` có `[dependencies]` rỗng, `kernel-frame` chỉ có `yui-cap`. Điểm yếu: nguyên tắc chưa được **máy** giữ | **P0.14** (cổng CI). Phần chạy app trong hộp cát = P3.2/P3.4 |
+| C32 | Chạy **bộ gõ mở rộng, trình duyệt, office, driver USB token chữ ký số** trong hộp cát | Tách ba việc: (a) trình duyệt/office: đúng, thuộc P3 + P4.14; (b) **bộ gõ bên thứ ba là rủi ro cao nhất** (thấy mọi phím, kể cả mật khẩu): Gemini chỉ nói "cho vào hộp cát", chưa nói **trường mật khẩu không được tới engine ngoài**; (c) USB token: driver hãng thường đóng nguồn và có bước nhập PIN, **chưa xác minh** có chạy được dưới Wine/micro-VM | (b) **P3.13**; (c) **P6.16** (nghiên cứu, thiết kế proxy ký chứ không đưa cả token vào guest) |
+| C33 | **Kho ứng dụng một chạm** bằng Smart App Stripper cho app Việt phổ biến | Cơ chế có (P0.12, P1.6). Hai điều Gemini bỏ sót: (1) gọt rồi **phân phối lại** phần mềm có bản quyền có thể vi phạm giấy phép; (2) hiệu quả mới đo trên cây mẫu | Giữ ý tưởng; **quy tắc phân phối** ghi ở đầu §3 (Lưu ý P1); Store ở backlog sau P4.7 |
+| C34 | **Warm pool / Snapshot Resume** micro-VM (kiểu Firecracker/crosvm) để mở app "vài chục ms" | Khả thi. "Vài chục ms" (theo hiểu biết công khai, **chưa tra lại hôm nay**) là của micro-VM nhỏ, không phải guest chạy Wine + game. Gemini đề xuất giữ snapshot trong ZRAM: trên máy 2 GB tốn RAM đúng chỗ khan hiếm; snapshot trên đĩa nạp lười bằng mmap thường hợp hơn ⇒ **đo cả hai**. Bỏ sót: nhân bản trạng thái (cùng entropy/ID) và snapshot chứa bí mật | **P3.14** (có Go/No-Go đo) |
+| C35 | **Cửa sổ liền mạch** (Wayland, kiểu Qubes/WSLg) | Đúng hướng; Wayland vốn ở backlog. Điểm bị bỏ qua: nếu guest vẽ được tiêu đề/hộp thoại thì **giả được giao diện hệ thống**. Qubes vẽ viền màu + nhãn bằng phía chủ | **P4.14** (phụ thuộc P4.13) |
+| C36 | **Biên dịch trước shader** lúc rảnh (cắm sạc) cho DXVK/Vulkan | Có thật (Steam làm tương tự). Giới hạn: chỉ có nghĩa với đường DXVK/VKD3D; cache gắn với GPU + driver nên mất khi đổi; cache lộ "người dùng chơi gì" ⇒ lưu theo hộp cát. Cần GPU trong guest, mà P3.2/P6.11 chưa có | **P6.14** (nghiên cứu, Go/No-Go) |
+| C37 | **Box64/FEX-Emu** cho ARM64/RISC-V | Đúng phạm vi (chỉ khi khác kiến trúc; x86_64 → không cần). Là mã ngoài ⇒ chạy trong hộp cát; giấy phép phải đọc, không đoán | **P6.15** (nghiên cứu, không vào v1.0) |
+| C38 | **Tự sinh policy chặn** từ chuỗi tên miền quảng cáo/theo dõi trong bộ cài | Ý hay nhưng **ngược chiều với thiết kế**: `EgressFilter` đã chặn mặc định + allowlist, nên danh sách chặn không cần cho app trong hộp cát; cái thiếu là **allowlist ban đầu**. Quét chuỗi tĩnh bỏ sót tên ghép lúc chạy/nén/mã hoá | **P3.15** (đề xuất allowlist có người duyệt, thêm nguồn "chạy thử và ghi nhận") |
+| C39 | **Cơ chế 2: trả HTTP 200 rỗng** cho tên miền quảng cáo thay vì ngắt mạng | **Không làm được với HTTPS nếu không chen vào TLS (MITM)**, mà MITM phá zero-trust và app ghim chứng chỉ vẫn lỗi. Bản đúng: sinkhole DNS + từ chối nhanh để app thất bại gọn; 200 rỗng chỉ với HTTP thuần/qua broker | Sửa trong **P3.16b**, ghi lý do ở §5.2 |
+| C40 | **Cơ chế 1 + 3: Chế độ Tương thích theo app + thẻ phiên** (mặc định 15 phút, có ô nhập thời gian; tắt app thì thu hồi) | Hợp `CapTable` và thu hồi O(1) theo epoch (P3.8). Yêu cầu của bạn được giữ nguyên (15 phút mặc định + ô nhập). Thêm các chốt: phạm vi đúng tên miền hiển thị, trần thời gian, giới hạn tần suất hỏi, hộp thoại qua đường tin cậy P4.13, kích hoạt từ sự kiện chặn quan sát ở host (không cần app "báo lỗi") | **P3.16** |
+| C41 | Công cụ web của tác tử AI cũng phải xin quyền mạng | Hệ quả tự nhiên của C40 và §7.4 "không tự bật mạng cho web_search" | **P5.17** ↔ `Adaptive-MoE` P9-18 |
 
 ---
 
@@ -473,12 +533,15 @@ Nguyên tắc: **đo trước, viết sau; virtio trước, phần cứng thật
 | P6.11 | **Hồ sơ Game** (chỉ phần khả thi): đóng băng tiến trình nền không thiết yếu, ưu tiên cửa sổ đang chơi, ZRAM cho nền, DVFS | [ ] | Đo **trước/sau** trên cùng máy: p99 frame time (MangoHud/ftrace) giảm ≥ 10% (ngưỡng đề xuất), nếu không đạt ghi `[-]` và nêu số. Phụ thuộc P2.5, P3.2 |
 | P6.12 | *(nghiên cứu)* Nâng độ phân giải thần kinh + chèn khung ở compositor | [ ] | Chỉ sau P4.1. So 2 cấu hình cùng máy (native 720p và 540p + nâng): FPS, độ trễ nhập (ms), SSIM so với ảnh tham chiếu. **Go (đề xuất)** khi FPS tăng ≥ 30%, độ trễ nhập tăng ≤ 10 ms, SSIM ≥ 0,95; không thì `[-]` |
 | P6.13 | Hệ tệp tương thích: FAT32/exFAT đọc-ghi; ext4, NTFS **đọc-chỉ**; là driver **userspace trong hộp cát** | [ ] | Ảnh đĩa mẫu ⇒ đọc đúng băm 100 tệp; ảnh hỏng/đột biến (fuzz) không làm sập nhân. APFS: không làm |
+| P6.14 | *(nghiên cứu)* **Shader pre-cache** lúc rảnh cho game DXVK/VKD3D | [ ] | Chỉ sau P3.2 + P6.11. Cùng máy, cùng game: số lần **khựng** (khung > 50 ms) và p99 frame time trong 5 phút đầu — (A) không cache, (B) cache dựng sẵn khi rảnh + cắm sạc (theo telemetry). **Go (đề xuất):** số khựng giảm ≥ 50 % và chi phí dựng ≤ 15 phút/game; không thì `[-]`. Cache theo từng hộp cát, xoá khi gỡ app, mất hiệu lực khi đổi GPU/driver |
+| P6.15 | *(nghiên cứu)* **Lớp dịch nhị phân** (Box64/FEX-Emu) cho ARM64 + RISC-V | [ ] | Chỉ khi đã có user-space chạy trên aarch64/riscv64 (sau P2.7 + P3). **Không bật trên x86_64.** Đọc giấy phép trước (không đoán). Chạy trong hộp cát `isolated`. Đo: một app x86_64 mẫu (không phải game) — tốc độ so với chạy gốc trên x86_64 cùng cỡ máy nếu có, và lần mở thứ 2 so lần 1 (cache AOT). Không vào v1.0 |
+| P6.16 | *(nghiên cứu)* **Token chữ ký số USB** qua proxy PKCS#11 | [ ] | Bước 1: **bạn cho biết hãng/mẫu token cần dùng** (mình không đoán) và lấy trình điều khiển/PKCS#11 từ trang hãng. Bước 2: thử trong micro-VM có USB passthrough (P3.6). Bước 3 (thiết kế): quyền `sign` nằm ở **host**; mỗi lần ký hiện hộp thoại tin cậy (P4.13) nêu **tên tài liệu + băm**; PIN nhập qua UI của host nếu token cho phép, nếu không thì ghi rõ rủi ro. **Go:** ký được 1 tài liệu thật bằng token thật, và guest bị xâm nhập **không ký được** khi không có xác nhận. "Driver token chạy được dưới Wine" hiện **chưa xác minh** |
 
 ### 14.2 Backlog (chưa lập task; chỉ ghi để không mất)
 
 | Ý | Ghi chú |
 |---|---|
-| Wayland protocol + Vulkan thật | Sau P4.1; là cầu để chạy phần mềm Linux có sẵn |
+| Wayland protocol + Vulkan thật | Sau P4.1; là cầu để chạy phần mềm Linux có sẵn. Phần "cửa sổ app trong micro-VM" đã thành **P4.14** |
 | IOMMU (VT-d/AMD-Vi), GPU passthrough | Cùng P3.6 |
 | NUMA | Chỉ máy nhiều ổ cắm |
 | Mật mã hậu lượng tử | Xem C6 |
