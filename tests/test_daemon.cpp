@@ -1,5 +1,8 @@
 // Integration tests for the yuid service surface: JSON-RPC dispatch, the Unix
 // socket transport, the MCP handshake and the C ABI header contract.
+#include <algorithm>
+#include <chrono>
+#include <fstream>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -294,6 +297,310 @@ YUI_TEST(daemon, c_abi_contract) {
   const char* policy = R"({"app":"x","tier":"isolated","capabilities":["fs.read","fs:/etc/yui:ro"]})";
   CHECK_EQ(yui_sandbox_check(policy, "fs.read", "/etc/yui/p.yaml", reason, sizeof(reason)), 1);
   CHECK_EQ(yui_sandbox_check(policy, "fs.write", "/etc/yui/p.yaml", reason, sizeof(reason)), 0);
+}
+
+YUI_TEST(daemon, mcp_os_tools_catalog_and_schemas) {
+  auto d = make_daemon();
+  const auto tools = d.mcp_tools_list();
+  CHECK(tools["tools"].size() >= 14);
+
+  std::map<std::string, const json::Value*> tool_map;
+  for (const auto& t : tools["tools"].arr()) {
+    tool_map[t["name"].as_string()] = &t;
+  }
+
+  const char* kOsTools[] = {"sys_power", "sys_scheduler", "sys_app_stripper", "sys_proc",
+                            "sys_search_vault"};
+  for (const char* name : kOsTools) {
+    CHECK_MSG(tool_map.count(name) > 0, std::string("phải có công cụ ") + name);
+    const auto& t = *tool_map[name];
+    CHECK_EQ(t["inputSchema"]["type"].as_string(), "object");
+    CHECK(t["inputSchema"]["properties"].is_object());
+    CHECK(t["inputSchema"]["required"].size() >= 1);
+    CHECK(!t["description"].as_string().empty());
+  }
+}
+
+YUI_TEST(daemon, mcp_os_tools_fail_closed_without_token) {
+  auto d = make_daemon(true);
+  const size_t audit_before = d.enforcer().audit().size();
+
+  service::RpcError err;
+  // sys_power without token
+  auto r1 = d.mcp_tool_call(json::parse(R"({"name":"sys_power","arguments":{"mode":"powersave","confirm":true}})").value, err);
+  CHECK(r1["isError"].as_bool());
+  CHECK(r1["content"].arr()[0]["text"].as_string().find("thiếu thẻ năng lực") != std::string::npos);
+
+  // sys_scheduler without token
+  auto r2 = d.mcp_tool_call(json::parse(R"({"name":"sys_scheduler","arguments":{"profile":"batch","confirm":true}})").value, err);
+  CHECK(r2["isError"].as_bool());
+  CHECK(r2["content"].arr()[0]["text"].as_string().find("thiếu thẻ năng lực") != std::string::npos);
+
+  // sys_app_stripper without token
+  auto r3 = d.mcp_tool_call(json::parse(R"({"name":"sys_app_stripper","arguments":{"app_path":"/tmp/app"}})").value, err);
+  CHECK(r3["isError"].as_bool());
+  CHECK(r3["content"].arr()[0]["text"].as_string().find("thiếu thẻ năng lực") != std::string::npos);
+
+  // sys_proc without token
+  auto r4 = d.mcp_tool_call(json::parse(R"({"name":"sys_proc","arguments":{"action":"list"}})").value, err);
+  CHECK(r4["isError"].as_bool());
+  CHECK(r4["content"].arr()[0]["text"].as_string().find("thiếu thẻ năng lực") != std::string::npos);
+
+  // sys_search_vault without token
+  auto r5 = d.mcp_tool_call(json::parse(R"({"name":"sys_search_vault","arguments":{"q":"secret","confirm":true}})").value, err);
+  CHECK(r5["isError"].as_bool());
+  CHECK(r5["content"].arr()[0]["text"].as_string().find("thiếu thẻ năng lực") != std::string::npos);
+
+  // Verify all 5 unauthenticated calls were audited as DENIED
+  const auto& audit = d.enforcer().audit();
+  CHECK_EQ(audit.size() - audit_before, size_t(5));
+  for (size_t i = audit_before; i < audit.size(); ++i) {
+    CHECK(!audit[i].decision.allowed);
+  }
+}
+
+YUI_TEST(daemon, mcp_os_tools_fail_closed_invalid_or_unauthorized_token) {
+  auto d = make_daemon(true);
+  const int64_t now = std::time(nullptr);
+
+  // 1. Corrupted bearer token
+  service::RpcError err;
+  auto r_corrupt = d.mcp_tool_call(json::parse(R"({"name":"sys_power","arguments":{"mode":"powersave","confirm":true,"token":"invalid.bearer.data"}})") .value, err);
+  CHECK(r_corrupt["isError"].as_bool());
+
+  // 2. Expired token
+  sandbox::Token tok_expired = d.authority().issue("app:test", sandbox::kRightPower, {}, now - 7200, 60);
+  std::string bearer_expired = d.authority().bearer(tok_expired);
+  auto r_exp = d.mcp_tool_call(json::parse(R"({"name":"sys_power","arguments":{"mode":"powersave","confirm":true,"token":")" + bearer_expired + R"("}})") .value, err);
+  CHECK(r_exp["isError"].as_bool());
+  CHECK(r_exp["content"].arr()[0]["text"].as_string().find("hết hạn") != std::string::npos ||
+        r_exp["content"].arr()[0]["text"].as_string().find("expired") != std::string::npos);
+
+  // 3. Wrong capability: token has only kRightFsRead, calling sys_power
+  sandbox::Token tok_fs = d.authority().issue("app:test", sandbox::kRightFsRead, {"/home"}, now, 3600);
+  std::string bearer_fs = d.authority().bearer(tok_fs);
+  auto r_wrong_cap = d.mcp_tool_call(json::parse(R"({"name":"sys_power","arguments":{"mode":"powersave","confirm":true,"token":")" + bearer_fs + R"("}})") .value, err);
+  CHECK(r_wrong_cap["isError"].as_bool());
+  CHECK(r_wrong_cap["content"].arr()[0]["text"].as_string().find("không có quyền 'power'") != std::string::npos);
+
+  // Token has power, calling sys_proc (needs admin)
+  sandbox::Token tok_power = d.authority().issue("app:test", sandbox::kRightPower, {}, now, 3600);
+  std::string bearer_power = d.authority().bearer(tok_power);
+  auto r_need_admin = d.mcp_tool_call(json::parse(R"({"name":"sys_proc","arguments":{"action":"list","token":")" + bearer_power + R"("}})") .value, err);
+  CHECK(r_need_admin["isError"].as_bool());
+  CHECK(r_need_admin["content"].arr()[0]["text"].as_string().find("không có quyền 'admin'") != std::string::npos);
+
+  // Token has power, calling sys_search_vault (needs vault)
+  auto r_need_vault = d.mcp_tool_call(json::parse(R"({"name":"sys_search_vault","arguments":{"q":"test","confirm":true,"token":")" + bearer_power + R"("}})") .value, err);
+  CHECK(r_need_vault["isError"].as_bool());
+  CHECK(r_need_vault["content"].arr()[0]["text"].as_string().find("không có quyền 'vault'") != std::string::npos);
+
+  // 4. Scope mismatch for sys_app_stripper
+  sandbox::Token tok_scoped = d.authority().issue("app:test", sandbox::kRightFsRead | sandbox::kRightFsWrite, {"/home/user/AppA"}, now, 3600);
+  std::string bearer_scoped = d.authority().bearer(tok_scoped);
+  auto r_bad_scope = d.mcp_tool_call(json::parse(R"({"name":"sys_app_stripper","arguments":{"app_path":"/etc/shadow","action":"preview","token":")" + bearer_scoped + R"("}})") .value, err);
+  CHECK(r_bad_scope["isError"].as_bool());
+  CHECK(r_bad_scope["content"].arr()[0]["text"].as_string().find("không bao phủ") != std::string::npos);
+}
+
+YUI_TEST(daemon, mcp_os_tools_user_confirmation_gate) {
+  auto d = make_daemon(true);
+  const int64_t now = std::time(nullptr);
+  sandbox::Token tok_full = d.authority().issue(
+      "agent:assistant",
+      sandbox::kRightPower | sandbox::kRightAdmin | sandbox::kRightFsRead |
+          sandbox::kRightFsWrite | sandbox::kRightVault,
+      {"*"}, now, 3600);
+  std::string bearer = d.authority().bearer(tok_full);
+
+  service::RpcError err;
+
+  // 1. sys_power without confirm
+  auto r1 = d.mcp_tool_call(json::parse(R"({"name":"sys_power","arguments":{"mode":"powersave","charge_limit":80,"token":")" + bearer + R"("}})") .value, err);
+  CHECK(!r1["isError"].as_bool());
+  auto p1 = json::parse(r1["content"].arr()[0]["text"].as_string());
+  CHECK(p1.ok);
+  CHECK(p1.value["needs_confirmation"].as_bool());
+  CHECK(!p1.value["message"].as_string().empty());
+  // Side effect check: power_mode must remain default
+  CHECK_EQ(d.power_mode(), "can_bang");
+  CHECK_EQ(d.charge_limit(), 100);
+
+  // 2. sys_scheduler without confirm
+  auto r2 = d.mcp_tool_call(json::parse(R"({"name":"sys_scheduler","arguments":{"profile":"realtime","slice_us":2000,"token":")" + bearer + R"("}})") .value, err);
+  CHECK(!r2["isError"].as_bool());
+  auto p2 = json::parse(r2["content"].arr()[0]["text"].as_string());
+  CHECK(p2.ok);
+  CHECK(p2.value["needs_confirmation"].as_bool());
+  CHECK_EQ(d.sched_profile(), "interactive");
+  CHECK_EQ(d.sched_slice_us(), 5000);
+
+  // 3. sys_app_stripper apply without confirm
+  auto r3 = d.mcp_tool_call(json::parse(R"({"name":"sys_app_stripper","arguments":{"app_path":"/tmp/test_app","action":"apply","token":")" + bearer + R"("}})") .value, err);
+  CHECK(!r3["isError"].as_bool());
+  auto p3 = json::parse(r3["content"].arr()[0]["text"].as_string());
+  CHECK(p3.ok);
+  CHECK(p3.value["needs_confirmation"].as_bool());
+
+  // 4. sys_proc kill without confirm
+  auto r4 = d.mcp_tool_call(json::parse(R"({"name":"sys_proc","arguments":{"action":"kill","pid":999,"token":")" + bearer + R"("}})") .value, err);
+  CHECK(!r4["isError"].as_bool());
+  auto p4 = json::parse(r4["content"].arr()[0]["text"].as_string());
+  CHECK(p4.ok);
+  CHECK(p4.value["needs_confirmation"].as_bool());
+
+  // 5. sys_search_vault without confirm
+  auto r5 = d.mcp_tool_call(json::parse(R"({"name":"sys_search_vault","arguments":{"q":"bi-mat","token":")" + bearer + R"("}})") .value, err);
+  CHECK(!r5["isError"].as_bool());
+  auto p5 = json::parse(r5["content"].arr()[0]["text"].as_string());
+  CHECK(p5.ok);
+  CHECK(p5.value["needs_confirmation"].as_bool());
+  // No sensitive plaintext matches exposed without confirmation!
+  CHECK(!p5.value.has("matches"));
+}
+
+YUI_TEST(daemon, mcp_os_tools_confirmed_execution_and_audit) {
+  auto d = make_daemon(true);
+  const int64_t now = std::time(nullptr);
+  sandbox::Token tok_full = d.authority().issue(
+      "agent:assistant",
+      sandbox::kRightPower | sandbox::kRightAdmin | sandbox::kRightFsRead |
+          sandbox::kRightFsWrite | sandbox::kRightVault,
+      {"*"}, now, 3600);
+  std::string bearer = d.authority().bearer(tok_full);
+
+  service::RpcError err;
+
+  // 1. sys_power with confirm = true
+  auto r1 = d.mcp_tool_call(json::parse(R"({"name":"sys_power","arguments":{"mode":"powersave","charge_limit":80,"confirm":true,"token":")" + bearer + R"("}})") .value, err);
+  CHECK(!r1["isError"].as_bool());
+  auto p1 = json::parse(r1["content"].arr()[0]["text"].as_string());
+  CHECK(p1.ok);
+  CHECK(p1.value["applied"].as_bool());
+  CHECK_EQ(d.power_mode(), "powersave");
+  CHECK_EQ(d.charge_limit(), 80);
+
+  // 2. sys_scheduler with confirm = true
+  auto r2 = d.mcp_tool_call(json::parse(R"({"name":"sys_scheduler","arguments":{"profile":"batch","slice_us":10000,"confirm":true,"token":")" + bearer + R"("}})") .value, err);
+  CHECK(!r2["isError"].as_bool());
+  auto p2 = json::parse(r2["content"].arr()[0]["text"].as_string());
+  CHECK(p2.ok);
+  CHECK(p2.value["applied"].as_bool());
+  CHECK_EQ(d.sched_profile(), "batch");
+  CHECK_EQ(d.sched_slice_us(), 10000);
+
+  // 3. sys_app_stripper preview (read-only, does not require confirm)
+  auto r3_prev = d.mcp_tool_call(json::parse(R"({"name":"sys_app_stripper","arguments":{"app_path":"/tmp/app","action":"preview","token":")" + bearer + R"("}})") .value, err);
+  CHECK(!r3_prev["isError"].as_bool());
+  auto p3_prev = json::parse(r3_prev["content"].arr()[0]["text"].as_string());
+  CHECK(p3_prev.ok);
+  CHECK(p3_prev.value["preview"].as_bool());
+
+  // sys_app_stripper apply with confirm = true
+  auto r3 = d.mcp_tool_call(json::parse(R"({"name":"sys_app_stripper","arguments":{"app_path":"/tmp/app","action":"apply","confirm":true,"token":")" + bearer + R"("}})") .value, err);
+  CHECK(!r3["isError"].as_bool());
+  auto p3 = json::parse(r3["content"].arr()[0]["text"].as_string());
+  CHECK(p3.ok);
+  CHECK(p3.value["applied"].as_bool());
+
+  // 4. sys_proc list (read-only, does not require confirm)
+  auto r4_list = d.mcp_tool_call(json::parse(R"({"name":"sys_proc","arguments":{"action":"list","token":")" + bearer + R"("}})") .value, err);
+  CHECK(!r4_list["isError"].as_bool());
+  auto p4_list = json::parse(r4_list["content"].arr()[0]["text"].as_string());
+  CHECK(p4_list.ok);
+  CHECK(p4_list.value.has("processes"));
+
+  // sys_proc kill with confirm = true
+  auto r4 = d.mcp_tool_call(json::parse(R"({"name":"sys_proc","arguments":{"action":"kill","pid":555,"confirm":true,"token":")" + bearer + R"("}})") .value, err);
+  CHECK(!r4["isError"].as_bool());
+  auto p4 = json::parse(r4["content"].arr()[0]["text"].as_string());
+  CHECK(p4.ok);
+  CHECK(p4.value["applied"].as_bool());
+
+  // 5. sys_search_vault with confirm = true
+  auto r5 = d.mcp_tool_call(json::parse(R"({"name":"sys_search_vault","arguments":{"q":"ssh-key","confirm":true,"token":")" + bearer + R"("}})") .value, err);
+  CHECK(!r5["isError"].as_bool());
+  auto p5 = json::parse(r5["content"].arr()[0]["text"].as_string());
+  CHECK(p5.ok);
+  CHECK_EQ(p5.value["vault_status"].as_string(), "unlocked");
+  CHECK_EQ(p5.value["query"].as_string(), "ssh-key");
+
+  // Verify that successful actions were recorded in enforcer audit log
+  bool saw_power_allow = false, saw_sched_allow = false, saw_vault_allow = false;
+  for (const auto& a : d.enforcer().audit()) {
+    if (a.action.kind == "sys_power" && a.decision.allowed) saw_power_allow = true;
+    if (a.action.kind == "sys_scheduler" && a.decision.allowed) saw_sched_allow = true;
+    if (a.action.kind == "sys_search_vault" && a.decision.allowed) saw_vault_allow = true;
+  }
+  CHECK(saw_power_allow && saw_sched_allow && saw_vault_allow);
+}
+
+YUI_TEST(daemon, mcp_os_tools_audit_log_file_no_secrets_leaked) {
+  service::Options opts;
+  opts.state_dir = "/tmp/yui-audit-test-" + std::to_string(std::time(nullptr));
+  opts.vault_password = "super-secret-vault-master-password-12345";
+  service::Daemon d(opts);
+
+  const int64_t now = std::time(nullptr);
+  sandbox::Token tok = d.authority().issue(
+      "agent:assistant",
+      sandbox::kRightPower | sandbox::kRightAdmin | sandbox::kRightVault,
+      {"*"}, now, 3600);
+  std::string bearer = d.authority().bearer(tok);
+
+  service::RpcError err;
+  d.mcp_tool_call(json::parse(R"({"name":"sys_power","arguments":{"mode":"powersave","confirm":true,"token":")" + bearer + R"("}})") .value, err);
+  d.mcp_tool_call(json::parse(R"({"name":"sys_search_vault","arguments":{"q":"my-sensitive-query","confirm":true,"token":")" + bearer + R"("}})") .value, err);
+
+  std::ifstream f(opts.state_dir + "/audit.log");
+  CHECK(f.is_open());
+  std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  f.close();
+
+  // Audit log must have content
+  CHECK(!content.empty());
+  CHECK(content.find("sys_power") != std::string::npos);
+  CHECK(content.find("sys_search_vault") != std::string::npos);
+  CHECK(content.find("ALLOWED") != std::string::npos);
+
+  // Critical security requirement (P4.3): Audit log must NOT contain secrets, passwords or full bearer tokens
+  CHECK(content.find("super-secret-vault-master-password-12345") == std::string::npos);
+  CHECK(content.find(bearer) == std::string::npos);
+}
+
+YUI_TEST(daemon, mcp_os_tools_stress_and_latency) {
+  auto d = make_daemon(true);
+  const int64_t now = std::time(nullptr);
+  sandbox::Token tok = d.authority().issue(
+      "stress:runner",
+      sandbox::kRightPower | sandbox::kRightAdmin | sandbox::kRightFsRead |
+          sandbox::kRightFsWrite | sandbox::kRightVault,
+      {"*"}, now, 7200);
+  std::string bearer = d.authority().bearer(tok);
+
+  const int kIterations = 1000;
+  std::vector<double> latencies_us;
+  latencies_us.reserve(kIterations);
+
+  const auto start = std::chrono::steady_clock::now();
+  for (int i = 0; i < kIterations; ++i) {
+    service::RpcError err;
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto r = d.mcp_tool_call(
+        json::parse(R"({"name":"sys_power","arguments":{"mode":"powersave","confirm":true,"token":")" + bearer + R"("}})") .value, err);
+    const auto t1 = std::chrono::steady_clock::now();
+    latencies_us.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
+    CHECK(!r["isError"].as_bool());
+  }
+  const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+
+  // Sort to find p95 latency
+  std::sort(latencies_us.begin(), latencies_us.end());
+  const double p95_us = latencies_us[size_t(double(kIterations) * 0.95)];
+
+  // Clean-room & performance verification: 1,000 calls must run in under 200 ms total; p95 latency < 500 µs (0.5 ms)
+  CHECK_MSG(elapsed < 200.0, "1000 lời gọi phải hoàn tất < 200 ms");
+  CHECK_MSG(p95_us < 500.0, "p95 latency phải < 500 µs");
 }
 
 YUI_TEST_MAIN("test_daemon")

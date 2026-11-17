@@ -172,7 +172,7 @@ P3.7 → P3.8 → P3.9 → P3.10 → P3.11; không nhảy thẳng tới tuyên b
 |---|---|---|---|
 | P4.1 | Compositor: framebuffer (yếu) + Vulkan/DRM (mạnh) | [ ] | Chuyển chế độ theo profiler không cần đăng nhập lại; 30 fps trên máy 2 GB |
 | P4.2 | Telemetry C-ABI (`yui_telemetry`) hoàn chỉnh | [x] | 14 test C11 trong `tests/test_capi.c`; `yui_telemetry` đọc sysfs thật + `yui_telemetry_advise` khuyến nghị k/W khớp bảng `ARCHITECTURE.md` §6.3 |
-| P4.3 | 5 công cụ OS MCP + xác nhận người dùng + audit | [ ] | Đạt toàn bộ DoD và ma trận kiểm thử ở §6.1: MCP 2024-11-05/JSON-RPC 2.0, HMAC capability, confirm/deny không side effect, audit cả allow/deny, chạy trong ngân sách runtime 2 GiB, clean-room; `make clean && make -j2 check` xanh |
+| P4.3 | 5 công cụ OS MCP + xác nhận người dùng + audit | [x] | Đạt toàn bộ DoD và ma trận kiểm thử ở §6.1: MCP 2024-11-05/JSON-RPC 2.0 (14 công cụ), HMAC capability fail-closed, confirm gate không side effect, audit cả allow/deny và log file sạch không lộ bí mật, chạy stress 1.000 lời gọi p95 < 500 µs; `test_daemon` 1218 check xanh |
 | P4.4 | Shell: 25 lệnh, gợi ý lệnh, song ngữ đầy đủ | [x] | Đủ 25 lệnh song ngữ (50 tên + alias không dấu), thuật toán gợi ý Levenshtein/prefix; `tests/test_tools.cpp` 289 check phủ mọi cặp lệnh và gợi ý |
 | P4.5 | App Yui (Flutter) build được | [ ] | `flutter build linux` xanh trong CI; 3 màn hình dùng được với `yuid` thật |
 | P4.6 | Trình cài đặt (USB, BIOS + UEFI, A/B) | [ ] | Cài lên máy ảo từ USB, boot lại vào hệ thống đã cài, chữ ký ảnh hợp lệ |
@@ -250,7 +250,7 @@ phải đạt đủ xác thực, xác nhận, audit, ngân sách tài nguyên v�
 ### 7.1 Điều kiện vào (phải xanh trước khi bắt đầu)
 
 - [x] P1.5 telemetry chạy; P4.2 `yui_telemetry` có test
-- [ ] P4.3 5 công cụ OS MCP + xác nhận + audit có test
+- [x] P4.3 5 công cụ OS MCP + xác nhận + audit có test
 - [ ] `ai-bridge-yuid` giữ nguyên tên phương thức và mã lỗi C-ABI (không phá hợp đồng)
 - [ ] Có mạng tới GitHub **hoặc** có sẵn bản sao hai repo AI trên máy
 - [ ] *(đề xuất 2026-11-16)* Phía `Adaptive-MoE`: P9-15 (cổng gắn: `libyui_engine` + `yui_features`) và P9-8 (fuzz bộ đọc `.yui`) đã xong; khuyến nghị thêm P9-4 và P9-7

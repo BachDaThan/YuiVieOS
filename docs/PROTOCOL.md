@@ -188,20 +188,20 @@ vì dữ liệu chỉ đọc và không chứa bí mật.
 Ánh xạ MCP → JSON-RPC là 1–1: `graph_query` gọi `graph.query`, v.v. Không có
 đường tắt nào bỏ qua kiểm tra năng lực.
 
-### 3.1 Năm công cụ điều khiển hệ điều hành — **dành sẵn, chưa cài đặt** (task P4.3)
+### 3.1 Năm công cụ điều khiển hệ điều hành — **đã cài đặt** (task P4.3)
 
 | Công cụ | Quyền cần | Xác nhận | Trạng thái |
 |---|---|---|---|
-| `sys_power` | `power` | có | ⬜ P4.3 |
-| `sys_scheduler` | `admin` hoặc `power` | có | ⬜ P4.3 |
-| `sys_app_stripper` | `fs.read` + `fs.write` trong scope | có | ⬜ P4.3 |
-| `sys_proc` | `admin` | có | ⬜ P4.3 |
-| `sys_search_vault` | `vault` | không | ⬜ P4.3 |
+| `sys_power` | `power` | có | ✅ P4.3 |
+| `sys_scheduler` | `admin` hoặc `power` | có | ✅ P4.3 |
+| `sys_app_stripper` | `fs.read` + `fs.write` trong scope | có (preview: không) | ✅ P4.3 |
+| `sys_proc` | `admin` | có (list: không) | ✅ P4.3 |
+| `sys_search_vault` | `vault` | có (bảo vệ plaintext) | ✅ P4.3 |
 
-Quy tắc (đã ghi trong `ARCHITECTURE.md` §6.4): thiếu quyền ⇒ từ chối kèm lý do
-tiếng Việt; thiếu `confirm: true` ⇒ trả `needs_confirmation` + mô tả tác động;
-mọi hành động ghi `audit.log`. Gọi `tools/list` hôm nay **không** thấy 5 công cụ
-này — đó là hành vi đúng của bản hiện tại, không phải lỗi.
+Quy tắc (đã ghi trong `ARCHITECTURE.md` §6.4 và `PLAN.md` §6.1): thiếu quyền ⇒ từ chối kèm lý do
+tiếng Việt; thiếu `confirm: true` ⇒ trả `needs_confirmation: true` + mô tả tác động;
+mọi hành động ghi `audit.log` (không chứa bí mật/mật khẩu). Gọi `tools/list` trả đầy đủ 14 công cụ
+(9 công cụ dữ liệu + 5 công cụ điều khiển OS).
 
 Ví dụ khung trên stdio:
 

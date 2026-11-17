@@ -418,7 +418,7 @@ Quy tắc bắt buộc:
 - [x] C-ABI 1.0, kiểm từ C11
 - [x] Cài đặt tham chiếu `graph/vault/engine` + 102 check RPC
 - [x] `yui_telemetry` C-ABI + `telemetry.read` (P4.2)
-- [ ] 5 công cụ OS MCP + xác nhận người dùng (P4.3)
+- [x] 5 công cụ OS MCP + xác nhận người dùng + audit (P4.3)
 - [ ] Nạp `.yui v3` qua `mmap` + kiểm quyền (P5 bước 4)
 - [ ] Thay `reference/` bằng `libyui.so` thật (P5)
 

@@ -23,6 +23,7 @@ namespace yui::service {
 struct Options {
   std::string state_dir = "/var/lib/yui";
   std::string vault_password;  // empty -> vault methods refuse to run
+  std::string cap_master_key = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
   bool offline = true;         // web.search returns an explicit offline notice
   bool verbose = false;
 };
@@ -65,6 +66,17 @@ class Daemon {
   // Guard + audit: cho phép test/shell nạp mẫu và xem quyết định.
   guard::Guard& guard() { return guard_; }
   const sandbox::Enforcer& enforcer() const { return enforcer_; }
+  sandbox::Authority& authority() { return authority_; }
+  const sandbox::Authority& authority() const { return authority_; }
+
+  const std::string& power_mode() const { return power_mode_; }
+  int charge_limit() const { return charge_limit_; }
+  const std::string& sched_profile() const { return sched_profile_; }
+  int sched_slice_us() const { return sched_slice_us_; }
+
+  void audit_log(const std::string& subject, const std::string& action_kind,
+                 const std::string& target, bool allowed, const std::string& reason);
+
   // Tests and the shell can inject a canned host snapshot.
   void set_host_snapshot(json::Value v) {
     host_ = std::move(v);
@@ -90,9 +102,14 @@ class Daemon {
   graph::Graph graph_;
   json::Value host_ = json::Value(json::Object{});
   sandbox::Enforcer enforcer_;
+  sandbox::Authority authority_;
   guard::Guard guard_;
   bool has_host_ = false;
   size_t vault_ops_ = 0;
+  std::string power_mode_ = "can_bang";
+  int charge_limit_ = 100;
+  std::string sched_profile_ = "interactive";
+  int sched_slice_us_ = 5000;
 };
 
 // Version string shared by yuid, libyui and the MCP server info block.

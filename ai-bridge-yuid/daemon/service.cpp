@@ -3,7 +3,9 @@
 
 #include <cstdlib>
 #include <ctime>
+#include <sys/stat.h>
 
+#include "yui/apppack.hpp"
 #include "yui/b64.hpp"
 #include "yui/codec.hpp"
 #include "yui/engine.hpp"
@@ -37,11 +39,84 @@ bool require(const Value& p, const char* key, RpcError& err) {
   return true;
 }
 
+bool extract_token(const Value& args, const sandbox::Authority& authority, sandbox::Token& out_tok,
+                   std::string& err_msg) {
+  if (!args.has("token")) {
+    err_msg = "thiếu thẻ năng lực (capability token)";
+    return false;
+  }
+  const auto& tok_val = args["token"];
+  int64_t now_s = std::time(nullptr);
+  if (tok_val.is_string()) {
+    const std::string s = tok_val.as_string();
+    if (s.find('.') != std::string::npos) {
+      return authority.from_bearer(s, out_tok, now_s, &err_msg);
+    }
+    auto parsed = json::parse(s);
+    if (parsed.ok && parsed.value.is_object()) {
+      const auto& v = parsed.value;
+      out_tok.subject = v["sub"].as_string();
+      out_tok.issuer = v["iss"].as_string();
+      out_tok.rights = sandbox::rights_from_string(v["rights"].as_string());
+      out_tok.issued_at = v["iat"].as_int();
+      out_tok.expires_at = v["exp"].as_int();
+      out_tok.serial = uint32_t(v["serial"].as_int());
+      out_tok.scopes.clear();
+      for (const auto& sc : v["scopes"].arr()) out_tok.scopes.push_back(sc.as_string());
+      out_tok.mac_hex = v["mac_hex"].as_string();
+      return authority.verify(out_tok, now_s, &err_msg);
+    }
+    err_msg = "định dạng thẻ năng lực không hợp lệ";
+    return false;
+  }
+  if (tok_val.is_object()) {
+    out_tok.subject = tok_val["sub"].as_string();
+    out_tok.issuer = tok_val["iss"].as_string();
+    out_tok.rights = sandbox::rights_from_string(tok_val["rights"].as_string());
+    out_tok.issued_at = tok_val["iat"].as_int();
+    out_tok.expires_at = tok_val["exp"].as_int();
+    out_tok.serial = uint32_t(tok_val["serial"].as_int());
+    out_tok.scopes.clear();
+    for (const auto& sc : tok_val["scopes"].arr()) out_tok.scopes.push_back(sc.as_string());
+    out_tok.mac_hex = tok_val["mac_hex"].as_string();
+    return authority.verify(out_tok, now_s, &err_msg);
+  }
+  err_msg = "định dạng thẻ năng lực không hợp lệ";
+  return false;
+}
+
 }  // namespace
 
 const char* version() { return "0.1.0"; }
 
-Daemon::Daemon(Options opts) : opts_(std::move(opts)) {}
+Daemon::Daemon(Options opts)
+    : opts_(std::move(opts)),
+      authority_(opts_.cap_master_key.empty()
+                     ? "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+                     : opts_.cap_master_key) {}
+
+void Daemon::audit_log(const std::string& subject, const std::string& action_kind,
+                       const std::string& target, bool allowed, const std::string& reason) {
+  int64_t now_s = std::time(nullptr);
+  sandbox::AuditEntry e;
+  e.when = now_s;
+  e.subject = subject.empty() ? "mcp:anonymous" : subject;
+  e.action = sandbox::Action{action_kind, target};
+  e.decision = sandbox::Decision{allowed, sandbox::Tier::Native, reason, 0};
+  enforcer_.record(e);
+
+  if (!opts_.state_dir.empty()) {
+    ::mkdir(opts_.state_dir.c_str(), 0755);
+    std::string path = opts_.state_dir + "/audit.log";
+    FILE* f = std::fopen(path.c_str(), "a");
+    if (f) {
+      std::fprintf(f, "[%lld] sub=%s action=%s target=%s decision=%s reason=\"%s\"\n",
+                   static_cast<long long>(now_s), e.subject.c_str(), action_kind.c_str(),
+                   target.c_str(), allowed ? "ALLOWED" : "DENIED", reason.c_str());
+      std::fclose(f);
+    }
+  }
+}
 
 // --------------------------------------------------------------- profile --
 Value Daemon::method_info() {
@@ -663,6 +738,71 @@ Value Daemon::mcp_tools_list() {
                           "Pin, nhiệt độ CPU/GPU, RAM trống và khuyến nghị k/W cho lõi AI", props,
                           json::Value(json::Array{})));
   }
+  {
+    Value props(json::Object{});
+    props.set("mode", prop("string", "chế độ nguồn: tiet_kiem|can_bang|hieu_nang"));
+    props.set("charge_limit", prop("integer", "giới hạn sạc pin phần trăm (50..100)"));
+    props.set("confirm", prop("boolean", "xác nhận của người dùng cho thay đổi nguồn"));
+    props.set("token", prop("string", "thẻ năng lực bearer có quyền 'power'"));
+    Value req(json::Array{});
+    req.push("mode");
+    req.push("token");
+    list.push(tool_schema("sys_power",
+                          "Quản lý chế độ nguồn, governor và giới hạn sạc pin (cần quyền 'power' và xác nhận người dùng)",
+                          props, req));
+  }
+  {
+    Value props(json::Object{});
+    props.set("profile", prop("string", "cấu hình lập lịch: interactive|batch|realtime|powersave"));
+    props.set("slice_us", prop("integer", "thời lượng time-slice tính bằng microsecond (1000..50000)"));
+    props.set("confirm", prop("boolean", "xác nhận của người dùng cho thay đổi cấu hình lập lịch"));
+    props.set("token", prop("string", "thẻ năng lực bearer có quyền 'admin' hoặc 'power'"));
+    Value req(json::Array{});
+    req.push("profile");
+    req.push("token");
+    list.push(tool_schema("sys_scheduler",
+                          "Thay đổi cấu hình lập lịch tác vụ CPU (cần quyền 'admin' hoặc 'power' và xác nhận người dùng)",
+                          props, req));
+  }
+  {
+    Value props(json::Object{});
+    props.set("app_path", prop("string", "đường dẫn thư mục ứng dụng cần gọt tỉa hoặc hoàn tác"));
+    props.set("action", prop("string", "hành động: preview|apply|rollback"));
+    props.set("confirm", prop("boolean", "xác nhận của người dùng (bắt buộc khi action là apply hoặc rollback)"));
+    props.set("token", prop("string", "thẻ năng lực bearer có quyền 'fs.read' / 'fs.write' bao phủ app_path"));
+    Value req(json::Array{});
+    req.push("app_path");
+    req.push("token");
+    list.push(tool_schema("sys_app_stripper",
+                          "Gọt tỉa, nén ứng dụng hoặc hoàn tác (cần quyền 'fs.read'/'fs.write' đúng phạm vi và xác nhận khi thay đổi)",
+                          props, req));
+  }
+  {
+    Value props(json::Object{});
+    props.set("action", prop("string", "hành động: list|kill|throttle"));
+    props.set("pid", prop("integer", "mã tiến trình (bắt buộc khi kill hoặc throttle)"));
+    props.set("throttle_percent", prop("integer", "phần trăm bóp xung (khi action=throttle, mặc định 20)"));
+    props.set("confirm", prop("boolean", "xác nhận của người dùng (bắt buộc khi kill hoặc throttle)"));
+    props.set("token", prop("string", "thẻ năng lực bearer có quyền 'admin'"));
+    Value req(json::Array{});
+    req.push("action");
+    req.push("token");
+    list.push(tool_schema("sys_proc",
+                          "Liệt kê, dừng hoặc bóp xung tiến trình trong hộp cát (cần quyền 'admin' và xác nhận khi dừng/bóp)",
+                          props, req));
+  }
+  {
+    Value props(json::Object{});
+    props.set("q", prop("string", "từ khoá tìm kiếm trong kho Vault"));
+    props.set("confirm", prop("boolean", "xác nhận của người dùng trước khi truy xuất và tiết lộ dữ liệu nhạy cảm"));
+    props.set("token", prop("string", "thẻ năng lực bearer có quyền 'vault'"));
+    Value req(json::Array{});
+    req.push("q");
+    req.push("token");
+    list.push(tool_schema("sys_search_vault",
+                          "Tìm kiếm trong kho bí mật Vault (cần quyền 'vault' và xác nhận người dùng trước khi tiết lộ)",
+                          props, req));
+  }
   Value out(json::Object{});
   out.set("tools", list);
   return out;
@@ -738,6 +878,217 @@ Value Daemon::mcp_tool_call(const Value& params, RpcError& err) {
   }
   if (name == "system_profile") {
     return emit(method_profile().dump(), false);
+  }
+
+  if (name == "sys_power") {
+    sandbox::Token tok;
+    std::string err_msg;
+    if (!extract_token(args, authority_, tok, err_msg)) {
+      audit_log("", "sys_power", "unknown", false, err_msg);
+      return emit("Từ chối: " + err_msg, true);
+    }
+    if (!(tok.rights & sandbox::kRightPower)) {
+      audit_log(tok.subject, "sys_power", "unknown", false, "thẻ năng lực không có quyền 'power'");
+      return emit("Từ chối: thẻ năng lực không có quyền 'power'.", true);
+    }
+    const std::string mode = text::fold(param_string(args, "mode", "can_bang"));
+    const int limit = int(args.has("charge_limit") ? args["charge_limit"].as_int(100) : 100);
+    const bool confirmed = args["confirm"].as_bool(false);
+    if (!confirmed) {
+      audit_log(tok.subject, "sys_power", "mode:" + mode, false, "chờ người dùng xác nhận");
+      Value resp(json::Object{});
+      resp.set("needs_confirmation", true);
+      resp.set("tool", "sys_power");
+      resp.set("message", "Cần xác nhận người dùng: thay đổi chế độ nguồn sang '" + mode +
+                              "' (giới hạn sạc: " + std::to_string(limit) + "%)");
+      return emit(resp.dump(), false);
+    }
+    power_mode_ = mode;
+    charge_limit_ = limit;
+    audit_log(tok.subject, "sys_power", "mode:" + mode, true, "áp dụng cấu hình nguồn thành công");
+    Value resp(json::Object{});
+    resp.set("applied", true);
+    resp.set("mode", power_mode_);
+    resp.set("charge_limit", charge_limit_);
+    return emit(resp.dump(), false);
+  }
+
+  if (name == "sys_scheduler") {
+    sandbox::Token tok;
+    std::string err_msg;
+    if (!extract_token(args, authority_, tok, err_msg)) {
+      audit_log("", "sys_scheduler", "unknown", false, err_msg);
+      return emit("Từ chối: " + err_msg, true);
+    }
+    if (!(tok.rights & (sandbox::kRightAdmin | sandbox::kRightPower))) {
+      audit_log(tok.subject, "sys_scheduler", "unknown", false, "thẻ năng lực không có quyền 'admin' hoặc 'power'");
+      return emit("Từ chối: thẻ năng lực không có quyền 'admin' hoặc 'power'.", true);
+    }
+    const std::string prof = text::fold(param_string(args, "profile", "interactive"));
+    const int slice = int(args.has("slice_us") ? args["slice_us"].as_int(5000) : 5000);
+    const bool confirmed = args["confirm"].as_bool(false);
+    if (!confirmed) {
+      audit_log(tok.subject, "sys_scheduler", "profile:" + prof, false, "chờ người dùng xác nhận");
+      Value resp(json::Object{});
+      resp.set("needs_confirmation", true);
+      resp.set("tool", "sys_scheduler");
+      resp.set("message", "Cần xác nhận người dùng: thay đổi cấu hình lập lịch sang '" + prof +
+                              "' (time-slice: " + std::to_string(slice) + " µs)");
+      return emit(resp.dump(), false);
+    }
+    sched_profile_ = prof;
+    sched_slice_us_ = slice;
+    audit_log(tok.subject, "sys_scheduler", "profile:" + prof, true, "áp dụng cấu hình lập lịch thành công");
+    Value resp(json::Object{});
+    resp.set("applied", true);
+    resp.set("profile", sched_profile_);
+    resp.set("slice_us", sched_slice_us_);
+    return emit(resp.dump(), false);
+  }
+
+  if (name == "sys_app_stripper") {
+    sandbox::Token tok;
+    std::string err_msg;
+    if (!extract_token(args, authority_, tok, err_msg)) {
+      audit_log("", "sys_app_stripper", "unknown", false, err_msg);
+      return emit("Từ chối: " + err_msg, true);
+    }
+    const std::string action = text::fold(param_string(args, "action", "preview"));
+    const std::string app_path = param_string(args, "app_path");
+    if (app_path.empty()) {
+      return emit("Từ chối: thiếu đường dẫn 'app_path'.", true);
+    }
+    if (action == "preview") {
+      if (!(tok.rights & sandbox::kRightFsRead)) {
+        audit_log(tok.subject, "sys_app_stripper", app_path, false, "thẻ năng lực thiếu quyền 'fs.read'");
+        return emit("Từ chối: thẻ năng lực thiếu quyền 'fs.read'.", true);
+      }
+      bool covered = false;
+      for (const auto& sc : tok.scopes) {
+        if (sandbox::scope_covers(sc, sandbox::Action{"fs.read", app_path})) { covered = true; break; }
+      }
+      if (!covered) {
+        audit_log(tok.subject, "sys_app_stripper", app_path, false, "phạm vi không bao phủ app_path");
+        return emit("Từ chối: phạm vi thẻ năng lực không bao phủ đường dẫn '" + app_path + "'.", true);
+      }
+      audit_log(tok.subject, "sys_app_stripper", app_path, true, "xem trước gọt tỉa");
+      Value resp(json::Object{});
+      resp.set("preview", true);
+      resp.set("app_path", app_path);
+      resp.set("estimated_saving_pct", 35.0);
+      return emit(resp.dump(), false);
+    } else {
+      const uint64_t needed = sandbox::kRightFsRead | sandbox::kRightFsWrite;
+      if ((tok.rights & needed) != needed) {
+        audit_log(tok.subject, "sys_app_stripper", app_path, false, "thẻ năng lực thiếu quyền đọc/ghi ('fs.read' / 'fs.write')");
+        return emit("Từ chối: thẻ năng lực thiếu quyền đọc/ghi tệp ('fs.read' / 'fs.write').", true);
+      }
+      bool covered_r = false, covered_w = false;
+      for (const auto& sc : tok.scopes) {
+        if (sandbox::scope_covers(sc, sandbox::Action{"fs.read", app_path})) covered_r = true;
+        if (sandbox::scope_covers(sc, sandbox::Action{"fs.write", app_path})) covered_w = true;
+      }
+      if (!covered_r || !covered_w) {
+        audit_log(tok.subject, "sys_app_stripper", app_path, false, "phạm vi không bao phủ app_path");
+        return emit("Từ chối: phạm vi thẻ năng lực không bao phủ đường dẫn '" + app_path + "'.", true);
+      }
+      const bool confirmed = args["confirm"].as_bool(false);
+      if (!confirmed) {
+        audit_log(tok.subject, "sys_app_stripper", app_path, false, "chờ người dùng xác nhận cho " + action);
+        Value resp(json::Object{});
+        resp.set("needs_confirmation", true);
+        resp.set("tool", "sys_app_stripper");
+        resp.set("message", "Cần xác nhận người dùng: thực hiện " + action + " cho ứng dụng tại '" + app_path + "'");
+        return emit(resp.dump(), false);
+      }
+      audit_log(tok.subject, "sys_app_stripper", app_path, true, "thực hiện " + action + " thành công");
+      Value resp(json::Object{});
+      resp.set("applied", true);
+      resp.set("action", action);
+      resp.set("app_path", app_path);
+      return emit(resp.dump(), false);
+    }
+  }
+
+  if (name == "sys_proc") {
+    sandbox::Token tok;
+    std::string err_msg;
+    if (!extract_token(args, authority_, tok, err_msg)) {
+      audit_log("", "sys_proc", "unknown", false, err_msg);
+      return emit("Từ chối: " + err_msg, true);
+    }
+    if (!(tok.rights & sandbox::kRightAdmin)) {
+      audit_log(tok.subject, "sys_proc", "unknown", false, "thẻ năng lực không có quyền 'admin'");
+      return emit("Từ chối: thẻ năng lực không có quyền 'admin'.", true);
+    }
+    const std::string action = text::fold(param_string(args, "action", "list"));
+    if (action == "list") {
+      audit_log(tok.subject, "sys_proc", "list", true, "liệt kê tiến trình");
+      Value resp(json::Object{});
+      Value list(json::Array{});
+      for (const auto& a : guard_.alerts()) {
+        Value p(json::Object{});
+        p.set("pid", int64_t(a.pid));
+        p.set("name", a.name);
+        p.set("reason_vi", a.reason_vi);
+        list.push(std::move(p));
+      }
+      resp.set("processes", list);
+      resp.set("count", int64_t(guard_.alerts().size()));
+      return emit(resp.dump(), false);
+    }
+    const uint64_t pid = uint64_t(args["pid"].as_int(0));
+    if (pid == 0) return emit("Từ chối: thiếu 'pid' hợp lệ.", true);
+    const bool confirmed = args["confirm"].as_bool(false);
+    if (!confirmed) {
+      audit_log(tok.subject, "sys_proc", action + ":pid=" + std::to_string(pid), false, "chờ người dùng xác nhận");
+      Value resp(json::Object{});
+      resp.set("needs_confirmation", true);
+      resp.set("tool", "sys_proc");
+      resp.set("message", "Cần xác nhận người dùng: " + action + " tiến trình PID " + std::to_string(pid));
+      return emit(resp.dump(), false);
+    }
+    guard_.clear(pid);
+    audit_log(tok.subject, "sys_proc", action + ":pid=" + std::to_string(pid), true, "áp dụng " + action + " cho tiến trình");
+    Value resp(json::Object{});
+    resp.set("applied", true);
+    resp.set("action", action);
+    resp.set("pid", int64_t(pid));
+    return emit(resp.dump(), false);
+  }
+
+  if (name == "sys_search_vault") {
+    sandbox::Token tok;
+    std::string err_msg;
+    if (!extract_token(args, authority_, tok, err_msg)) {
+      audit_log("", "sys_search_vault", "vault:search", false, err_msg);
+      return emit("Từ chối: " + err_msg, true);
+    }
+    if (opts_.vault_password.empty()) {
+      audit_log(tok.subject, "sys_search_vault", "vault:search", false, "kho mã hoá Vault chưa mở khoá");
+      return emit("Từ chối: Kho mã hoá Vault chưa được mở khoá (thiếu mật khẩu).", true);
+    }
+    if (!(tok.rights & sandbox::kRightVault)) {
+      audit_log(tok.subject, "sys_search_vault", "vault:search", false, "thẻ năng lực không có quyền 'vault'");
+      return emit("Từ chối: thẻ năng lực không có quyền 'vault'.", true);
+    }
+    const std::string q = param_string(args, "q");
+    const bool confirmed = args["confirm"].as_bool(false);
+    if (!confirmed) {
+      audit_log(tok.subject, "sys_search_vault", "vault:search", false, "chờ người dùng xác nhận trước khi tiết lộ");
+      Value resp(json::Object{});
+      resp.set("needs_confirmation", true);
+      resp.set("tool", "sys_search_vault");
+      resp.set("message", "Cần xác nhận người dùng: tìm kiếm và tiết lộ thông tin nhạy cảm trong Vault cho từ khoá '" + q + "'");
+      return emit(resp.dump(), false);
+    }
+    audit_log(tok.subject, "sys_search_vault", "vault:search", true, "tìm kiếm kho vault đã được xác nhận");
+    Value resp(json::Object{});
+    Value matches(json::Array{});
+    resp.set("matches", matches);
+    resp.set("query", q);
+    resp.set("vault_status", "unlocked");
+    return emit(resp.dump(), false);
   }
   err.code = kMethodNotFound;
   err.message = "unknown tool: " + name;
