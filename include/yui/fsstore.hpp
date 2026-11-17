@@ -15,9 +15,12 @@
 #ifndef YUI_FSSTORE_HPP
 #define YUI_FSSTORE_HPP
 
+#include <chrono>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace yui::fsstore {
@@ -119,6 +122,99 @@ class ImmutablePartition {
 struct PageLog {
   std::map<std::string, std::vector<uint8_t>> pages;
   size_t commits = 0;
+};
+
+// ============================================================================
+// Snapshot giao dịch Copy-on-Write (CoW) & Hoàn tác (P2.14)
+// ============================================================================
+
+/// Thống kê bù trừ dung lượng lưu trữ (Storage Accounting / Deduplication).
+struct StorageAccounting {
+  size_t file_count = 0;
+  size_t logical_bytes = 0;       // tổng kích thước logic mọi tệp qua các snapshot
+  size_t physical_bytes = 0;      // dung lượng vật lý thực tế (đã khử trùng lặp CoW)
+  size_t shared_bytes = 0;        // dung lượng được chia sẻ giữa nhiều snapshot
+  size_t exclusive_bytes = 0;     // dung lượng chỉ thuộc riêng một snapshot/active
+  double savings_ratio = 0.0;     // tỉ lệ tiết kiệm dung lượng (0.0 .. 1.0)
+};
+
+/// Thông tin snapshot giao dịch (Transaction Snapshot Metadata).
+struct SnapshotMeta {
+  std::string id;
+  std::string tag;
+  int64_t created_at_ns = 0;
+  double creation_time_ms = 0.0;  // thời gian đo thật khi tạo snapshot
+  size_t file_count = 0;
+  size_t bytes = 0;
+};
+
+/// Kho lưu trữ CoW hỗ trợ Snapshot giao dịch và Hoàn tác (P2.14).
+///
+/// Thiết kế Copy-on-Write:
+/// - Mọi tệp được lưu dưới dạng con trỏ bất biến std::shared_ptr<const std::vector<uint8_t>>.
+/// - Việc tạo snapshot chỉ sao chép bảng tra cứu và tăng ref-count (O(N) con trỏ, O(1) dữ liệu byte).
+/// - Khi một tệp bị sửa đổi hoặc ghi đè, bản ghi mới được cấp phát riêng; bản chụp cũ vẫn
+///   giữ nguyên vẹn con trỏ đến dữ liệu trước đó.
+/// - Rollback khôi phục lại bảng tệp về thời điểm snapshot được chọn.
+/// - Giới hạn đã biết: CoW bảo vệ dữ liệu ở mức hệ thống tệp và cho phép rollback hoàn hảo,
+///   nhưng không ngăn chặn được kẻ tấn công có quyền fs.write nếu không được Guard phát hiện
+///   kịp thời hoặc nếu ransomware ghi rải rác dưới ngưỡng.
+class CowStore {
+ public:
+  CowStore() = default;
+
+  /// Ghi một tệp vào trạng thái hiện hành.
+  bool write_file(const std::string& relpath, std::vector<uint8_t> data, std::string* err = nullptr);
+
+  /// Đọc một tệp từ trạng thái hiện hành.
+  bool read_file(const std::string& relpath, std::vector<uint8_t>* out) const;
+
+  /// Xoá một tệp khỏi trạng thái hiện hành.
+  bool delete_file(const std::string& relpath, std::string* err = nullptr);
+
+  /// Kiểm tra sự tồn tại của tệp.
+  bool has_file(const std::string& relpath) const;
+
+  /// Lấy danh sách đường dẫn tất cả tệp hiện hành.
+  std::vector<std::string> list_files() const;
+
+  /// Tạo snapshot giao dịch tại thời điểm hiện tại.
+  /// now_ns: mốc thời gian (hoặc 0 để đo clock).
+  /// elapsed_ms_out: trả về số đo thời gian tạo snapshot thực tế.
+  std::string create_snapshot(const std::string& tag = "", int64_t now_ns = 0, double* elapsed_ms_out = nullptr);
+
+  /// Hoàn tác (rollback) toàn bộ trạng thái về snapshot_id.
+  bool rollback_to(const std::string& snapshot_id, std::string* err = nullptr);
+
+  /// Xoá một snapshot khỏi kho.
+  bool drop_snapshot(const std::string& snapshot_id);
+
+  /// Kiểm tra snapshot có tồn tại không.
+  bool has_snapshot(const std::string& snapshot_id) const;
+
+  /// Lấy thông tin metadata của snapshot.
+  bool get_snapshot_meta(const std::string& snapshot_id, SnapshotMeta* meta) const;
+
+  /// Danh sách tất cả snapshot ID hiện có.
+  std::vector<std::string> list_snapshots() const;
+
+  size_t file_count() const { return current_files_.size(); }
+  size_t snapshot_count() const { return snapshots_.size(); }
+
+  /// Tính toán thống kê dung lượng CoW (bù trừ dung lượng).
+  StorageAccounting compute_accounting() const;
+
+ private:
+  using FileMap = std::unordered_map<std::string, std::shared_ptr<const std::vector<uint8_t>>>;
+
+  FileMap current_files_;
+  size_t next_snapshot_idx_ = 1;
+
+  struct InternalSnapshot {
+    SnapshotMeta meta;
+    FileMap files;
+  };
+  std::map<std::string, InternalSnapshot> snapshots_;
 };
 
 }  // namespace yui::fsstore

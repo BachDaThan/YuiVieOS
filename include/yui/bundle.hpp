@@ -58,6 +58,7 @@ struct ManifestFile {
 struct Manifest {
   std::string version;
   std::string key_id;
+  std::string stream = "os";  // "os", "models", "apps"
   std::vector<ManifestFile> files;  // sắp xếp theo path khi chuẩn hoá
 };
 
@@ -67,6 +68,21 @@ std::string canonical(const Manifest& m);
 
 /// Parse manifest.json (định dạng người–máy đọc được); kiểm đường dẫn file.
 bool parse_manifest(const std::string& json_text, Manifest& out, std::string* err = nullptr);
+
+// ------------------------------------------------------------- Sign (P4.7) -
+struct SignOptions {
+  std::string version = "1.0.0";
+  std::string key_id;
+  std::string stream = "os";  // "os", "models", "apps"
+};
+
+/// Ký số ngoại tuyến: duyệt payload_dir, tính SHA-256 từng tệp, tạo manifest.json,
+/// ký Ed25519 bằng seed tạo manifest.sig (64 byte thô), chép tệp vào bundle_dir/payload/.
+bool sign_bundle(const std::string& payload_dir,
+                 const std::string& bundle_dir,
+                 const SignOptions& opts,
+                 const ed25519::Seed& seed,
+                 std::string* err = nullptr);
 
 // ------------------------------------------------------------- Verify -----
 struct VerifyResult {
@@ -81,13 +97,57 @@ struct VerifyResult {
 /// tệp trong payload/. Offline hoàn toàn — không mở mạng.
 VerifyResult verify(const std::string& bundle_dir, const Keyring& keys);
 
+// ------------------------------------------------------------- Multi-stream & A/B (P4.9)
+struct UpdateOptions {
+  std::string stream = "os";  // "os", "models", "apps"
+  bool defer_reboot = false;  // nếu true: hoãn kích hoạt (đặt cờ chờ khởi động lại, không ngắt phiên làm việc)
+};
+
+struct UpdateStatus {
+  std::string stream = "os";
+  std::string active_slot = "A";  // "A" hoặc "B"
+  std::string backup_slot = "B";  // "B" hoặc "A"
+  bool has_pending = false;
+  std::string pending_slot;       // khe chờ kích hoạt ở boot tới (khi defer_reboot)
+  std::string active_version;
+  std::string backup_version;
+  std::string active_key_id;
+  size_t file_count = 0;
+};
+
 // ------------------------------------------------------------- Install ----
 struct InstallResult {
   bool ok = false;
   std::string slot;       // "A" hoặc "B" vừa được ghi
   std::string reason_vi;
   std::string boot_pointer_path;
+  bool pending = false;   // true nếu được ghi vào khe chờ khởi động lại (defer_reboot)
 };
+
+/// Đọc trạng thái cập nhật của một luồng (os, models, apps).
+UpdateStatus update_status(const std::string& state_dir, const std::string& stream = "os");
+
+/// Cài bundle theo luồng A/B với tuỳ chọn hoãn kích hoạt (không ngắt phiên làm việc).
+InstallResult update_apply(const std::string& bundle_dir,
+                           const Keyring& keys,
+                           const std::string& state_dir,
+                           const UpdateOptions& opts = {});
+
+/// Quay lui (rollback) về khe trước đó của luồng.
+InstallResult update_rollback(const std::string& state_dir,
+                              const std::string& stream = "os");
+
+/// Kích hoạt khe đang chờ (boot apply) cho luồng.
+bool update_commit_pending(const std::string& state_dir,
+                           const std::string& stream = "os",
+                           std::string* err = nullptr);
+
+/// Khe đang hoạt động của luồng ("A" nếu chưa từng cài).
+std::string stream_active_slot(const std::string& state_dir, const std::string& stream = "os");
+
+/// Đường dẫn thư mục khe của một luồng.
+std::string stream_slot_dir(const std::string& state_dir, const std::string& stream,
+                            const std::string& slot);
 
 /// Cài bundle vào slot KHÔNG hoạt động (A/B), kiểm hash sau khi chép, rồi
 /// đổi con trỏ boot bằng ghi nguyên tử (tmp → rename). Cấu trúc state_dir:

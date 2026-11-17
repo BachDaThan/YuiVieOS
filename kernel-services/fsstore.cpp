@@ -1,6 +1,7 @@
 // Hệ tệp bất biến + Ghi gộp — xem include/yui/fsstore.hpp.
 #include "yui/fsstore.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <fcntl.h>
@@ -118,6 +119,160 @@ bool ImmutablePartition::read(const std::string& rel, std::vector<uint8_t>* out)
     out->swap(contents);
     return true;
   }
+}
+
+// ============================================================================
+// CowStore implementation
+// ============================================================================
+
+bool CowStore::write_file(const std::string& relpath, std::vector<uint8_t> data, std::string* err) {
+  std::string why;
+  if (!safe_relpath(relpath, &why)) {
+    if (err) *err = why;
+    return false;
+  }
+  current_files_[relpath] = std::make_shared<const std::vector<uint8_t>>(std::move(data));
+  return true;
+}
+
+bool CowStore::read_file(const std::string& relpath, std::vector<uint8_t>* out) const {
+  std::string why;
+  if (!safe_relpath(relpath, &why)) return false;
+  auto it = current_files_.find(relpath);
+  if (it == current_files_.end()) return false;
+  if (out) *out = *it->second;
+  return true;
+}
+
+bool CowStore::delete_file(const std::string& relpath, std::string* err) {
+  std::string why;
+  if (!safe_relpath(relpath, &why)) {
+    if (err) *err = why;
+    return false;
+  }
+  auto it = current_files_.find(relpath);
+  if (it == current_files_.end()) {
+    if (err) *err = "tệp không tồn tại: " + relpath;
+    return false;
+  }
+  current_files_.erase(it);
+  return true;
+}
+
+bool CowStore::has_file(const std::string& relpath) const {
+  return current_files_.find(relpath) != current_files_.end();
+}
+
+std::vector<std::string> CowStore::list_files() const {
+  std::vector<std::string> res;
+  res.reserve(current_files_.size());
+  for (const auto& kv : current_files_) {
+    res.push_back(kv.first);
+  }
+  std::sort(res.begin(), res.end());
+  return res;
+}
+
+std::string CowStore::create_snapshot(const std::string& tag, int64_t now_ns, double* elapsed_ms_out) {
+  const auto t0 = std::chrono::high_resolution_clock::now();
+
+  InternalSnapshot snap;
+  snap.meta.id = "snap-" + std::to_string(next_snapshot_idx_++);
+  snap.meta.tag = tag.empty() ? snap.meta.id : tag;
+  snap.meta.created_at_ns = (now_ns > 0) ? now_ns :
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::system_clock::now().time_since_epoch()).count();
+  snap.meta.file_count = current_files_.size();
+
+  size_t bytes = 0;
+  for (const auto& kv : current_files_) {
+    bytes += kv.second->size();
+  }
+  snap.meta.bytes = bytes;
+  snap.files = current_files_;  // CoW: sao chép shallow các shared_ptr
+
+  const auto t1 = std::chrono::high_resolution_clock::now();
+  const double elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+  snap.meta.creation_time_ms = elapsed_ms;
+  if (elapsed_ms_out) *elapsed_ms_out = elapsed_ms;
+
+  const std::string id = snap.meta.id;
+  snapshots_[id] = std::move(snap);
+  return id;
+}
+
+bool CowStore::rollback_to(const std::string& snapshot_id, std::string* err) {
+  auto it = snapshots_.find(snapshot_id);
+  if (it == snapshots_.end()) {
+    if (err) *err = "không tìm thấy snapshot ID: " + snapshot_id;
+    return false;
+  }
+  // Khôi phục lại toàn bộ trạng thái tệp tại thời điểm snapshot được chụp
+  current_files_ = it->second.files;
+  return true;
+}
+
+bool CowStore::drop_snapshot(const std::string& snapshot_id) {
+  return snapshots_.erase(snapshot_id) > 0;
+}
+
+bool CowStore::has_snapshot(const std::string& snapshot_id) const {
+  return snapshots_.find(snapshot_id) != snapshots_.end();
+}
+
+bool CowStore::get_snapshot_meta(const std::string& snapshot_id, SnapshotMeta* meta) const {
+  auto it = snapshots_.find(snapshot_id);
+  if (it == snapshots_.end()) return false;
+  if (meta) *meta = it->second.meta;
+  return true;
+}
+
+std::vector<std::string> CowStore::list_snapshots() const {
+  std::vector<std::string> res;
+  res.reserve(snapshots_.size());
+  for (const auto& kv : snapshots_) {
+    res.push_back(kv.first);
+  }
+  return res;
+}
+
+StorageAccounting CowStore::compute_accounting() const {
+  StorageAccounting acc;
+  acc.file_count = current_files_.size();
+
+  std::unordered_map<const std::vector<uint8_t>*, size_t> seen;
+
+  // Active state
+  for (const auto& kv : current_files_) {
+    acc.logical_bytes += kv.second->size();
+    seen[kv.second.get()]++;
+  }
+
+  // All snapshots
+  for (const auto& s : snapshots_) {
+    for (const auto& kv : s.second.files) {
+      acc.logical_bytes += kv.second->size();
+      seen[kv.second.get()]++;
+    }
+  }
+
+  for (const auto& kv : seen) {
+    const size_t sz = kv.first->size();
+    acc.physical_bytes += sz;
+    if (kv.second > 1) {
+      acc.shared_bytes += sz;
+    } else {
+      acc.exclusive_bytes += sz;
+    }
+  }
+
+  if (acc.logical_bytes > 0 && acc.logical_bytes >= acc.physical_bytes) {
+    acc.savings_ratio = double(acc.logical_bytes - acc.physical_bytes) / double(acc.logical_bytes);
+  } else {
+    acc.savings_ratio = 0.0;
+  }
+
+  return acc;
 }
 
 }  // namespace yui::fsstore

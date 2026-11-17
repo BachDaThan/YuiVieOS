@@ -34,6 +34,7 @@ class Shell {
   std::string help_text() const;
   const std::vector<Command>& commands() const { return commands_; }
   bool wants_exit() const { return exit_; }
+  std::string suggest(const std::string& input) const;
 
  private:
   std::string dispatch(const std::string& cmd, const std::vector<std::string>& args);

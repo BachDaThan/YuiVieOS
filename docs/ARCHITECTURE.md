@@ -417,8 +417,8 @@ Quy tắc bắt buộc:
 - [x] MCP 8 công cụ dữ liệu (`graph_*`, `ime_convert`, `vault_seal`, `sandbox_check`, `web_search`, `system_profile`)
 - [x] C-ABI 1.0, kiểm từ C11
 - [x] Cài đặt tham chiếu `graph/vault/engine` + 102 check RPC
-- [ ] `yui_telemetry` C-ABI + `telemetry.read` (P4.2)
-- [ ] 5 công cụ OS MCP + xác nhận người dùng (P4.3)
+- [x] `yui_telemetry` C-ABI + `telemetry.read` (P4.2)
+- [x] 5 công cụ OS MCP + xác nhận người dùng + audit (P4.3)
 - [ ] Nạp `.yui v3` qua `mmap` + kiểm quyền (P5 bước 4)
 - [ ] Thay `reference/` bằng `libyui.so` thật (P5)
 
@@ -446,11 +446,14 @@ build sạch, `make check` đạt 2831 checks, D-Bus latency trung bình 7.16 ms
 (min 6.18, max khoảng 12 do nhịp nghỉ `pump` của script Python). Firefox/LibreOffice
 giao cho Desktop QA follow-up, không chặn P1.4.
 
-### 7.3 Shell song ngữ (đã có, 15 lệnh)
+### 7.3 Shell song ngữ (đã có, 25 lệnh song ngữ theo P4.4)
 
-Mỗi lệnh hai tên: `giúp/help`, `thôngtin/info`, `gõ/ime`, `ghinhớ/remember`,
-`gọttỉa/trim`, `hộpcát/sandbox`, `niêmphong/seal`… Shell là client của `yuid`,
-không phải một đống `if`.
+Mỗi lệnh hai tên (25 cặp = 50 tên): `giúp/help`, `thôngtin/info`, `gõ/ime`, `ghinhớ/remember`,
+`gọttỉa/trim`, `hộpcát/sandbox`, `niêmphong/seal`, `đotải/telemetry`, `mởkhoá/unseal`,
+`xoánút/remove`, `nhậtký/audit`, `cảnhbáo/alerts`, `phiênbản/version`, `trakho/vaultinfo`,
+`tìmweb/websearch`, `xoámàn/clear`, `thờigian/uptime`… Hỗ trợ gõ tiếng Việt có dấu,
+không dấu và tiếng Anh; tự động gợi ý sửa lỗi gõ sai dựa trên khoảng cách Levenshtein và tiền tố.
+Shell là client của `yuid`, không phải một đống `if`.
 
 ### 7.4 Giao diện thích ứng (logic đã có, bộ vẽ chưa)
 

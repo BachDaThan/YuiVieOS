@@ -21,6 +21,10 @@
 
 #include "yui/json.hpp"
 
+namespace yui::bundle {
+class Keyring;
+}
+
 namespace yui::sandbox {
 
 enum class Tier { Native = 0, Isolated = 1, MicroVm = 2 };
@@ -44,6 +48,8 @@ enum Right : uint64_t {
   kRightVault = 1ull << 11,
   kRightGraph = 1ull << 12,
   kRightModel = 1ull << 13,    // run inference through yuid
+  kRightBluetooth = 1ull << 14,
+  kRightInputCompose = 1ull << 15,  // input method composition (P3.13)
   kRightComputeHeavy = 1ull << 21,  // được phép tải CPU/GPU cao kéo dài (CAP_COMPUTE_HEAVY)
   kRightAdmin = 1ull << 20,    // policy administration
 };
@@ -179,6 +185,102 @@ class EgressFilter {
   };
   std::vector<Rule> rules_;       // allowlist (mặc định không có gì = chặn)
   std::vector<Rule> deny_rules_;  // deny thắng allow (SECURITY.md)
+};
+
+// -------------------------------------------------- app signature gate (P3.12) --
+// Chính sách mặc định cho ứng dụng không có chữ ký hợp lệ.
+// Dựa trên Ed25519 của P2.4 (Keyring).
+enum class AppSignatureStatus {
+  ValidTrusted,       // Ký đúng bởi khoá chủ quyền trong keyring
+  InvalidSignature,   // Chữ ký sai hoặc nội dung bị can thiệp
+  UntrustedKey,       // Ký bằng khoá lạ không nằm trong keyring
+  Unsigned,           // Không có chữ ký
+};
+
+struct AppInstallPackage {
+  std::string app_id;
+  std::string manifest_canonical;
+  std::string sig_hex;
+  std::string signer_key_id;
+  Policy declared_policy;
+  bool user_confirmed = false;  // Người dùng xác nhận cài qua hộp thoại tin cậy
+};
+
+struct AppInstallDecision {
+  bool accepted = false;
+  AppSignatureStatus sig_status = AppSignatureStatus::Unsigned;
+  Policy enforced_policy;
+  bool requires_user_confirmation = false;
+  std::string reason_vi;
+};
+
+class AppSignatureGate {
+ public:
+  explicit AppSignatureGate(const bundle::Keyring& keyring);
+
+  // Thẩm định yêu cầu cài đặt và áp dụng chính sách hộp cát mặc định
+  AppInstallDecision evaluate(const AppInstallPackage& pkg) const;
+
+  // Xác minh chữ ký Ed25519 của manifest
+  static AppSignatureStatus verify_signature(
+      const std::string& manifest_canonical,
+      const std::string& sig_hex,
+      const std::string& signer_key_id,
+      const bundle::Keyring& keyring);
+
+ private:
+  const bundle::Keyring& keyring_;
+};
+
+// --------------------------------------------------- third-party IME sandbox (P3.13) --
+enum class InputFieldKind {
+  NormalText = 0,    // Văn bản thông thường
+  Password,          // Mật khẩu
+  Pin,               // Mã PIN
+  DigitsOnly,        // Số thẻ / OTP
+  Url,               // Địa chỉ web
+  Email,             // Thư điện tử
+};
+
+inline bool is_sensitive_input_field(InputFieldKind kind) {
+  return kind != InputFieldKind::NormalText;
+}
+
+const char* input_field_kind_name_vi(InputFieldKind kind);
+
+// Giao diện Engine IME bên thứ ba
+class IThirdPartyImeEngine {
+ public:
+  virtual ~IThirdPartyImeEngine() = default;
+  virtual const std::string& app_id() const = 0;
+  virtual std::string compose_key(uint32_t codepoint) = 0;
+  virtual void reset() = 0;
+  virtual size_t keystrokes_received() const = 0;
+};
+
+// Host hộp cát quản lý tương tác và bảo vệ bàn phím cho IME bên thứ ba
+class ThirdPartyImeHost {
+ public:
+  ThirdPartyImeHost(IThirdPartyImeEngine* engine, Policy policy, Enforcer* enforcer = nullptr);
+
+  // Tạo chính sách chuẩn cho IME bên thứ ba: chỉ input.compose, không net, chỉ fs riêng
+  static Policy create_default_policy(const std::string& app_id, const std::string& data_dir);
+
+  // Xử lý một phím gõ. Nếu là trường nhạy cảm (Password/PIN/...),
+  // engine ngoài nhận 0 phím, ghi audit log và trả về rỗng.
+  std::string process_keystroke(uint32_t codepoint, InputFieldKind field_kind, int64_t now = 0);
+
+  // Kiểm tra hành động do engine cố thực hiện (mạng, đọc file...)
+  Decision check_engine_action(const Action& action, int64_t now = 0);
+
+  size_t suppressed_keystrokes_count() const { return suppressed_sensitive_keys_; }
+  const Policy& policy() const { return policy_; }
+
+ private:
+  IThirdPartyImeEngine* engine_;
+  Policy policy_;
+  Enforcer* enforcer_;
+  size_t suppressed_sensitive_keys_ = 0;
 };
 
 }  // namespace yui::sandbox

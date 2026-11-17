@@ -4,10 +4,13 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <sstream>
 
+#include "yui/bundle.hpp"
 #include "yui/crypto.hpp"
+#include "yui/ed25519.hpp"
 #include "yui/text.hpp"
 
 namespace yui::sandbox {
@@ -17,12 +20,12 @@ using crypto::Bytes;
 const char* kRightNames[] = {
     "fs.read", "fs.write", "net.connect", "net.listen", "spawn", "gpu",
     "input",   "camera",    "mic",         "location",     "power", "vault",
-    "graph",   "model",     "admin",       "compute.heavy",
+    "graph",   "model",     "admin",       "compute.heavy", "bluetooth", "input.compose",
 };
 const uint64_t kRightBits[] = {
     kRightFsRead, kRightFsWrite, kRightNetConnect, kRightNetListen, kRightSpawn, kRightGpu,
     kRightInput,  kRightCamera,  kRightMic,        kRightLocation,  kRightPower, kRightVault,
-    kRightGraph,  kRightModel,   kRightAdmin,      kRightComputeHeavy,
+    kRightGraph,  kRightModel,   kRightAdmin,      kRightComputeHeavy, kRightBluetooth, kRightInputCompose,
 };
 constexpr size_t kRightCount = sizeof(kRightBits) / sizeof(kRightBits[0]);
 
@@ -561,6 +564,159 @@ EgressDecision EgressFilter::check(const EgressRequest& r) const {
       "chặn kết nối tới " + (target.empty() ? std::string("<rỗng>") : target) + port_s +
       " — ngoài phạm vi cho phép của chính sách (cô lập egress, mặc định chặn)";
   return d;
+}
+
+// -------------------------------------------------- app signature gate (P3.12) --
+AppSignatureStatus AppSignatureGate::verify_signature(
+    const std::string& manifest_canonical,
+    const std::string& sig_hex,
+    const std::string& signer_key_id,
+    const bundle::Keyring& keyring) {
+  if (manifest_canonical.empty() || sig_hex.empty() || signer_key_id.empty()) {
+    return AppSignatureStatus::Unsigned;
+  }
+  if (!keyring.contains(signer_key_id)) {
+    return AppSignatureStatus::UntrustedKey;
+  }
+  ed25519::PublicKey pub;
+  if (!keyring.get(signer_key_id, pub)) {
+    return AppSignatureStatus::UntrustedKey;
+  }
+  const auto sig_bytes = crypto::from_hex(sig_hex);
+  if (sig_bytes.size() != 64) {
+    return AppSignatureStatus::InvalidSignature;
+  }
+  ed25519::Signature sig;
+  std::memcpy(sig.data(), sig_bytes.data(), 64);
+
+  const uint8_t* msg = reinterpret_cast<const uint8_t*>(manifest_canonical.data());
+  if (!ed25519::verify(pub, msg, manifest_canonical.size(), sig)) {
+    return AppSignatureStatus::InvalidSignature;
+  }
+  return AppSignatureStatus::ValidTrusted;
+}
+
+AppSignatureGate::AppSignatureGate(const bundle::Keyring& keyring) : keyring_(keyring) {}
+
+AppInstallDecision AppSignatureGate::evaluate(const AppInstallPackage& pkg) const {
+  AppInstallDecision dec;
+  dec.sig_status = verify_signature(pkg.manifest_canonical, pkg.sig_hex, pkg.signer_key_id, keyring_);
+
+  if (dec.sig_status == AppSignatureStatus::InvalidSignature) {
+    dec.accepted = false;
+    dec.requires_user_confirmation = false;
+    dec.reason_vi = "Chữ ký số Ed25519 không khớp hoặc gói cài đặt đã bị can thiệp: từ chối cài đặt";
+    return dec;
+  }
+
+  if (dec.sig_status == AppSignatureStatus::Unsigned || dec.sig_status == AppSignatureStatus::UntrustedKey) {
+    if (!pkg.user_confirmed) {
+      dec.accepted = false;
+      dec.requires_user_confirmation = true;
+      dec.reason_vi = (dec.sig_status == AppSignatureStatus::Unsigned)
+          ? "Ứng dụng không có chữ ký số: người dùng phải xác nhận cài đặt vào hộp cát cách ly"
+          : "Chữ ký từ khoá chưa được tin cậy: người dùng phải xác nhận cài đặt vào hộp cát cách ly";
+      return dec;
+    }
+
+    // Người dùng đã xác nhận: đưa vào hộp cát isolated, net: none, tước admin/power
+    dec.accepted = true;
+    dec.requires_user_confirmation = false;
+    Policy restricted;
+    restricted.app_id = pkg.app_id.empty() ? "untrusted.app" : pkg.app_id;
+    restricted.tier = Tier::Isolated;
+    // Tước toàn bộ quyền mạng (net.connect, net.listen), admin, và power
+    uint64_t stripped = pkg.declared_policy.granted;
+    stripped &= ~(kRightNetConnect | kRightNetListen | kRightAdmin | kRightPower);
+    restricted.granted = stripped;
+    restricted.allow_child_processes = false;
+    restricted.persistent_storage = false;
+
+    // Chỉ cho phép thư mục dữ liệu riêng của app
+    restricted.scopes.clear();
+    restricted.scopes.push_back("/home/user/app-data/" + restricted.app_id + ":rw");
+
+    // Thêm rõ ràng deny cho net, admin, power
+    restricted.deny.push_back("net:*");
+    restricted.deny.push_back("admin");
+    restricted.deny.push_back("power");
+
+    dec.enforced_policy = restricted;
+    dec.reason_vi = "Ứng dụng không có chữ ký hợp lệ được người dùng xác nhận: cách ly trong hộp cát net:none, tước quyền admin và power";
+    return dec;
+  }
+
+  // Chữ ký hợp lệ từ khoá chủ quyền:
+  dec.accepted = true;
+  dec.requires_user_confirmation = false;
+  dec.enforced_policy = pkg.declared_policy;
+  dec.reason_vi = "Chữ ký số Ed25519 hợp lệ từ khoá chủ quyền: áp dụng chính sách riêng đã thẩm định";
+  return dec;
+}
+
+// --------------------------------------------------- third-party IME sandbox (P3.13) --
+const char* input_field_kind_name_vi(InputFieldKind kind) {
+  switch (kind) {
+    case InputFieldKind::NormalText: return "văn bản";
+    case InputFieldKind::Password: return "mật khẩu";
+    case InputFieldKind::Pin: return "mã PIN";
+    case InputFieldKind::DigitsOnly: return "số thẻ/OTP";
+    case InputFieldKind::Url: return "địa chỉ web";
+    case InputFieldKind::Email: return "email";
+  }
+  return "không rõ";
+}
+
+Policy ThirdPartyImeHost::create_default_policy(const std::string& app_id, const std::string& data_dir) {
+  Policy p;
+  p.app_id = app_id;
+  p.tier = Tier::Isolated;
+  p.granted = kRightInputCompose;
+  p.allow_child_processes = false;
+  p.persistent_storage = false;
+  if (!data_dir.empty()) {
+    p.granted |= kRightFsRead | kRightFsWrite;
+    p.scopes.push_back(data_dir + ":rw");
+  }
+  p.deny.push_back("net:*");
+  p.deny.push_back("admin");
+  p.deny.push_back("power");
+  return p;
+}
+
+ThirdPartyImeHost::ThirdPartyImeHost(IThirdPartyImeEngine* engine, Policy policy, Enforcer* enforcer)
+    : engine_(engine), policy_(std::move(policy)), enforcer_(enforcer) {}
+
+std::string ThirdPartyImeHost::process_keystroke(uint32_t codepoint, InputFieldKind field_kind, int64_t now) {
+  if (is_sensitive_input_field(field_kind)) {
+    ++suppressed_sensitive_keys_;
+    if (enforcer_) {
+      AuditEntry entry;
+      entry.when = now;
+      entry.subject = policy_.app_id;
+      entry.action = Action{"input.compose", input_field_kind_name_vi(field_kind)};
+      entry.decision = Decision{false, policy_.tier,
+          std::string("Bảo vệ OS: không chuyển phím từ trường nhạy cảm (") +
+              input_field_kind_name_vi(field_kind) + ") cho bộ gõ bên thứ ba", 0};
+      enforcer_->record(entry);
+    }
+    // Quy tắc cứng: engine ngoài nhận 0 phím
+    return "";
+  }
+
+  // Trường văn bản thông thường: kiểm tra quyền input.compose
+  if (enforcer_) {
+    const Decision d = enforcer_->check(policy_, nullptr, Action{"input.compose", ""}, now);
+    if (!d.allowed) return "";
+  }
+
+  if (!engine_) return "";
+  return engine_->compose_key(codepoint);
+}
+
+Decision ThirdPartyImeHost::check_engine_action(const Action& action, int64_t now) {
+  if (!enforcer_) return Decision{false, policy_.tier, "không có enforcer", 0};
+  return enforcer_->check(policy_, nullptr, action, now);
 }
 
 }  // namespace yui::sandbox

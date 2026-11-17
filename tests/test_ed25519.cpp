@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <sys/stat.h>
 #include <vector>
 
 #include "testutil.hpp"
@@ -216,12 +217,41 @@ std::string make_tmpdir() {
   return d ? std::string(d) : std::string();
 }
 
+void mkdir_p_local(const std::string& path) {
+  std::string cur;
+  for (size_t i = 0; i <= path.size(); ++i) {
+    if (i == path.size() || path[i] == '/') {
+      if (!cur.empty()) {
+        ::mkdir(cur.c_str(), 0755);
+      }
+      if (i < path.size()) cur += '/';
+    } else {
+      cur += path[i];
+    }
+  }
+}
+
 void write_raw(const std::string& path, const std::string& content) {
+  const size_t slash = path.rfind('/');
+  if (slash != std::string::npos) {
+    mkdir_p_local(path.substr(0, slash));
+  }
   FILE* f = std::fopen(path.c_str(), "wb");
   if (f) {
     std::fwrite(content.data(), 1, content.size(), f);
     std::fclose(f);
   }
+}
+
+bool read_raw(const std::string& path, std::vector<uint8_t>& out) {
+  FILE* f = std::fopen(path.c_str(), "rb");
+  if (!f) return false;
+  out.clear();
+  uint8_t buf[1024];
+  size_t n;
+  while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) out.insert(out.end(), buf, buf + n);
+  std::fclose(f);
+  return true;
 }
 
 std::string hex_sha(const std::string& content) {
@@ -400,6 +430,193 @@ YUI_TEST(bundle, install_ab_slots_and_rollback) {
   CHECK(!i3.ok);
   CHECK(i3.reason_vi.find("không cài được") != std::string::npos);
   CHECK_EQ(bundle::active_slot(state), std::string("A"));
+}
+
+YUI_TEST(bundle, sign_bundle_and_verify_offline) {
+  const ed25519::Seed seed = seed_of("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+  const auto pub = ed25519::public_key(seed);
+
+  bundle::Keyring keys;
+  CHECK(keys.add("vietnam-release-2026", pub));
+
+  const std::string payload_dir = make_tmpdir() + "/src_payload";
+  write_raw(payload_dir + "/bin/yuid", "#!/bin/sh\necho yuid\n");
+  write_raw(payload_dir + "/etc/config.json", "{\"version\":\"2.0\"}\n");
+  write_raw(payload_dir + "/share/doc/README", "Sovereign release\n");
+
+  const std::string bundle_dir = make_tmpdir() + "/built_bundle";
+  bundle::SignOptions opts;
+  opts.key_id = "vietnam-release-2026";
+  opts.version = "2.1.0";
+  opts.stream = "os";
+
+  std::string err;
+  const bool ok = bundle::sign_bundle(payload_dir, bundle_dir, opts, seed, &err);
+  CHECK_MSG(ok, err);
+
+  // Xác minh offline bằng Keyring
+  const auto r = bundle::verify(bundle_dir, keys);
+  CHECK(r.ok);
+  CHECK(r.signature_ok);
+  CHECK(r.payload_ok);
+  CHECK_EQ(r.key_id, std::string("vietnam-release-2026"));
+  CHECK(r.reason_vi.find("hợp lệ") != std::string::npos);
+
+  // Thử phá hoại payload 1 byte -> verify từ chối
+  write_raw(bundle_dir + "/payload/share/doc/README", "Sovereign tampered\n");
+  const auto r_tamper = bundle::verify(bundle_dir, keys);
+  CHECK(!r_tamper.ok);
+  CHECK(!r_tamper.payload_ok);
+  CHECK(r_tamper.reason_vi.find("SHA-256 không khớp") != std::string::npos);
+
+  // Khôi phục lại và thử phá hoại chữ ký -> verify từ chối
+  write_raw(bundle_dir + "/payload/share/doc/README", "Sovereign release\n");
+  std::vector<uint8_t> sig_bytes;
+  CHECK(read_raw(bundle_dir + "/manifest.sig", sig_bytes));
+  CHECK(sig_bytes.size() >= 64);
+  if (sig_bytes.size() >= 64) {
+    sig_bytes[5] ^= 0x55;
+    FILE* fs = std::fopen((bundle_dir + "/manifest.sig").c_str(), "wb");
+    if (fs) {
+      std::fwrite(sig_bytes.data(), 1, sig_bytes.size(), fs);
+      std::fclose(fs);
+    }
+  }
+  const auto r_sig_tamper = bundle::verify(bundle_dir, keys);
+  CHECK(!r_sig_tamper.ok);
+  CHECK(!r_sig_tamper.signature_ok);
+  CHECK(r_sig_tamper.reason_vi.find("chữ ký Ed25519") != std::string::npos);
+}
+
+YUI_TEST(bundle, update_deferred_apply_and_commit) {
+  const ed25519::Seed seed = seed_of("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb");
+  bundle::Keyring keys;
+  keys.add("rel-key", ed25519::public_key(seed));
+
+  const std::string payload = make_tmpdir() + "/payload";
+  write_raw(payload + "/kernel", "YuiKernel v2.0\n");
+
+  const std::string bundle_dir = make_tmpdir() + "/bundle";
+  bundle::SignOptions s_opts;
+  s_opts.key_id = "rel-key";
+  s_opts.version = "2.0.0";
+  s_opts.stream = "os";
+  CHECK(bundle::sign_bundle(payload, bundle_dir, s_opts, seed));
+
+  const std::string state = make_tmpdir() + "/state";
+
+  // Ban đầu: active slot là A, chưa có pending
+  CHECK_EQ(bundle::stream_active_slot(state, "os"), std::string("A"));
+  auto st0 = bundle::update_status(state, "os");
+  CHECK_EQ(st0.active_slot, std::string("A"));
+  CHECK(!st0.has_pending);
+
+  // Áp dụng với hoãn kích hoạt (defer_reboot = true)
+  bundle::UpdateOptions u_opts;
+  u_opts.stream = "os";
+  u_opts.defer_reboot = true;
+
+  const auto r_apply = bundle::update_apply(bundle_dir, keys, state, u_opts);
+  CHECK(r_apply.ok);
+  CHECK(r_apply.pending);
+  CHECK_EQ(r_apply.slot, std::string("B"));
+
+  // Quan trọng: Phiên làm việc của người dùng KHÔNG bị gián đoạn, boot pointer vẫn là A!
+  CHECK_EQ(bundle::stream_active_slot(state, "os"), std::string("A"));
+  auto st1 = bundle::update_status(state, "os");
+  CHECK_EQ(st1.active_slot, std::string("A"));
+  CHECK(st1.has_pending);
+  CHECK_EQ(st1.pending_slot, std::string("B"));
+  CHECK_EQ(st1.backup_version, std::string("2.0.0"));
+
+  // Khi khởi động máy / commit pending: chuyển sang khe B
+  std::string commit_err;
+  CHECK(bundle::update_commit_pending(state, "os", &commit_err));
+
+  // Giờ khe B đã trở thành active!
+  CHECK_EQ(bundle::stream_active_slot(state, "os"), std::string("B"));
+  auto st2 = bundle::update_status(state, "os");
+  CHECK_EQ(st2.active_slot, std::string("B"));
+  CHECK(!st2.has_pending);
+  CHECK_EQ(st2.active_version, std::string("2.0.0"));
+
+  // Quay lui về khe A
+  const auto r_roll = bundle::update_rollback(state, "os");
+  CHECK(r_roll.ok);
+  CHECK_EQ(r_roll.slot, std::string("A"));
+  CHECK_EQ(bundle::stream_active_slot(state, "os"), std::string("A"));
+}
+
+YUI_TEST(bundle, multi_stream_isolation) {
+  const ed25519::Seed seed = seed_of("c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7");
+  bundle::Keyring keys;
+  keys.add("vietnam-key", ed25519::public_key(seed));
+
+  const std::string state = make_tmpdir() + "/state";
+
+  // Chuẩn bị bundle cho luồng models
+  const std::string payload_models = make_tmpdir() + "/models_payload";
+  write_raw(payload_models + "/weights.bin", "model-weights-4bit-kv\n");
+  const std::string bundle_models = make_tmpdir() + "/models_bundle";
+  bundle::SignOptions m_opts;
+  m_opts.key_id = "vietnam-key";
+  m_opts.version = "0.5.0";
+  m_opts.stream = "models";
+  CHECK(bundle::sign_bundle(payload_models, bundle_models, m_opts, seed));
+
+  // Chuẩn bị bundle cho luồng apps
+  const std::string payload_apps = make_tmpdir() + "/apps_payload";
+  write_raw(payload_apps + "/editor.app", "text-editor-app\n");
+  const std::string bundle_apps = make_tmpdir() + "/apps_bundle";
+  bundle::SignOptions a_opts;
+  a_opts.key_id = "vietnam-key";
+  a_opts.version = "1.2.0";
+  a_opts.stream = "apps";
+  CHECK(bundle::sign_bundle(payload_apps, bundle_apps, a_opts, seed));
+
+  // Áp dụng vào luồng models (khe B, kích hoạt ngay)
+  bundle::UpdateOptions opts_m;
+  opts_m.stream = "models";
+  opts_m.defer_reboot = false;
+  const auto r_m = bundle::update_apply(bundle_models, keys, state, opts_m);
+  CHECK(r_m.ok);
+  CHECK_EQ(r_m.slot, std::string("B"));
+
+  // Kiểm tra tính độc lập tuyệt đối giữa các luồng:
+  // Luồng models đã sang B:
+  CHECK_EQ(bundle::stream_active_slot(state, "models"), std::string("B"));
+  // Luồng os vẫn ở A nguyên vẹn:
+  CHECK_EQ(bundle::stream_active_slot(state, "os"), std::string("A"));
+  // Luồng apps vẫn ở A nguyên vẹn:
+  CHECK_EQ(bundle::stream_active_slot(state, "apps"), std::string("A"));
+
+  // Áp dụng vào luồng apps với defer_reboot = true
+  bundle::UpdateOptions opts_a;
+  opts_a.stream = "apps";
+  opts_a.defer_reboot = true;
+  const auto r_a = bundle::update_apply(bundle_apps, keys, state, opts_a);
+  CHECK(r_a.ok);
+  CHECK(r_a.pending);
+
+  auto st_apps = bundle::update_status(state, "apps");
+  CHECK_EQ(st_apps.active_slot, std::string("A"));
+  CHECK(st_apps.has_pending);
+  CHECK_EQ(st_apps.pending_slot, std::string("B"));
+
+  // Luồng models vẫn chạy trực tiếp trên B, không có pending
+  auto st_models = bundle::update_status(state, "models");
+  CHECK_EQ(st_models.active_slot, std::string("B"));
+  CHECK(!st_models.has_pending);
+  CHECK_EQ(st_models.active_version, std::string("0.5.0"));
+
+  // Quay lui models về A
+  const auto r_m_roll = bundle::update_rollback(state, "models");
+  CHECK(r_m_roll.ok);
+  CHECK_EQ(bundle::stream_active_slot(state, "models"), std::string("A"));
+
+  // os và apps hoàn toàn không bị ảnh hưởng bởi rollback của models
+  CHECK_EQ(bundle::stream_active_slot(state, "os"), std::string("A"));
+  CHECK(bundle::update_status(state, "apps").has_pending);
 }
 
 YUI_TEST_MAIN("ed25519")

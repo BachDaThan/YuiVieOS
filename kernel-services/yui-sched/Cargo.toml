@@ -7,3 +7,5 @@ description = "YuiVieOS latency-aware hot-swappable scheduler policy (Tầng 2)"
 
 [lib]
 name = "yui_sched"
+
+[dependencies]

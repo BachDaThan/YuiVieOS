@@ -211,12 +211,14 @@ YUI_TEST(ime, editable_composition_buffer) {
 YUI_TEST(ime, direct_mode_exact_telex_replay) {
   ime::DirectComposition direct;
   std::string visible;
+  size_t total_backspaces = 0;
   auto feed = [&](uint32_t key, size_t backspaces, const std::string& committed,
                   const std::string& expected_visible) {
     ime::ReplayEdit edit;
     CHECK(direct.feed(key, &edit));
     CHECK_EQ(edit.backspaces, backspaces);
     CHECK_EQ(edit.text, committed);
+    total_backspaces += edit.backspaces;
     apply_replay(visible, edit);
     CHECK_EQ(visible, expected_visible);
   };
@@ -230,18 +232,34 @@ YUI_TEST(ime, direct_mode_exact_telex_replay) {
   CHECK_EQ(visible, std::string("đ"));
 
   feed('T', 0, "T", "đT");
-  feed('i', 1, "Ti", "đTi");
-  feed('e', 2, "Tie", "đTie");
-  feed('e', 3, "Tiê", "đTiê");
-  feed('n', 3, "Tiên", "đTiên");
-  feed('g', 4, "Tiêng", "đTiêng");
-  feed('s', 5, "Tiếng", "đTiếng");  // each replay deletes the complete prior composition
+  feed('i', 0, "i", "đTi");
+  feed('e', 0, "e", "đTie");
+  feed('e', 1, "ê", "đTiê");
+  feed('n', 0, "n", "đTiên");
+  feed('g', 0, "g", "đTiêng");
+  feed('s', 3, "ếng", "đTiếng");  // keeping common prefix "Ti": 3 backspaces ("êng") then commit "ếng"
 
   boundary = direct.commit();
   CHECK_EQ(boundary.backspaces, size_t(0));
   CHECK_EQ(boundary.text, std::string(""));
   apply_replay(visible, boundary);
   CHECK_EQ(visible, std::string("đTiếng"));
+
+  for (char key : std::string("window")) {
+    ime::ReplayEdit edit;
+    CHECK(direct.feed(static_cast<uint32_t>(key), &edit));
+    CHECK_EQ(edit.backspaces, size_t(0));
+    CHECK_EQ(edit.text, std::string(1, key));
+    total_backspaces += edit.backspaces;
+    apply_replay(visible, edit);
+  }
+  CHECK_EQ(visible, std::string("đTiếngwindow"));
+  boundary = direct.commit();
+  CHECK_EQ(boundary.backspaces, size_t(0));
+  apply_replay(visible, boundary);
+
+  // Exactly 5 BackSpaces across "dd" (1) + "Tieengs" (4) + "window" (0)
+  CHECK_EQ(total_backspaces, size_t(5));
 }
 
 YUI_TEST(ime, direct_mode_backspace_restore_and_boundaries) {
@@ -256,19 +274,19 @@ YUI_TEST(ime, direct_mode_backspace_restore_and_boundaries) {
 
   ime::ReplayEdit edit;
   CHECK(direct.backspace(&edit));
-  CHECK_EQ(edit.backspaces, size_t(5));
-  CHECK_EQ(edit.text, std::string("Tiêng"));
+  CHECK_EQ(edit.backspaces, size_t(3));
+  CHECK_EQ(edit.text, std::string("êng"));
   apply_replay(visible, edit);
   CHECK_EQ(visible, std::string("Tiêng"));
   CHECK(direct.feed('s', &edit));
-  CHECK_EQ(edit.backspaces, size_t(5));
-  CHECK_EQ(edit.text, std::string("Tiếng"));
+  CHECK_EQ(edit.backspaces, size_t(3));
+  CHECK_EQ(edit.text, std::string("ếng"));
   apply_replay(visible, edit);
   CHECK_EQ(visible, std::string("Tiếng"));
 
   edit = direct.restore();
-  CHECK_EQ(edit.backspaces, size_t(5));
-  CHECK_EQ(edit.text, std::string("Tieengs"));
+  CHECK_EQ(edit.backspaces, size_t(3));
+  CHECK_EQ(edit.text, std::string("eengs"));
   apply_replay(visible, edit);
   CHECK_EQ(visible, std::string("Tieengs"));
   CHECK(direct.empty());
@@ -328,8 +346,8 @@ YUI_TEST(ime, direct_mode_vni_replay_and_english_restore) {
     for (char key : word) {
       literal.push_back(key);
       CHECK(english.feed(static_cast<uint32_t>(key), &edit));
-      CHECK_EQ(edit.backspaces, literal.size() - 1);
-      CHECK_EQ(edit.text, literal);
+      CHECK_EQ(edit.backspaces, size_t(0));
+      CHECK_EQ(edit.text, std::string(1, key));
       apply_replay(english_visible, edit);
       CHECK_EQ(english_visible, literal);
     }
@@ -338,6 +356,148 @@ YUI_TEST(ime, direct_mode_vni_replay_and_english_restore) {
     CHECK_EQ(edit.text, std::string(""));
     CHECK_EQ(english_visible, word);
   }
+}
+
+YUI_TEST(ime, direct_mode_random_replay_and_common_prefix_invariants) {
+  // Test at least 200 random / diverse typing sequences in both Telex and VNI,
+  // verifying that keeping common prefix always yields identical text to naive
+  // full-word replay at EVERY step, with total backspaces <= naive replay.
+  const std::vector<std::string> telex_corpus = {
+      "dd", "DD", "ddw", "DDawng", "dduwowngf", "truwowngf", "phuwowng", "thuwowng",
+      "nguwowif", "buwowsc", "nwowsc", "luwowjt", "chuwowng", "mowsi", "rowif",
+      "ddoofng", "hoaf", "toanf", "khoai", "tuoofi", "quar", "gias", "cawps",
+      "mawms", "tats", "nats", "cacs", "VIEETJ", "TIEENGS", "DDUWOWNGF",
+      "TRUWOWNGF", "DDang", "DDooj", "Hoangf", "Nguyeexn", "Trar", "ddur",
+      "ddax", "ddaj", "khoo", "quees", "thuyeenf", "khoer", "nhanh", "chuyeern",
+      "nghieeng", "quyeesn", "xuyeen", "ddieeur", "ddieemr", "chuwas", "chuwa",
+      "tuwowng", "ddawsng", "thawsng", "chawsng", "lawswng", "khasch", "trrawng",
+      "muwowsi", "twrowif", "nguwowi", "ddawjt", "ngawjt", "bieets", "tieecs",
+      "thieets", "kieems", "lieems", "chieecs", "bieern", "khieens", "lieenf",
+      "chieenf", "mieens", "tieens", "thieens", "ddieens", "khoo", "xoof",
+      "choof", "hooj", "dooj", "soos", "toos", "loos", "phoos", "zoos", "wo",
+      "wa", "we", "wi", "w", "Tieengs", "vieetj", "nam", "thaif", "duwowng",
+      "yeue", "uoong", "thuoocj", "khuyeens", "maix", "cuowis", "tuowri"
+  };
+
+  const std::vector<std::string> vni_corpus = {
+      "d9", "D9", "d9u7o7ng2", "tru7o7ng2", "phu7o7ng", "thu7o7ng", "ngu7o7i2",
+      "bu7o7c1", "nu7o7c1", "lu7o7t5", "chu7o7ng", "mo7i1", "ro7i2", "d9o62ng",
+      "hoa2", "toan2", "khoai", "tuo6i2", "qua3", "gia1", "ca8p1", "ma8m1",
+      "ta1t", "na1t", "ca1c", "VIET65", "TIENG1", "D9U7O7NG2", "TRU7O7NG2",
+      "D9ang", "D9o65", "Hoang2", "Nguyen4", "Tra3", "d9u3", "d9a4", "d9a5",
+      "kho6", "que1", "thuyen2", "kho3", "nhanh", "chuyen3", "nghieng",
+      "quyen1", "xuyen", "d9ieu3", "d9iem3", "chu7a1", "chu7a", "tu7o7ng",
+      "d9a8ng1", "tha8ng1", "cha8ng1", "la8ng1", "kha1ch", "tra8ng", "mu7o7i1",
+      "tro7i2", "ngu7o7i", "d9a8t5", "nga8t5", "biet1", "tiec1", "thiet1",
+      "kiem1", "liem1", "chiec1", "bien3", "khien1", "lien2", "chien2",
+      "mien1", "tien1", "thien1", "d9ien1", "viet65", "nam"
+  };
+
+  size_t tested_count = 0;
+
+  auto run_sequence = [&](ime::Method method, const std::string& seq, bool test_backspace) {
+    ime::DirectComposition direct(method);
+    ime::Composition naive_comp(method);
+    std::string visible_direct;
+    std::string visible_naive;
+    std::string rendered_naive;
+    size_t total_bs_direct = 0;
+    size_t total_bs_naive = 0;
+
+    for (size_t i = 0; i < seq.size(); ++i) {
+      const uint32_t key = static_cast<uint8_t>(seq[i]);
+      ime::ReplayEdit direct_edit;
+      bool ok_d = direct.feed(key, &direct_edit);
+      bool ok_n = naive_comp.feed(key);
+      CHECK_EQ(ok_d, ok_n);
+      if (ok_d) {
+        apply_replay(visible_direct, direct_edit);
+        total_bs_direct += direct_edit.backspaces;
+
+        ime::ReplayEdit naive_edit;
+        naive_edit.backspaces = text::length(rendered_naive);
+        naive_edit.text = naive_comp.preedit();
+        apply_replay(visible_naive, naive_edit);
+        rendered_naive = naive_comp.preedit();
+        total_bs_naive += naive_edit.backspaces;
+
+        CHECK_EQ(visible_direct, visible_naive);
+      }
+
+      // Occasionally test a backspace mid-composition if requested
+      if (test_backspace && i == seq.size() / 2 && !direct.empty()) {
+        ime::ReplayEdit bs_direct;
+        bool bs_d = direct.backspace(&bs_direct);
+        bool bs_n = naive_comp.backspace();
+        CHECK_EQ(bs_d, bs_n);
+        if (bs_d) {
+          apply_replay(visible_direct, bs_direct);
+          total_bs_direct += bs_direct.backspaces;
+
+          ime::ReplayEdit bs_naive;
+          bs_naive.backspaces = text::length(rendered_naive);
+          bs_naive.text = naive_comp.preedit();
+          apply_replay(visible_naive, bs_naive);
+          rendered_naive = naive_comp.preedit();
+          total_bs_naive += bs_naive.backspaces;
+
+          CHECK_EQ(visible_direct, visible_naive);
+        }
+      }
+    }
+
+    // Commit boundary
+    ime::ReplayEdit commit_direct = direct.commit();
+    apply_replay(visible_direct, commit_direct);
+    total_bs_direct += commit_direct.backspaces;
+
+    ime::ReplayEdit commit_naive;
+    std::string committed_n = naive_comp.commit();
+    if (committed_n != rendered_naive) {
+      commit_naive.backspaces = text::length(rendered_naive);
+      commit_naive.text = committed_n;
+    }
+    apply_replay(visible_naive, commit_naive);
+    total_bs_naive += commit_naive.backspaces;
+
+    CHECK_EQ(visible_direct, visible_naive);
+    CHECK(total_bs_direct <= total_bs_naive);
+    ++tested_count;
+  };
+
+  // 1. Run all curated real words for Telex (with and without mid-typing backspace)
+  for (const auto& w : telex_corpus) {
+    run_sequence(ime::Method::Telex, w, false);
+    run_sequence(ime::Method::Telex, w, true);
+  }
+
+  // 2. Run all curated real words for VNI (with and without mid-typing backspace)
+  for (const auto& w : vni_corpus) {
+    run_sequence(ime::Method::Vni, w, false);
+    run_sequence(ime::Method::Vni, w, true);
+  }
+
+  // 3. Deterministic PRNG sequences (Telex and VNI)
+  uint32_t rng = 0x12345678;
+  auto next_rng = [&]() {
+    rng = rng * 1664525u + 1013904223u;
+    return rng;
+  };
+
+  const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
+  const size_t charset_len = sizeof(charset) - 1;
+
+  for (int iter = 0; iter < 100; ++iter) {
+    std::string seq;
+    size_t len = 3 + (next_rng() % 8);
+    for (size_t l = 0; l < len; ++l) {
+      seq.push_back(charset[next_rng() % charset_len]);
+    }
+    ime::Method m = (next_rng() % 2 == 0) ? ime::Method::Telex : ime::Method::Vni;
+    run_sequence(m, seq, (next_rng() % 2 == 1));
+  }
+
+  CHECK(tested_count >= size_t(200));
 }
 
 YUI_TEST(ime, display_width_of_vietnamese) {
