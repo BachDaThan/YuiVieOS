@@ -250,10 +250,66 @@ ngoài phạm vi bị từ chối + audit). Test: `tests/test_redteam.cpp`
 
 `tests/test_redteam.cpp` **mô phỏng tấn công thật** thay vì kiểm API từng phần:
 kịch bản đào coin ngầm (phát hiện + bóp xung + hỏi người dùng + xác nhận tiêu
-diệt) và kịch bản rò rỉ dữ liệu (cho phép đúng đích trong chính sách, chặn đích
-xấu ở cả hai lớp: EgressFilter và Enforcer, có audit). Đây là test hồi quy
-bảo vệ chính ba cơ chế trên — sửa Guard/EgressFilter mà test đỏ nghĩa là đã
-làm hỏng một hàng phòng thủ.
+diệt), kịch bản rò rỉ dữ liệu (cho phép đúng đích trong chính sách, chặn đích
+xấu ở cả hai lớp: EgressFilter và Enforcer, có audit), kịch bản mã độc tống tiền
+mã hoá 10.000 tệp (phát hiện entropy cao + bóp xung + rollback CoW khớp 100%
+băm SHA-256), và 6 kịch bản truy cập lén khi máy rảnh. Đây là test hồi quy
+bảo vệ các cơ chế phòng vệ chủ động — sửa Guard/EgressFilter mà test đỏ nghĩa là
+đã làm hỏng một hàng phòng thủ.
 
 Giới hạn đã biết: tải CPU/GPU trong test là **mẫu do test nạp vào**, chưa phải
 cảm biến thật; ngưỡng 70 %/15 s là hằng số cấu hình, chưa tinh chỉnh theo máy.
+
+### 10.4 Snapshot CoW & Hoàn tác chống mã độc tống tiền (P2.14)
+
+Để bảo vệ phân vùng dữ liệu trạng thái (`/state`), hệ thống sử dụng kho lưu trữ
+Copy-on-Write (`include/yui/fsstore.hpp`, `kernel-services/fsstore.cpp::CowStore`):
+
+1. **Snapshot giao dịch CoW**: Mỗi lần tạo điểm khôi phục, hệ thống chỉ sao chép
+   bảng ánh xạ con trỏ bất biến (`std::shared_ptr<const std::vector<uint8_t>>`),
+   đạt chi phí bộ nhớ $O(1)$ cho dữ liệu byte thực tế. Thời gian tạo snapshot được đo
+   bằng đồng hồ thực (`high_resolution_clock`).
+2. **Bù trừ dung lượng (Storage Accounting)**: Đo lường chính xác dung lượng logic,
+   dung lượng vật lý thực tế, dung lượng chia sẻ (shared) và riêng biệt (exclusive),
+   tính toán tỉ lệ tiết kiệm không gian đĩa tự động.
+3. **Phát hiện Ransomware theo Shannon Entropy**: `guard::RansomwareDetector`
+   theo dõi các thao tác ghi tệp. Khi một tiến trình ghi dồn dập nhiều tệp với
+   entropy cao liên tục ($H \ge 7.2$ bit/byte, đặc trưng của ciphertext hoặc dữ
+   liệu ngẫu nhiên) trong cửa sổ thời gian ngắn:
+   - Tự động hạ ưu tiên tiến trình xuống Idle;
+   - Bóp xung nhịp còn 10%;
+   - Ghi audit tiếng Việt và kích hoạt cảnh báo tới người dùng qua daemon;
+   - Gợi ý hoàn tác (Rollback) về snapshot sạch gần nhất.
+4. **Kiểm thử thực nghiệm (10.000 tệp)**: `tests/test_redteam.cpp` kiểm chứng
+   kịch bản tấn công trên 10.000 tệp: sau khi bị mã độc mã hoá toàn bộ, lệnh rollback
+   khôi phục lại 10.000/10.000 tệp khớp 100% mã băm SHA-256 ban đầu.
+5. **Giới hạn đã biết**: Cơ chế không chống được ransomware chạy với quyền `fs.write`
+   hợp lệ nếu kẻ tấn công cố tình ghi chậm dưới ngưỡng tốc độ hoặc ghi đè dữ liệu có
+   entropy thấp (như xoá bằng số 0). Bảo vệ toàn diện đòi hỏi kết hợp phân quyền
+   hộp cát tối thiểu.
+
+### 10.5 Guard mở rộng khi máy rảnh (Idle Guard — P2.15)
+
+Ngăn chặn phần mềm độc hại hoặc ứng dụng nền lợi dụng lúc người dùng không ngồi
+trước máy tính để thu thập dữ liệu nhạy cảm (`include/yui/guard.hpp`,
+`kernel-services/guard.cpp::IdleGuard`):
+
+1. **Quy tắc máy rảnh**: Theo dõi thời gian rảnh dựa trên sự kiện thao tác của
+   người dùng (bàn phím, chuột, cảm ứng). Khi máy rảnh vượt ngưỡng (mặc định 5 phút / 300 s):
+   - Mọi tiến trình chạy nền không có cửa sổ hiển thị (`has_window == false`) và
+     không có tương tác chủ động của người dùng (`user_initiated == false`) mà
+     cố tình mở micro (ghi âm), camera, đọc danh bạ/tệp nhạy cảm hoặc gửi gói tin ra mạng
+     đều bị coi là hành vi bất thường.
+2. **Thu hồi quyền tức thì $O(1)$**: Badge của thẻ năng lực liên quan bị đưa vào danh
+   sách thu hồi tức thì (`revoked_badges_` băm $O(1)$) để vô hiệu hoá ngay lập tức
+   mọi yêu cầu kế tiếp; tiến trình bị bóp xung về 20%.
+3. **Thông báo và audit**: Phát cảnh báo tiếng Việt ghi rõ tiến trình, tài nguyên
+   và thời gian máy đã rảnh để người dùng quyết định tiếp tục chặn hay cho phép.
+4. **Kiểm thử Red-Team 6 kịch bản**: Đã kiểm thử đầy đủ các tình huống:
+   - Rảnh + mở micro lén ⇒ chặn + thu hồi thẻ $O(1)$;
+   - Đang gõ phím + gọi video call ⇒ cho phép hợp lệ;
+   - Rảnh + đọc trộm danh bạ ⇒ chặn;
+   - Rảnh + phát tán dữ liệu ra mạng ⇒ chặn;
+   - Ứng dụng có cửa sổ đang chạy (nghe nhạc/xem phim) ⇒ không báo nhầm;
+   - Thao tác chập chờn trước ngưỡng thời gian rảnh ⇒ không kích hoạt giả mạo,
+     chỉ kích hoạt khi thực sự đủ điều kiện rảnh.

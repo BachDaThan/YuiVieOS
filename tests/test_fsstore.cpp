@@ -1,4 +1,4 @@
-// Hệ tệp bất biến + Ghi gộp (P2.6).
+// Hệ tệp bất biến + Ghi gộp (P2.6) + CoW Snapshot (P2.14).
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -160,6 +160,126 @@ YUI_TEST(fsstore, immutable_partition_does_not_follow_symlinks) {
   std::remove(secret.c_str());
   rmdir(root.c_str());
   rmdir(outside.c_str());
+}
+
+YUI_TEST(fsstore, cow_store_basic_operations) {
+  fsstore::CowStore store;
+  std::string err;
+
+  // 1. Ghi tệp an toàn
+  CHECK(store.write_file("user/config.json", {'{', '}'}, &err));
+  CHECK(store.has_file("user/config.json"));
+  CHECK_EQ(store.file_count(), size_t(1));
+
+  // 2. Từ chối đường dẫn nguy hiểm
+  CHECK(!store.write_file("/etc/passwd", {'x'}, &err));
+  CHECK(!store.write_file("user/../secret", {'x'}, &err));
+
+  // 3. Đọc tệp
+  std::vector<uint8_t> out;
+  CHECK(store.read_file("user/config.json", &out));
+  CHECK_EQ(out.size(), size_t(2));
+  CHECK_EQ(out[0], uint8_t('{'));
+
+  // 4. Danh sách tệp
+  CHECK(store.write_file("user/notes.txt", {'h', 'i'}));
+  auto files = store.list_files();
+  CHECK_EQ(files.size(), size_t(2));
+  CHECK_EQ(files[0], std::string("user/config.json"));
+  CHECK_EQ(files[1], std::string("user/notes.txt"));
+
+  // 5. Xoá tệp
+  CHECK(store.delete_file("user/notes.txt", &err));
+  CHECK(!store.has_file("user/notes.txt"));
+  CHECK_EQ(store.file_count(), size_t(1));
+  CHECK(!store.delete_file("user/notes.txt", &err));
+}
+
+YUI_TEST(fsstore, cow_store_snapshot_and_rollback) {
+  fsstore::CowStore store;
+  store.write_file("docs/report.txt", {'O', 'K'});
+  store.write_file("docs/todo.txt", {'T', 'o', 'd', 'o'});
+
+  // Tạo snapshot ban đầu kèm đo thời gian thực tế
+  double elapsed_ms = -1.0;
+  const std::string snap1 = store.create_snapshot("clean-state", 1000, &elapsed_ms);
+  CHECK(store.has_snapshot(snap1));
+  CHECK(elapsed_ms >= 0.0);
+  CHECK_EQ(store.snapshot_count(), size_t(1));
+
+  fsstore::SnapshotMeta meta;
+  CHECK(store.get_snapshot_meta(snap1, &meta));
+  CHECK_EQ(meta.file_count, size_t(2));
+  CHECK_EQ(meta.bytes, size_t(6));
+
+  // Sửa đổi tệp và thêm tệp mới (mô phỏng bị thay đổi/ghi đè)
+  store.write_file("docs/report.txt", {'B', 'A', 'D', '!'});
+  store.write_file("docs/malware.exe", {'X'});
+  store.delete_file("docs/todo.txt");
+
+  CHECK_EQ(store.file_count(), size_t(2));
+  CHECK(!store.has_file("docs/todo.txt"));
+  std::vector<uint8_t> rep;
+  CHECK(store.read_file("docs/report.txt", &rep));
+  CHECK_EQ(rep.size(), size_t(4));
+
+  // Thực hiện rollback về snapshot snap1
+  std::string err;
+  CHECK(store.rollback_to(snap1, &err));
+
+  // Xác minh toàn bộ trạng thái ban đầu được phục hồi 100%
+  CHECK_EQ(store.file_count(), size_t(2));
+  CHECK(store.has_file("docs/todo.txt"));
+  CHECK(!store.has_file("docs/malware.exe"));  // tệp rác mới thêm bị biến mất
+
+  rep.clear();
+  CHECK(store.read_file("docs/report.txt", &rep));
+  CHECK_EQ(rep.size(), size_t(2));
+  CHECK_EQ(rep[0], uint8_t('O'));
+  CHECK_EQ(rep[1], uint8_t('K'));
+
+  // Rollback snapshot không tồn tại -> lỗi
+  CHECK(!store.rollback_to("snap-9999", &err));
+  CHECK(err.find("không tìm thấy") != std::string::npos);
+
+  // Xoá snapshot
+  CHECK(store.drop_snapshot(snap1));
+  CHECK_EQ(store.snapshot_count(), size_t(0));
+}
+
+YUI_TEST(fsstore, cow_store_storage_accounting_and_deduplication) {
+  fsstore::CowStore store;
+  // Ghi tệp 100 byte
+  std::vector<uint8_t> data1(100, 0xAA);
+  store.write_file("large.bin", data1);
+
+  // Snapshot 1
+  const std::string snap1 = store.create_snapshot("snap1");
+
+  // Snapshot 2 (chưa sửa gì, CoW chia sẻ hoàn toàn 100 byte)
+  const std::string snap2 = store.create_snapshot("snap2");
+
+  auto acc = store.compute_accounting();
+  // 1 file x 3 views (active + snap1 + snap2) = 300 byte logical
+  CHECK_EQ(acc.logical_bytes, size_t(300));
+  // Vật lý chỉ lưu đúng 100 byte (chia sẻ qua 3 con trỏ)
+  CHECK_EQ(acc.physical_bytes, size_t(100));
+  CHECK_EQ(acc.shared_bytes, size_t(100));
+  CHECK_EQ(acc.exclusive_bytes, size_t(0));
+  CHECK(acc.savings_ratio > 0.60);  // tiết kiệm ~66.7%
+
+  // Ghi đè tệp mới (exclusive)
+  std::vector<uint8_t> data2(50, 0xBB);
+  store.write_file("large.bin", data2);
+
+  acc = store.compute_accounting();
+  // logical: 50 (active) + 100 (snap1) + 100 (snap2) = 250 byte
+  CHECK_EQ(acc.logical_bytes, size_t(250));
+  // physical: 100 (shared giữa snap1 và snap2) + 50 (exclusive cho active) = 150 byte
+  CHECK_EQ(acc.physical_bytes, size_t(150));
+  CHECK_EQ(acc.shared_bytes, size_t(100));
+  CHECK_EQ(acc.exclusive_bytes, size_t(50));
+  CHECK(acc.savings_ratio > 0.35);
 }
 
 YUI_TEST_MAIN("test_fsstore")

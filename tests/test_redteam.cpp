@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "testutil.hpp"
+#include "yui/crypto.hpp"
+#include "yui/fsstore.hpp"
 #include "yui/guard.hpp"
 #include "yui/power.hpp"
 #include "yui/sandbox.hpp"
@@ -259,6 +261,265 @@ YUI_TEST(redteam, yuid_guard_keep_releases_throttle) {
   CHECK(r["done"].as_bool());
   CHECK(!d.guard().is_throttled(7));
   CHECK(r["reason_vi"].as_string().find("để yên") != std::string::npos);
+}
+
+// --------------------------------- 4. phát hiện ransomware & rollback 10.000 tệp (P2.14) --
+
+YUI_TEST(redteam, shannon_entropy_distinguishes_plaintext_from_ciphertext) {
+  // 1. Dữ liệu toàn 0 -> entropy = 0.0
+  std::vector<uint8_t> zeros(1024, 0);
+  CHECK_EQ(guard::shannon_entropy(zeros.data(), zeros.size()), 0.0);
+
+  // 2. Dữ liệu văn bản -> entropy ~ 3.5 .. 5.5
+  const std::string text = "YuiVieOS Beta la he dieu hanh chu quyen toi gian thiet ke cho nguoi Viet.";
+  const double text_ent = guard::shannon_entropy(reinterpret_cast<const uint8_t*>(text.data()), text.size());
+  CHECK(text_ent > 3.0 && text_ent < 5.5);
+
+  // 3. Dữ liệu giả lập mã hoá (pseudo-random / ciphertext) -> entropy > 7.5
+  std::vector<uint8_t> cipher(1024);
+  uint32_t state = 0x12345678;
+  for (size_t i = 0; i < cipher.size(); ++i) {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    cipher[i] = uint8_t(state & 0xFF);
+  }
+  const double cipher_ent = guard::shannon_entropy(cipher.data(), cipher.size());
+  CHECK(cipher_ent > 7.5);
+}
+
+YUI_TEST(redteam, ransomware_attack_10000_files_detected_and_rolled_back) {
+  // Chuẩn bị kho lưu trữ CoW
+  fsstore::CowStore store;
+  constexpr size_t kFileCount = 10000;
+  std::vector<std::string> paths;
+  paths.reserve(kFileCount);
+  std::vector<crypto::Digest32> original_hashes;
+  original_hashes.reserve(kFileCount);
+
+  // 1. Tạo 10.000 tệp ban đầu với dữ liệu hợp lệ và băm SHA-256 từng tệp
+  for (size_t i = 0; i < kFileCount; ++i) {
+    std::string path = "docs/file_" + std::to_string(i) + ".dat";
+    paths.push_back(path);
+    std::string content = "YuiVieOS-File-Content-#" + std::to_string(i) + " -- Du lieu nguoi dung an toan";
+    std::vector<uint8_t> data(content.begin(), content.end());
+    original_hashes.push_back(crypto::sha256(data));
+    store.write_file(path, std::move(data));
+  }
+  CHECK_EQ(store.file_count(), kFileCount);
+
+  // 2. Chụp snapshot điểm giao dịch sạch ban đầu (pre-attack)
+  double elapsed_ms = -1.0;
+  const std::string snap_id = store.create_snapshot("pre-attack-clean", 1000, &elapsed_ms);
+  CHECK(store.has_snapshot(snap_id));
+  CHECK(elapsed_ms >= 0.0);  // số thật đo được
+
+  // Kiểm tra bù trừ dung lượng ban đầu: toàn bộ 10.000 tệp được chia sẻ qua CoW
+  auto acc_before = store.compute_accounting();
+  CHECK_EQ(acc_before.file_count, kFileCount);
+  CHECK(acc_before.shared_bytes > 0);
+  CHECK_EQ(acc_before.exclusive_bytes, size_t(0));
+
+  // 3. Mô phỏng mã độc tống tiền (Ransomware PID 666) tấn công ghi đè 10.000 tệp bằng ciphertext
+  guard::RansomwareDetector detector;
+  std::optional<guard::RansomwareAlert> fired_alert;
+
+  uint32_t rng = 0xDEADBEEF;
+  for (size_t i = 0; i < kFileCount; ++i) {
+    // Sinh khối dữ liệu entropy cao (ciphertext mã hoá 512 byte)
+    std::vector<uint8_t> encrypted_payload(512);
+    for (size_t b = 0; b < encrypted_payload.size(); ++b) {
+      rng ^= rng << 13;
+      rng ^= rng >> 17;
+      rng ^= rng << 5;
+      encrypted_payload[b] = uint8_t(rng & 0xFF);
+    }
+
+    // Ghi đè vào file store
+    store.write_file(paths[i], encrypted_payload);
+
+    // Báo sự kiện ghi cho Guard
+    guard::RansomwareEvent ev;
+    ev.pid = 666;
+    ev.proc_name = "ransomware.exe";
+    ev.file_path = paths[i];
+    ev.data = encrypted_payload.data();
+    ev.size = encrypted_payload.size();
+    ev.now_ns = 2000 + int64_t(i) * 1000000LL;  // ghi nhanh trong cửa sổ
+
+    auto alert = detector.observe_write(ev, snap_id);
+    if (alert && !fired_alert) {
+      fired_alert = alert;
+    }
+  }
+
+  // 4. Kiểm tra Guard phát hiện mã độc tống tiền
+  CHECK(bool(fired_alert));
+  CHECK_EQ(fired_alert->pid, uint64_t(666));
+  CHECK_EQ(fired_alert->proc_name, std::string("ransomware.exe"));
+  CHECK(fired_alert->avg_entropy > 7.2);
+  CHECK(fired_alert->reason_vi.find("mã độc tống tiền") != std::string::npos);
+  CHECK(fired_alert->notify_vi.find("hoàn tác (rollback)") != std::string::npos);
+  CHECK(detector.is_throttled(666));
+
+  // Xác nhận các tệp trong store hiện đã bị hỏng/mã hoá (hash không khớp)
+  std::vector<uint8_t> sample;
+  CHECK(store.read_file(paths[0], &sample));
+  CHECK(crypto::sha256(sample) != original_hashes[0]);
+
+  // 5. Người dùng đồng ý kích hoạt Hoàn tác (Rollback) về snapshot sạch
+  std::string err;
+  CHECK(store.rollback_to(snap_id, &err));
+
+  // 6. Kiểm tra lại toàn bộ 10.000 tệp: băm SHA-256 khớp 100% không sót một tệp nào!
+  size_t restored_matches = 0;
+  for (size_t i = 0; i < kFileCount; ++i) {
+    std::vector<uint8_t> file_buf;
+    if (store.read_file(paths[i], &file_buf) && crypto::sha256(file_buf) == original_hashes[i]) {
+      ++restored_matches;
+    }
+  }
+  CHECK_EQ(restored_matches, kFileCount);
+  CHECK_EQ(store.file_count(), kFileCount);
+
+  // Kiểm tra bù trừ dung lượng sau rollback
+  auto acc_after = store.compute_accounting();
+  CHECK_EQ(acc_after.exclusive_bytes, size_t(0));
+  CHECK_EQ(acc_after.shared_bytes, acc_before.shared_bytes);
+}
+
+// --------------------------------- 5. Guard rảnh rỗi: 6 kịch bản Red-Team (P2.15) --
+
+YUI_TEST(redteam, idle_guard_6_scenarios) {
+  guard::IdleConfig cfg;
+  cfg.idle_timeout_ns = 300LL * kSec;  // 300 s (5 phút)
+  cfg.throttle_percent = 20;
+  guard::IdleGuard idle_guard(cfg);
+
+  // Kịch bản 1: Máy rảnh (> 300 s), ứng dụng nền mở micro ghi âm
+  // -> Guard phát hiện, bóp xung còn 20%, thu hồi token badge O(1), phát cảnh báo.
+  idle_guard.record_user_activity(0);  // người dùng thao tác ở t = 0
+  guard::IdleActivitySample s1;
+  s1.pid = 1001;
+  s1.proc_name = "spy-mic";
+  s1.resource = guard::SensitiveResource::Microphone;
+  s1.has_window = false;
+  s1.user_initiated = false;
+  s1.token_badge = 0xAA01;
+  s1.now_ns = 350LL * kSec;  // đã rảnh 350 s > 300 s
+
+  auto alert1 = idle_guard.observe(s1);
+  CHECK(bool(alert1));
+  CHECK_EQ(alert1->pid, uint64_t(1001));
+  CHECK_EQ(alert1->resource, guard::SensitiveResource::Microphone);
+  CHECK(alert1->reason_vi.find("microphone") != std::string::npos);
+  CHECK(alert1->notify_vi.find("350 giây") != std::string::npos);
+  CHECK(idle_guard.is_badge_revoked(0xAA01));  // O(1) tra cứu thu hồi thẻ
+  CHECK(idle_guard.is_throttled(1001));
+
+  // Kịch bản 2: Người dùng đang thao tác (active), ứng dụng mở camera (video call)
+  // -> Cho phép hợp lệ, không cảnh báo, không bóp xung.
+  idle_guard.record_user_activity(360LL * kSec);  // người dùng vừa gõ phím ở t = 360 s
+  guard::IdleActivitySample s2;
+  s2.pid = 1002;
+  s2.proc_name = "video-call";
+  s2.resource = guard::SensitiveResource::Camera;
+  s2.has_window = true;
+  s2.user_initiated = true;
+  s2.token_badge = 0xAA02;
+  s2.now_ns = 365LL * kSec;  // mới trôi qua 5 s < 300 s
+
+  auto alert2 = idle_guard.observe(s2);
+  CHECK(!bool(alert2));
+  CHECK(!idle_guard.is_badge_revoked(0xAA02));
+  CHECK(!idle_guard.is_throttled(1002));
+
+  // Kịch bản 3: Máy rảnh, ứng dụng nền đọc danh bạ / file nhạy cảm
+  // -> Bị chặn, thu hồi thẻ O(1).
+  guard::IdleActivitySample s3;
+  s3.pid = 1003;
+  s3.proc_name = "contacts-stealer";
+  s3.resource = guard::SensitiveResource::Contacts;
+  s3.has_window = false;
+  s3.user_initiated = false;
+  s3.token_badge = 0xAA03;
+  s3.now_ns = 700LL * kSec;  // đã rảnh 700 - 360 = 340 s > 300 s
+
+  auto alert3 = idle_guard.observe(s3);
+  CHECK(bool(alert3));
+  CHECK_EQ(alert3->resource, guard::SensitiveResource::Contacts);
+  CHECK(idle_guard.is_badge_revoked(0xAA03));
+  CHECK(idle_guard.is_throttled(1003));
+
+  // Kịch bản 4: Máy rảnh, ứng dụng nền gửi gói tin ra mạng
+  // -> Bị chặn, thu hồi thẻ O(1).
+  guard::IdleActivitySample s4;
+  s4.pid = 1004;
+  s4.proc_name = "exfil-net";
+  s4.resource = guard::SensitiveResource::Network;
+  s4.has_window = false;
+  s4.user_initiated = false;
+  s4.token_badge = 0xAA04;
+  s4.now_ns = 720LL * kSec;
+
+  auto alert4 = idle_guard.observe(s4);
+  CHECK(bool(alert4));
+  CHECK_EQ(alert4->resource, guard::SensitiveResource::Network);
+  CHECK(idle_guard.is_badge_revoked(0xAA04));
+  CHECK(idle_guard.is_throttled(1004));
+
+  // Kịch bản 5: Tiến trình có cửa sổ hoạt động (has_window) hoặc do người dùng chủ động (user_initiated)
+  // kể cả khi máy đã lâu không có thao tác bàn phím (ví dụ: trình xem phim/nghe nhạc đang chạy)
+  // -> Cho phép, không cảnh báo.
+  guard::IdleActivitySample s5;
+  s5.pid = 1005;
+  s5.proc_name = "music-player";
+  s5.resource = guard::SensitiveResource::Network;
+  s5.has_window = true;  // cửa sổ đang mở
+  s5.user_initiated = true;
+  s5.token_badge = 0xAA05;
+  s5.now_ns = 800LL * kSec;
+
+  auto alert5 = idle_guard.observe(s5);
+  CHECK(!bool(alert5));
+  CHECK(!idle_guard.is_badge_revoked(0xAA05));
+  CHECK(!idle_guard.is_throttled(1005));
+
+  // Kịch bản 6: Tải nhấp nháy / thao tác chập chờn (người dùng chạm phím ở giây 1000 trước ngưỡng 300)
+  // -> Không kích hoạt giả mạo ở giây 1005 (vì mới chỉ rảnh 5 s); nhưng khi không thao tác đến giây 1350
+  // (> 300 s kể từ 1000) thì kích hoạt chính xác.
+  idle_guard.record_user_activity(1000LL * kSec);  // thao tác lúc 1000 s
+
+  guard::IdleActivitySample s6_early;
+  s6_early.pid = 1006;
+  s6_early.proc_name = "bg-sync";
+  s6_early.resource = guard::SensitiveResource::Microphone;
+  s6_early.has_window = false;
+  s6_early.user_initiated = false;
+  s6_early.token_badge = 0xAA06;
+  s6_early.now_ns = 1005LL * kSec;  // 1005 - 1000 = 5 s < 300 s
+
+  auto alert6_early = idle_guard.observe(s6_early);
+  CHECK(!bool(alert6_early));  // Không bị báo nhầm
+  CHECK(!idle_guard.is_badge_revoked(0xAA06));
+
+  guard::IdleActivitySample s6_late;
+  s6_late.pid = 1006;
+  s6_late.proc_name = "bg-sync";
+  s6_late.resource = guard::SensitiveResource::Microphone;
+  s6_late.has_window = false;
+  s6_late.user_initiated = false;
+  s6_late.token_badge = 0xAA06;
+  s6_late.now_ns = 1350LL * kSec;  // 1350 - 1000 = 350 s > 300 s -> Đủ điều kiện rảnh
+
+  auto alert6_late = idle_guard.observe(s6_late);
+  CHECK(bool(alert6_late));
+  CHECK(idle_guard.is_badge_revoked(0xAA06));
+  CHECK(idle_guard.is_throttled(1006));
+
+  // Thử clear gỡ bóp xung sau khi người dùng cho phép
+  CHECK(idle_guard.clear(1006));
+  CHECK(!idle_guard.is_throttled(1006));
 }
 
 YUI_TEST_MAIN("test_redteam")
