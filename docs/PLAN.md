@@ -20,17 +20,20 @@ chặn (ghi rõ chặn bởi gì).
 
 | Phase | Nội dung | Trạng thái |
 |---|---|---|
-| **P0** | Nền móng: monorepo, hợp đồng cổng chờ, test C++/C11, CI | ✅ xong (tất cả 14 task P0.1–P0.14 đạt; nay **10101** check = 10040 C++17 + 61 C11; 0 fail) |
+| **P0** | Nền móng: monorepo, hợp đồng cổng chờ, test C++/C11, CI | ✅ xong (tất cả 14 task P0.1–P0.14 đạt; nay **11518** check = 11457 C++17 + 61 C11; 0 fail — mình chạy lại 2026-11-17 trên `main` HEAD `179e5d9`; cần `make` trước `make test`, xem P0.15) |
 | **P1** | Chạy thật trên Linux host: `yuid` service, IBus, stripper, telemetry, OS MCP | 🟡 4/12 xong (P1.1, P1.4, P1.5, P1.12); P1.6 một phần; P1.11 Direct mode app thật |
 | **P2** | Rust framekernel + 3 kiến trúc + QEMU + năng lượng + FS + Linux ABI | 🟡 khung nhân boot thật cả 3 kiến trúc trong QEMU: aarch64 + riscv64 trên CI; **x86_64 boot được theo log Kaggle của bạn (2026-11-17)**, còn chờ đối chiếu job CI `qemu` + UEFI |
 | **P3** | VMM sandbox (Wine/VKD3D, Waydroid-lite) | 🔨 đang làm (3/16 task: P3.5, P3.12, P3.13 đạt) |
-| **P4** | UX & phát hành (compositor, installer, ký số) | ⬜ chưa bắt đầu (+P4.14 cửa sổ liền mạch) |
+| **P4** | UX & phát hành (compositor, installer, ký số) | 🟡 5/14 xong (P4.2, P4.3, P4.4, P4.7, P4.9); chưa có compositor, installer, App Yui (+P4.14 cửa sổ liền mạch) |
 | **P5** | *(dự trữ)* Tích hợp AI vào hệ điều hành | 🔒 chờ lệnh kích hoạt |
 | **P6** | *(đề xuất 2026-11-16, chờ bạn duyệt)* Phần cứng thật, hồ sơ máy siêu yếu, hồ sơ game, hệ tệp tương thích (§14); +3 mục nghiên cứu 2026-11-17 (shader, Box64/FEX, token chữ ký số) | ⬜ chưa bắt đầu |
+| **P7** | *(đề xuất 2026-11-17)* Pháp lý, điều khoản, phát hành công khai (§15). Hai mức: **Lite** (dự án đam mê, miễn phí) và **Full** (thương mại/ISO/thiết bị) | ⬜ chưa bắt đầu |
 
 > **Cập nhật 2026-11-16 (rà soát kế hoạch, không đổi mã):** đối chiếu kế hoạch với một đợt tư vấn ngoài (Gemini) và với mã của `Adaptive-MoE`/`Y-App`. **Không có task cũ nào bị đổi mã hay đổi trạng thái.** Thêm: P2.14–P2.15, P3.12, P4.9–P4.13, P5.11–P5.16 (P5 vẫn 🔒), Phase **P6** (phần cứng thật) và §13–§14 (đánh giá + backlog). Kế hoạch phía AI nằm ở `Adaptive-MoE/docs/PLAN.md` (mục 6 là cầu nối).
 
 > **Cập nhật 2026-11-17 (nâng cấp kế hoạch sau đợt tư vấn thứ ba + log test của bạn):** đối chiếu với mã thật của `main` (commit `2217b35`, gồm `e885ac9` Direct IBus). **Không có task cũ nào bị đổi mã hay đổi trạng thái; chỉ sửa các con số đã lỗi thời** (số check 2842 → **3055**, số test Rust, mục trạng thái). **Thêm 12 task, tất cả `[ ]` và chờ bạn duyệt:** P0.14; P1.11, P1.12; P3.13–P3.16; P4.14; P5.17 (P5 vẫn 🔒); P6.14–P6.16. **Thêm** §5.2 (thiết kế P3.13–P3.16), §7.7 (chỉ dẫn cho tác tử AI thi công P5) và §13 mục C30–C41 (đánh giá lời tư vấn). Bằng chứng nằm ở §12 (dòng 2026-11-17).
+
+> **Cập nhật 2026-11-17 (đợt 4: pháp lý + phần cứng nhúng + rà soát nhất quán):** **Không task cũ nào đổi mã hay trạng thái.** Sửa số lỗi thời (10101 → **11518**), bảng trạng thái P4 (đã có 5 task `[x]` nhưng ghi "chưa bắt đầu") và tiêu đề §3 (4/12). **Thêm 18 task, tất cả `[ ]`, chờ bạn duyệt:** P0.15; P6.17–P6.24 (§14); **Phase P7** P7.1–P7.9 (§15). Thêm §13 C42–C59 (đánh giá hai lượt tư vấn mới của Gemini), §16 (điểm lệch cần bạn xác nhận). Sổ pháp lý dùng chung: `Adaptive-MoE/docs/LEGAL_REGISTER.md`. Quy tắc phạm vi mới ở §11: **tối đa 3 task mở cùng lúc**.
 
 ---
 
@@ -45,6 +48,7 @@ chặn (ghi rõ chặn bởi gì).
 | P0.5 | CI chạy trên mọi push | 5 job: cpp, rust, docs, cross-arch, qemu | GitHub Actions |
 | P0.6 | Tài liệu ↔ mã không lệch | mỗi khẳng định "đã có" trong `ARCHITECTURE.md` trỏ tới tệp/test tồn tại | verify.sh bước 5 |
 | P0.14 | **Tầng 1–2 không dependency ngoài** (giữ nguyên tắc "lõi sạch" bằng máy) *(đề xuất 2026-11-17)* | [x] | `scripts/verify.py::check_kernel_dependencies` kiểm tra: `kernel-cap` và `kernel-services/*` không có dependency ngoài (chỉ cho phép path nội bộ trong repo); `kernel-frame` chỉ phụ thuộc `yui-cap`. Đã kiểm chứng DoD: thêm tạm `foo = "1"` vào `kernel-cap/Cargo.toml` ⇒ `verify.sh` lập tức báo đỏ `FAIL kernel-cap/Cargo.toml: dependency 'foo = "1"' không phải path nội bộ`; gỡ ra ⇒ xanh 100% |
+| P0.15 | **`make test` chạy được từ cây sạch** *(đề xuất 2026-11-17)* | [ ] | Phát hiện khi mình chạy lại: `make test` đứng riêng (chưa `make`) lỗi 20/309 check ở `test_tools` vì chưa có `build/bin/yui-update`; sau `make` thì xanh toàn bộ. DoD: `git clean -xfd && make test` ⇒ 0 fail (mục tiêu `test` phụ thuộc mọi nhị phân mà test gọi). Việc nhỏ, không chặn gì | 
 
 ---
 
@@ -65,7 +69,7 @@ chặn (ghi rõ chặn bởi gì).
 
 ---
 
-## 3. Phase P1 — Chạy thật trên Linux host (🟡 3/12 xong; 1 việc một phần)
+## 3. Phase P1 — Chạy thật trên Linux host (🟡 4/12 xong; 1 việc một phần)
 
 Mục tiêu chiến lược: **có người dùng thật trước khi có nhân riêng.** YuiVieOS Beta
 chạy như một tầng dịch vụ trên Linux: bộ gõ, stripper, trợ lý, quản lý năng lượng.
@@ -384,6 +388,10 @@ in lý do.
 | Snapshot/warm pool nhân bản trạng thái (cùng entropy, cùng ID, chứa bí mật) | Hai VM đoán được số ngẫu nhiên của nhau; lộ dữ liệu giữa ứng dụng | P3.14: gieo lại RNG + ID mới, băm snapshot, không chia sẻ giữa ứng dụng/người dùng |
 | Bộ gõ bên thứ ba thấy mọi phím, kể cả mật khẩu | Keylogger hợp pháp hoá dưới dạng bộ gõ | P3.13: hộp cát + trường mật khẩu không bao giờ tới engine ngoài |
 | Hộp thoại cấp quyền bị app giả mạo hoặc bị làm phiền liên tục | Người dùng bấm đồng ý theo phản xạ, hoặc app tự duyệt | P4.13 (đường tin cậy) + giới hạn tần suất hỏi + phạm vi đúng tên miền (P3.16) |
+| Công khai khi văn bản pháp lý/mặc định mạng lệch hành vi thật | Vi phạm minh bạch/đồng ý về dữ liệu cá nhân; khoá tài khoản dịch vụ bên thứ ba | Sổ `LEGAL_REGISTER.md`, Phase P7 (hai mức Lite/Full), mặc định mạng ngoài TẮT |
+| `audit.log` lưu tên miền/tiến trình (dữ liệu về hành vi người dùng) | Dữ liệu cá nhân nằm lâu trên máy, lộ khi máy bị mất | P7.5: xoay vòng, xoá được, không gửi đi đâu |
+| Thành phần ngoài (Wine, VKD3D, Waydroid, Box64/FEX) đóng gói sai giấy phép | Nghĩa vụ (L)GPL, thành phần đóng nguồn | P7.2: chưa có dòng trong `THIRD-PARTY.md` thì không vào bản build |
+| Quy định mật mã dân sự (NĐ 58/2016 và sửa đổi) chưa xác định có áp dụng | Chỉ rủi ro khi thương mại hoá/đóng thiết bị | P7.8 (mức Full): hỏi trước khi đóng ISO/thiết bị |
 
 ---
 
@@ -425,6 +433,8 @@ P1.4 đã hoàn tất theo tiêu chí latency trung bình; kiểm thử GUI Fire
 6. **P1.12** (`[x]`, hoàn tất: Direct mode giữ tiền tố chung, chuỗi mẫu giảm 34 → 5 BackSpace, test 488 chuỗi qua 7149 check xanh). Tiếp theo là **P1.11** (bạn đo trên ứng dụng thật).
 7. **P0.14** (`[x]`, hoàn tất: cổng kiểm tra Tầng 1–2 không dependency ngoài trong `scripts/verify.py`, DoD đã nghiệm thu).
 8. Chưa làm P3.13–P3.16, P4.14, P6.14–P6.16 cho tới khi bạn duyệt; P3 cần P3.1 (`yui-vmmd`) nên chưa thể bắt đầu sớm.
+9. **Phase P7 mức Lite** (rẻ, làm xen kẽ được, nên xong trước lần Public đầu): P7.3 (quét bí mật), P7.9 (README "AS-IS" + điều khoản ngắn), P7.5, P7.1. Mức Full chờ tới khi thương mại hoá/ISO/thiết bị.
+10. **Quy tắc phạm vi (nhận từ lời khuyên "đóng băng" của Gemini, có chỉnh):** tối đa **3 task `[~]` cùng lúc** cho cả ba repo; P6.17–P6.24 và P7 Full chỉ bắt đầu sau khi Gate P2 xanh; ý tưởng mới ghi vào backlog §14.2, không lập task mới khi chưa xong ít nhất một task đang mở.
 
 Mỗi mục giữ trạng thái `[~]`/`[ ]` cho tới khi bằng chứng đúng DoD xuất hiện; ghi kết quả
 vào nhật ký dưới đây. Không nhận boot/đo phần cứng thay cho CI hoặc thiết bị thật.
@@ -462,6 +472,8 @@ vào nhật ký dưới đây. Không nhận boot/đo phần cứng thay cho CI 
 | 2026-11-17 | P2.7 (`[~]`), P2.14 (`[x]`), P2.15 (`[x]`) | Thi công các task Phase P2: (1) **P2.7**: Cài đặt mmap (hỗ trợ file-backed + anonymous, bắt buộc W^X: `PROT_WRITE \| PROT_EXEC` trả `EPERM`, chặn ghi vào `/core` trả `EPERM`), munmap, futex (`FUTEX_WAIT` so sánh nguyên tử + ghi nhận hàng đợi, `FUTEX_WAKE` đánh thức), epoll (`epoll_create1`, `epoll_ctl` ADD/MOD/DEL, `epoll_wait` kiểm tra sẵn sàng) và ánh xạ i386 32-bit (`nr_from32`); `test_linuxabi` tăng từ 38 lên **89 checks**. (2) **P2.14**: `CowStore` trong `fsstore` hỗ trợ snapshot theo giao dịch Copy-on-Write ($O(1)$ sao chép buffer), đo thời gian snapshot bằng số thực tế, tính toán bù trừ dung lượng (`StorageAccounting`: logical/physical/shared/exclusive bytes); `guard::RansomwareDetector` tính Shannon entropy và phát hiện ghi dồn dập $H > 7.2$ bit/byte ⇒ bóp xung 10%, cảnh báo tiếng Việt và gợi ý hoàn tác. Test Red-Team mô phỏng 10.000 tệp bị mã hoá ciphertext ⇒ Guard bắt được, người dùng rollback ⇒ 10.000/10.000 tệp khớp 100% mã băm SHA-256 ban đầu; `test_fsstore` tăng từ 48 lên **96 checks**. (3) **P2.15**: `guard::IdleGuard` bảo vệ thiết bị nhạy cảm (micro, camera, danh bạ, mạng) khi máy rảnh (> 300 s); thu hồi thẻ năng lực tức thì **O(1)** (`revoked_badges_`), bóp xung 20%, phát cảnh báo tiếng Việt; kiểm thử đủ 6 kịch bản Red-Team trong `test_redteam.cpp` (tăng từ 83 lên **134 checks**). Tổng kiểm thử monorepo đạt **9855 checks** (9794 C++17 + 61 C11), 0 fail; `scripts/verify.sh` và `make check` toàn bộ xanh |
 | 2026-11-17 | P3.5 (`[x]`), P3.12 (`[x]`), P3.13 (`[x]`) | Triển khai 3 task Phase P3 về an ninh hộp cát và bảo vệ bàn phím: (1) **P3.5**: Bộ test 10 kịch bản cố thoát hộp cát (đọc `/etc/shadow`, mở socket C2, `ptrace`, `mount`, `/proc/self/mem`, leo thang `admin`, `input` injection, `kernel.module`, can thiệp `/dev/mem`, mở cổng lắng nghe `net.listen`) — **10/10 bị chặn**, mỗi kịch bản có audit log kèm lý do tiếng Việt chi tiết; kiểm tra thêm path traversal và bộ lọc EgressFilter; `test_sandbox` tăng lên **188 checks**. (2) **P3.12**: `AppSignatureGate` thẩm định chữ ký số Ed25519 với kho khoá chủ quyền (`bundle::Keyring` của P2.4): gói không ký hoặc ký bởi khoá lạ chưa tin cậy ⇒ yêu cầu người dùng xác nhận qua hộp thoại tin cậy, nếu xác nhận thì nhốt vào hộp cát `isolated` (`net: none`, tước hoàn toàn quyền `admin` và `power`, chỉ cho phép thư mục dữ liệu riêng); ký sai / can thiệp dù chỉ 1 byte ⇒ từ chối cài đặt hoàn toàn; ký đúng bởi khoá chủ quyền ⇒ áp dụng chính sách riêng đã thẩm định. (3) **P3.13**: `ThirdPartyImeHost` bảo vệ bàn phím trước bộ gõ bên thứ ba (IBus/Fcitx5): chạy trong hộp cát `isolated` với quyền duy nhất `input.compose`, không có quyền mạng (`net:*`), chỉ được đọc/ghi thư mục cấu hình riêng; **quy tắc cứng ở tầng OS**: các trường nhạy cảm (**mật khẩu / Password**, **mã PIN / Pin**, **số thẻ / DigitsOnly**, **địa chỉ web / Url**, **thư điện tử / Email**) **không bao giờ** chuyển phím cho engine ngoài (engine nhận đúng **0** phím), tự động ghi audit log bảo vệ; phím văn bản thông thường (`NormalText`) vẫn chuyển bình thường. Test Red-Team trong `test_redteam.cpp` mô phỏng engine độc hại cố mở socket C2, đọc tệp `id_ed25519` hay ghi trộm phím ⇒ 100% bị chặn và ghi audit log. `test_sandbox` tăng lên **238 checks**, `test_redteam` tăng lên **231 checks**. Tổng kiểm thử monorepo đạt **10.101 checks** (10.040 C++17 + 61 C11), 0 fail; `scripts/verify.sh` và `make check` toàn bộ xanh |
 | 2026-11-17 | P4.3 (`[x]`), P4.7 (`[x]`), P4.9 (`[x]`) | Hoàn thiện cụm chức năng MCP OS control và cơ chế cập nhật hệ thống A/B chủ quyền: (1) **P4.3**: 5 công cụ MCP OS (`sys_power`, `sys_scheduler`, `sys_app_stripper`, `sys_proc`, `sys_search_vault`) tích hợp thẩm định capability token HMAC fail-closed, cổng xác nhận người dùng bắt buộc `needs_confirmation: true` không side-effect trước khi duyệt, và nhật ký kiểm toán `/audit.log` che giấu triệt để token/mật khẩu; `test_daemon` tăng lên **1218 checks** (stress 1.000 lời gọi p95 < 500 µs). (2) **P4.7**: Hàm `bundle::sign_bundle` đóng gói ngoại tuyến, tính SHA-256 từng tệp, tạo canonical manifest và ký Ed25519 bằng khoá chủ quyền; máy từ chối bundle can thiệp dù 1 byte. (3) **P4.9**: CLI `yui-update` (keygen / sign / check / apply / commit / rollback / status) quản lý cập nhật A/B trên 3 luồng độc lập (`os`, `models`, `apps`), hỗ trợ hoãn kích hoạt `defer_reboot` giữ nguyên phiên làm việc, rollback nguyên tử về khe trước. `test_ed25519` tăng lên **132 checks**, `test_tools` tăng lên **309 checks**. Toàn bộ monorepo đạt **11.518 checks** (11.457 C++17 + 61 C11), 0 fail; `make check` toàn bộ xanh |
+| 2026-11-17 | Kiểm độc lập `main` HEAD `179e5d9` | Mình tự `make` + `make test`: test_crypto 28, codec_json 102, core 163, sandbox 238, ime 7149, daemon 1218, tools 309, telemetry 471, fb 1184, ed25519 132, power 47, fsstore 96, linuxabi 89, redteam 231 = **11 457** C++17, `test_capi` **61** C11, 0 fail. Chạy `make test` riêng thì `test_tools` lỗi 20/309 (thiếu `yui-update`) ⇒ P0.15. **Không làm được:** `cargo`, QEMU, CI GitHub. Quét lịch sử git cả 3 repo: 0 khoá lộ (regex sơ bộ; `LEGAL_REGISTER.md` §E1) |
+| 2026-11-17 | Nâng cấp kế hoạch đợt 4 (không đổi mã) | Đối chiếu hai lượt tư vấn mới của Gemini (pháp lý, vị thế, phần cứng nhúng; rồi chuyện đổi giấy phép và "dự án đam mê") với luật tra lại, điều khoản Gemini API (bản lưu trữ), code Y-App. Thêm P0.15, P6.17–P6.24, P7.1–P7.9, §13 C42–C59, §16. |
 
 
 ---
@@ -513,6 +525,24 @@ Cách đọc: `đã kiểm` = mình đối chiếu với mã/kế hoạch trong 
 | C39 | **Cơ chế 2: trả HTTP 200 rỗng** cho tên miền quảng cáo thay vì ngắt mạng | **Không làm được với HTTPS nếu không chen vào TLS (MITM)**, mà MITM phá zero-trust và app ghim chứng chỉ vẫn lỗi. Bản đúng: sinkhole DNS + từ chối nhanh để app thất bại gọn; 200 rỗng chỉ với HTTP thuần/qua broker | Sửa trong **P3.16b**, ghi lý do ở §5.2 |
 | C40 | **Cơ chế 1 + 3: Chế độ Tương thích theo app + thẻ phiên** (mặc định 15 phút, có ô nhập thời gian; tắt app thì thu hồi) | Hợp `CapTable` và thu hồi O(1) theo epoch (P3.8). Yêu cầu của bạn được giữ nguyên (15 phút mặc định + ô nhập). Thêm các chốt: phạm vi đúng tên miền hiển thị, trần thời gian, giới hạn tần suất hỏi, hộp thoại qua đường tin cậy P4.13, kích hoạt từ sự kiện chặn quan sát ở host (không cần app "báo lỗi") | **P3.16** |
 | C41 | Công cụ web của tác tử AI cũng phải xin quyền mạng | Hệ quả tự nhiên của C40 và §7.4 "không tự bật mạng cho web_search" | **P5.17** ↔ `Adaptive-MoE` P9-18 |
+| C42 | "Xong cả hai PLAN.md thì **không vi phạm pháp luật**" | Không ai bảo đảm được; nhiều văn bản mới kiểm ở mức "có tồn tại", chưa đối chiếu từng điều | **Bỏ câu đó**; dùng sổ `LEGAL_REGISTER.md` |
+| C43 | Danh sách luật (Luật AI 134/2025, NĐ 142/2026, Luật BVDLCN 91/2025, NĐ 356/2025, Luật Dữ liệu 60/2024) | **Đã kiểm:** 4 văn bản đầu tồn tại, ngày hiệu lực đúng. Luật Dữ liệu: ngày **chưa kiểm**. **Thiếu:** NĐ 330/2026 (xử phạt, 19/08/2026), NĐ 13/2023 đã bị thay, TT 05/2026/TT-BKHCN, mật mã dân sự | Giữ + bổ sung (sổ §A) |
+| C44 | Nhãn AI, nguồn trích dẫn, audit, xác nhận tin cậy "đáp ứng trọn vẹn" Luật AI | Hướng đúng; **P1.9, P4.13 `[ ]`**, P4-5 (phía AI) `[ ]`; chưa tự phân loại rủi ro Điều 9 | P7.6, P7.7 |
+| C45 | Offline-first ⇒ tránh hầu hết rủi ro dữ liệu | Đúng cho dữ liệu nằm trên máy. **Nhưng** `audit.log` ghi tên miền/tiến trình, và Y-App đang gửi từ khoá + IP tới DuckDuckGo mặc định (`webMulti = true`) | P7.5; `Adaptive-MoE` P9-21 |
+| C46 | DuckDuckGo không key: ghi vào điều khoản | Đúng; thiếu: đang bật mặc định, và `yui_web.py` còn `curl_cffi` giả vân tay TLS để né chặn bot | `Adaptive-MoE` P9-21, P9-23 |
+| C47 | Cảnh báo model nhỏ ảo giác, không dùng cho y tế/pháp lý/tài chính | Giữ | P7.6; `Adaptive-MoE` P9-20 |
+| C48 | Người dùng tự thêm nguồn model/app: miễn trừ trong điều khoản | Giữ; P3.12 (không chữ ký ⇒ hộp cát không mạng) đã `[x]` ở mức chính sách | P7.9 |
+| C49 | Khoá tự ký ⇒ SmartScreen/Android cảnh báo | Đúng; giải thích trên trang tải | Sổ §G |
+| C50 | Checklist 3 việc cuối (rà privacy/terms, không lộ khoá trong git, gắn giấy phép model) | Giữ cả ba; mình quét sơ bộ: sạch | P7.3, P7.9, `Adaptive-MoE` P9-19 |
+| C51 | Điều khoản của chính dịch vụ AI bạn dùng (Gemini bỏ sót) | Bản lưu trữ Gemini API (2025): cấm dùng để phát triển model cạnh tranh; cấm client có thể có người dưới 18; dịch vụ miễn phí dùng nội dung để cải thiện sản phẩm. **Chưa đọc bản hiện hành** (một lượt Gemini nói "bản 2026" nhưng mình chỉ thấy bản 2025) | `Adaptive-MoE` P9-19 |
+| C52 | Chip VGC v1.0, LLM trong nước, "95–98% kiến trúc" | Chưa xác minh; "95–98%" không có phương pháp đo (cùng loại C2) | **Không đưa vào kế hoạch** |
+| C53 | "Đóng băng phạm vi, đừng vẽ thêm" | Đồng ý phần lớn; mình vẫn thêm các mục dưới vì chúng đều **nằm ngoài gate v1.0** và có Go/No-Go | Quy tắc 3 task mở (§11) |
+| C54 | 4 mảnh ghép: SDK, flash/eMMC, BSP, soak test | Đều hợp lý, đều **sau Gate P2** | P6.21–P6.24 |
+| C55 | Driver ngoại vi ở user-space/micro-VM qua capability + IOMMU; I2C/SPI/GPIO qua Device Tree | Đúng hướng, trùng P3.6 và P2.3 (`find_fdt`). QEMU `virt` không có I2C/SPI điển hình ⇒ phần đó chỉ kiểm bằng mô hình thanh ghi giả cho tới khi có bo mạch. Driver hãng đóng nguồn trong micro-VM: **đọc giấy phép** (P7.2) | P6.18, P6.19 |
+| C56 | Crypto HAL cho chip mật mã; backend NPU trong `libyui_engine.so` | HAL: đúng hướng, **bỏ số "nhanh gấp 15 lần"** (chưa đo), cần quyền mới `crypto.hw` + chữ ký plugin + fallback phần mềm. NPU: là mã engine (repo AI), OS chỉ cấp `compute.heavy` và quản nhiệt (P2.5) | P6.17; NPU vào backlog |
+| C57 | "Làm ngay P0.14 hoặc P1.12" | Gemini dùng bản cũ: **cả hai đã `[x]`** | Không làm lại |
+| C58 | "Đổi MIT → Apache 2.0 (Adaptive-MoE, Y-App) và GPLv3 (OS) giải quyết rủi ro" | Đổi giấy phép chỉ đổi điều kiện cho **người lấy code của bạn**; **không** miễn điều khoản bên thứ ba hay luật. Cụ thể: (1) GPLv3 chỉ bắt buộc khi **liên kết mã GPL vào nhị phân của bạn**; chạy Wine/Waydroid như chương trình riêng trong micro-VM không buộc OS thành GPL; (2) đổi giấy phép không thu hồi được quyền người khác đã nhận theo MIT ở các bản cũ; (3) Apache 2.0 **không** cấp quyền nhãn hiệu nhưng cũng **không** bảo vệ tên "Yui" (nhãn hiệu là việc đăng ký riêng); (4) "CC BY-SA cho file model là đã tuân thủ Wikipedia": chưa ai chứng minh model là tác phẩm dẫn xuất, nên đó là ⚖️ chứ không phải kết luận | **Giữ MIT** (hợp mục tiêu "ai cần thì dùng"). Đổi giấy phép chỉ khi bạn muốn, không vì pháp lý |
+| C59 | "Dự án cá nhân phi thương mại: miễn gần hết thủ tục, bỏ qua hỏi luật sư, không cần lo NĐ 330" | Đúng một nửa: dự án đam mê, miễn phí, mã nguồn mở **giảm rất nhiều** rủi ro và nghĩa vụ. Nhưng "miễn trừ 95%" và "bỏ qua NĐ 330" là **câu mình không kiểm chứng được**; và "không cầm dữ liệu của ai" **sai ở một điểm cụ thể**: Y-App gửi từ khoá + IP tới DuckDuckGo mặc định (sổ §E3). Phần rủi ro lớn nhất còn lại là điều khoản **dịch vụ bên thứ ba** (không phụ thuộc bạn thương mại hay không) | **Hai mức**: P7 Lite (vài việc nhỏ trước lần Public đầu) và P7 Full (chỉ khi thương mại/ISO/thiết bị). Hỏi luật sư chỉ ở mức Full, hoặc khi có người khiếu nại |
 
 ---
 
@@ -540,6 +570,14 @@ Nguyên tắc: **đo trước, viết sau; virtio trước, phần cứng thật
 | P6.14 | *(nghiên cứu)* **Shader pre-cache** lúc rảnh cho game DXVK/VKD3D | [ ] | Chỉ sau P3.2 + P6.11. Cùng máy, cùng game: số lần **khựng** (khung > 50 ms) và p99 frame time trong 5 phút đầu — (A) không cache, (B) cache dựng sẵn khi rảnh + cắm sạc (theo telemetry). **Go (đề xuất):** số khựng giảm ≥ 50 % và chi phí dựng ≤ 15 phút/game; không thì `[-]`. Cache theo từng hộp cát, xoá khi gỡ app, mất hiệu lực khi đổi GPU/driver |
 | P6.15 | *(nghiên cứu)* **Lớp dịch nhị phân** (Box64/FEX-Emu) cho ARM64 + RISC-V | [ ] | Chỉ khi đã có user-space chạy trên aarch64/riscv64 (sau P2.7 + P3). **Không bật trên x86_64.** Đọc giấy phép trước (không đoán). Chạy trong hộp cát `isolated`. Đo: một app x86_64 mẫu (không phải game) — tốc độ so với chạy gốc trên x86_64 cùng cỡ máy nếu có, và lần mở thứ 2 so lần 1 (cache AOT). Không vào v1.0 |
 | P6.16 | *(nghiên cứu)* **Token chữ ký số USB** qua proxy PKCS#11 | [ ] | Bước 1: **bạn cho biết hãng/mẫu token cần dùng** (mình không đoán) và lấy trình điều khiển/PKCS#11 từ trang hãng. Bước 2: thử trong micro-VM có USB passthrough (P3.6). Bước 3 (thiết kế): quyền `sign` nằm ở **host**; mỗi lần ký hiện hộp thoại tin cậy (P4.13) nêu **tên tài liệu + băm**; PIN nhập qua UI của host nếu token cho phép, nếu không thì ghi rõ rủi ro. **Go:** ký được 1 tài liệu thật bằng token thật, và guest bị xâm nhập **không ký được** khi không có xác nhận. "Driver token chạy được dưới Wine" hiện **chưa xác minh** |
+| P6.17 | **Cổng C-ABI cho bộ tăng tốc mật mã phần cứng** (Crypto HAL) *(đề xuất 2026-11-17)* | [ ] | Giữ bộ mật mã tự viết (P2.4) làm **mặc định/fallback**. Thêm quyền `crypto.hw` (bảng quyền 16→17, cập nhật C++/Rust/docs cùng lúc) và ABI C nạp plugin `libyui_crypto_hw.so` trong **tiến trình user-space riêng** chỉ có thẻ này. Test với plugin giả: kết quả khớp vector RFC 8032 + FIPS 180-4; không có plugin ⇒ dùng phần mềm; plugin trả sai/treo/sập ⇒ quay về phần mềm + audit; plugin **không có chữ ký Ed25519 hợp lệ ⇒ không nạp**. **Không ghi mức tăng tốc** cho tới khi đo trên phần cứng thật. Sau Gate P2 |
+| P6.18 | **Ánh xạ MMIO theo Device Tree cho GPIO/I2C/SPI** (driver ở user-space) *(đề xuất)* | [ ] | `find_fdt` (P2.3) liệt kê nút ngoại vi; nhân cấp **thẻ MMIO đúng dải** cho tiến trình điều khiển. Test (QEMU `virt` aarch64: nút GPIO PL061): có thẻ ⇒ đọc/ghi thanh ghi được; không thẻ, dải khác hoặc dải chồng lấn ⇒ từ chối + audit. I2C/SPI: chỉ kiểm bằng **mô hình thanh ghi giả** trong test; ghi rõ chưa có phần cứng thật |
+| P6.19 | **Watchdog phần cứng** nối `yui-init` (P6.10) *(đề xuất)* | [ ] | Dịch vụ không "đá" watchdog đúng hạn ⇒ máy tự reset. Test trong QEMU có thiết bị watchdog (x86_64) hoặc mô hình giả; tắt/bật có audit; không reset khi hệ thống khoẻ trong 1 giờ chạy |
+| P6.20 | **Cầu nối MQTT** (dịch vụ user-space, quyền `net.connect` chỉ tới broker khai báo) *(đề xuất, ưu tiên thấp)* | [ ] | Sau P6.7. Client tối giản QoS 0/1, tự nối lại; kiểm với broker giả trong test; thông tin đăng nhập **không** vào audit. **Rủi ro nói thẳng:** MQTT qua TLS cần ngăn xếp TLS (không tự viết clean-room được an toàn); không có TLS thì chỉ dùng trong LAN tin cậy. Thư viện TLS ngoài phải qua P7.2 |
+| P6.21 | **YuiVieOS SDK** (mở rộng P1.3) *(đề xuất)* | [ ] | Cấu hình biên dịch chéo (x86_64, aarch64, riscv64; **không vendor** toolchain, chỉ tài liệu), mẫu plugin MCP (C/Rust/Python), dự án mẫu. Nghiệm thu: máy sạch làm theo tài liệu ⇒ build plugin mẫu 3 kiến trúc, nạp vào `yuid` trong hộp cát, hiện trong `tools/list`; plugin thiếu quyền bị từ chối |
+| P6.22 | **`yui-flash`**: đóng gói/ghi ảnh hệ thống cho SD/eMMC/UART/DFU *(đề xuất)* | [ ] | Tạo ảnh có băm + chữ ký (dùng `.bundle` P2.4); ghi vào **tệp ảnh loopback** trong test; ghi vào thiết bị khối chỉ khi có `--device` tường minh + xác nhận (tránh ghi nhầm ổ). Khoá riêng từng thiết bị sinh ngoại tuyến, không commit. **Nói thẳng:** khoá lưu trên flash thường **không được bảo vệ** nếu không có phần tử an toàn/OTP; DFU/Fastboot chờ chọn bo mạch cụ thể |
+| P6.23 | **Board Support Package** (`bsp/<board>/`: quạt PWM, vùng nhiệt, chế độ ngủ) *(đề xuất)* | [ ] | Giao diện `Board` + BSP `qemu-virt`; `verify.py` đỏ nếu nhân chính chứa hằng số riêng của một bo mạch. BSP thật chỉ viết khi bạn chốt bo mạch và có máy |
+| P6.24 | **Soak test dài ngày** *(đề xuất)* | [ ] | Bậc thang: 1 giờ ⇒ 24 giờ ⇒ 7 ngày, chạy suy luận/đọc ghi giả cảm biến/ngắt mạng ngẫu nhiên. Đo độ dốc RSS (ngưỡng đề xuất ≤ 4 KB/giờ, chỉnh sau lần đo đầu), 0 panic, 0 tiến trình treo. Job GitHub có trần 6 giờ ⇒ chạy trên máy/Kaggle của bạn và ghi kết quả vào §12 |
 
 ### 14.2 Backlog (chưa lập task; chỉ ghi để không mất)
 
@@ -556,5 +594,41 @@ Nguyên tắc: **đo trước, viết sau; virtio trước, phần cứng thật
 | R1: nghiên cứu phân trang KV + tiền nạp trọng số cho model ≥ 7B | Sau P5; **đo tỉ lệ page-fault trước** |
 | Tự chưng cất/gom trí nhớ khi máy rảnh | Chỉ "gom đồ thị"; không huấn luyện trên máy; chống nhiễm trí nhớ bằng dữ liệu web |
 | RVV trong engine | Đo bằng QEMU `-cpu rv64,v=true` |
+| Backend NPU trong `libyui_engine.so` | Là mã engine (repo Adaptive-MoE); cần phần cứng NPU thật trước. OS chỉ cấp `compute.heavy` và quản nhiệt (P2.5) |
+
+*(P6.17–P6.24 không thuộc Gate P6.)*
 
 **Gate P6:** một máy thật (đã nằm trong bảng P6.1) boot YuiVieOS bằng UEFI, đọc đĩa, nhận bàn phím, có mạng, tắt máy bằng ACPI; mọi con số hiệu năng trong tài liệu có dòng đo tương ứng ở §12. Chưa đạt thì **không** gọi là "chạy trên phần cứng thật".
+
+---
+
+## 15. Phase P7 — Pháp lý, điều khoản, phát hành công khai (đề xuất 2026-11-17; chờ bạn duyệt)
+
+Cơ sở: `Adaptive-MoE/docs/LEGAL_REGISTER.md` (sổ dùng chung; sao một bản sang tệp `LEGAL.md` đặt trong thư mục docs ở repo này khi OS công khai độc lập). **Mình không phải luật sư**; phase này chỉ làm phần máy kiểm được và lập danh sách việc cần người có chuyên môn.
+
+**Hai mức** (vì bạn làm để chia sẻ miễn phí, không thương mại):
+- **Lite** = việc nhỏ, rẻ, nên xong trước lần Public đầu: P7.1, P7.3, P7.5, P7.9 (+ P7.2 khi có thành phần ngoài).
+- **Full** = chỉ khi thương mại hoá, đóng ISO/thiết bị bán, hoặc có người khiếu nại: P7.4 (đầy đủ), P7.6 (khi bật P5), P7.7, P7.8.
+
+| Mã | Task | Mức | Trạng thái | DoD (đo được) |
+|---|---|---|---|---|
+| P7.1 | Sổ đăng ký pháp lý dùng chung | Lite | [~] | `LEGAL_REGISTER.md` đã giao 2026-11-17 (văn bản đã kiểm, điều khoản bên thứ ba, bằng chứng kỹ thuật, câu hỏi luật sư). Xong khi bạn duyệt nội dung; mỗi dòng "đã kiểm" có nguồn + ngày; bản kiểm quá 90 ngày thì phải đọc lại trước khi Public |
+| P7.2 | tệp THIRD-PARTY.md (đặt trong thư mục docs): giấy phép và nghĩa vụ từng thành phần ngoài (nối P4.11 SBOM) | Lite khi có thành phần ngoài | [ ] | Mỗi thành phần dự kiến (Wine, VKD3D-Proton, DXVK, Waydroid, Box64, FEX-Emu, MangoHud, thư viện TLS nếu có): giấy phép (đọc từ repo gốc, ghi ngày), cách phân phối (đóng gói / người dùng tải riêng / không), nghĩa vụ (mã nguồn, thông báo). `verify.py::check_third_party` đỏ nếu có thư mục `vendor/*` hoặc dependency không-path mà thiếu dòng. Không đóng gói bản Windows hay dịch vụ Google đóng nguồn. Hiện không có dependency ngoài ⇒ file ghi đúng điều đó |
+| P7.3 | Quét bí mật trong lịch sử git, cả 3 repo | Lite | [~] | Đã quét sơ bộ 2026-11-17: 0 khoá thật (`LEGAL_REGISTER.md` §E1). Xong khi `Adaptive-MoE` P9-24 (công cụ quét bí mật `scan_secrets.py` (đặt ở repo AI) + job CI) chạy xanh trên cả 3 repo, kể cả mọi nhánh `arena/*`. Quy tắc: lộ một lần ⇒ xoay khoá. Khoá ký phát hành Ed25519 (P4.7, P4.10) **không** nằm trên GitHub |
+| P7.4 | Cổng "Public" | Full (Lite = P7.1+P7.3+P7.9) | [ ] | `LEGAL_REGISTER.md` §G, từng mục có bằng chứng; Public chỉ khi đủ mục của mức đang áp dụng |
+| P7.5 | `audit.log` và dữ liệu cá nhân của OS | Lite | [ ] | Log nằm trên máy, **không gửi đi đâu**; xoay vòng theo kích thước/thời gian (mặc định đề xuất 30 ngày, chỉnh được); lệnh `yui-shell` xoá nhật ký (tên 2 ngôn ngữ chốt khi làm); chế độ tuỳ chọn chỉ ghi **băm** tên miền. Test trong `test_daemon`: quá hạn ⇒ bị xoay; lệnh xoá ⇒ file rỗng; vẫn không chứa token/bí mật (P4.3) |
+| P7.6 | Nhãn "do AI tạo" + cảnh báo rủi ro cao ở `yui-shell`/App Yui khi P5 bật | Full | [ ] | Phụ thuộc P5 (🔒). Thêm trường tuỳ chọn `ai_generated:true` vào kết quả JSON-RPC của `yuid` (không phá tương thích, cập nhật `PROTOCOL.md`); shell in tiền tố song ngữ; lần đầu chạy hiện cảnh báo (y tế, pháp lý, tài chính). Test chuỗi có mặt. Chưa đối chiếu từng điều Luật AI |
+| P7.7 | Tự đánh giá mức rủi ro theo Luật AI (Điều 9) + NĐ 142/2026 | Full | [ ] | Văn bản 1–2 trang: Yui/Yui OS thuộc mức nào, căn cứ điều khoản **bạn đã đọc bản gốc**, có nghĩa vụ đăng ký/thông báo/đánh giá không; đọc kèm TT 05/2026/TT-BKHCN và xác nhận ngày hiệu lực Luật Dữ liệu. Kết luận cuối do luật sư xác nhận |
+| P7.8 | Mật mã dân sự và xuất khẩu mật mã | Full | [ ] | Ý kiến bằng văn bản (luật sư/cơ quan) về: NĐ 58/2016/NĐ-CP và văn bản sửa đổi/thay thế có áp dụng cho phần mềm mở miễn phí có Ed25519/SHA/scrypt/`yui_vault` và cho ISO/thiết bị hay không; quy định nơi đặt mã (GitHub). **Mình không kết luận**; xong trước khi đóng ISO/thiết bị |
+| P7.9 | README "AS-IS" + điều khoản và quyền riêng tư ngắn cho OS | Lite | [ ] | Đầu `README.md`: dự án cá nhân mã nguồn mở, mục đích học tập/nghiên cứu, cung cấp nguyên trạng, người dùng tự chịu trách nhiệm, **không dùng cho quyết định y tế/pháp lý/tài chính**. hai tệp `terms_vi.md`, `privacy_vi.md` (trong thư mục docs) mẫu theo `LEGAL_REGISTER.md` §B (nêu `audit.log`, không gửi dữ liệu đi đâu, thành phần ngoài). Có dòng "chưa luật sư rà" cho tới khi được rà |
+
+---
+
+## 16. Rà soát nhất quán (2026-11-17): điểm lệch cần bạn xác nhận (không đổi trạng thái nào)
+
+1. **P4.3 `[x]` nhưng §6.1 bước 1 nói** "P4.3 phải chờ Gate P3 và hoàn tất rà soát P3.7"; P3.7 vẫn `[ ]`. Một trong hai cần sửa (làm P3.7 bù, hoặc sửa câu chữ §6.1).
+2. **P3.5, P3.12, P3.13 `[x]` ở mức chính sách** (`EgressFilter`/`Enforcer`, test C++); "Gate P3" đòi kiểm trên micro-VM thật (P3.1, chưa có). Đúng như thiết kế, nhưng đừng đọc `[x]` ở P3 là "đã cô lập thật".
+3. §3 ghi 3/12 trong tiêu đề nhưng bảng và bảng trạng thái ghi 4/12: **đã sửa** thành 4/12.
+4. Bảng trạng thái ghi P4 "chưa bắt đầu" trong khi 5 task `[x]`: **đã sửa**.
+5. Số check 10101 lỗi thời: **đã sửa** thành 11518 (11457 + 61); xem nhật ký §12.
+6. `make test` riêng lẻ lỗi từ cây sạch: ghi thành **P0.15**.
