@@ -367,8 +367,31 @@ std::string Composition::restore() {
 
 ReplayEdit DirectComposition::replace_rendered(const std::string& next) {
   ReplayEdit edit;
-  edit.backspaces = text::length(rendered_);
-  edit.text = next;
+  size_t pos_r = 0;
+  size_t pos_n = 0;
+  size_t common_byte_n = 0;
+
+  while (pos_r < rendered_.size() && pos_n < next.size()) {
+    const size_t prev_r = pos_r;
+    const size_t prev_n = pos_n;
+    const uint32_t cp_r = text::next_codepoint(rendered_, pos_r);
+    const uint32_t cp_n = text::next_codepoint(next, pos_n);
+    if (cp_r != cp_n) {
+      pos_r = prev_r;
+      pos_n = prev_n;
+      break;
+    }
+    common_byte_n = pos_n;
+  }
+
+  size_t backspaces = 0;
+  while (pos_r < rendered_.size()) {
+    text::next_codepoint(rendered_, pos_r);
+    ++backspaces;
+  }
+
+  edit.backspaces = backspaces;
+  edit.text = next.substr(common_byte_n);
   rendered_ = next;
   return edit;
 }

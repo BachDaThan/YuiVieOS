@@ -20,8 +20,8 @@ chặn (ghi rõ chặn bởi gì).
 
 | Phase | Nội dung | Trạng thái |
 |---|---|---|
-| **P0** | Nền móng: monorepo, hợp đồng cổng chờ, test C++/C11, CI | ✅ xong (670 check lúc đó, nay **3055** = 2994 C++17 + 61 C11; mình chạy lại 2026-11-17, 0 fail) |
-| **P1** | Chạy thật trên Linux host: `yuid` service, IBus, stripper, telemetry, OS MCP | 🟡 3/12 xong (P1.1, P1.4, P1.5); P1.6 một phần; P1.11–P1.12 mới (Direct mode) |
+| **P0** | Nền móng: monorepo, hợp đồng cổng chờ, test C++/C11, CI | ✅ xong (tất cả 14 task P0.1–P0.14 đạt; nay **9745** check = 9684 C++17 + 61 C11; 0 fail) |
+| **P1** | Chạy thật trên Linux host: `yuid` service, IBus, stripper, telemetry, OS MCP | 🟡 4/12 xong (P1.1, P1.4, P1.5, P1.12); P1.6 một phần; P1.11 Direct mode app thật |
 | **P2** | Rust framekernel + 3 kiến trúc + QEMU + năng lượng + FS + Linux ABI | 🟡 khung nhân boot thật cả 3 kiến trúc trong QEMU: aarch64 + riscv64 trên CI; **x86_64 boot được theo log Kaggle của bạn (2026-11-17)**, còn chờ đối chiếu job CI `qemu` + UEFI |
 | **P3** | VMM sandbox (Wine/VKD3D, Waydroid-lite) | ⬜ chưa bắt đầu (+4 task đề xuất 2026-11-17: P3.13–P3.16) |
 | **P4** | UX & phát hành (compositor, installer, ký số) | ⬜ chưa bắt đầu (+P4.14 cửa sổ liền mạch) |
@@ -44,7 +44,7 @@ chặn (ghi rõ chặn bởi gì).
 | P0.4 | Không có `unsafe` trong crate nhân | `grep -rn unsafe kernel-cap kernel-services` chỉ ra `deny(unsafe_code)` | verify.sh bước 3 |
 | P0.5 | CI chạy trên mọi push | 5 job: cpp, rust, docs, cross-arch, qemu | GitHub Actions |
 | P0.6 | Tài liệu ↔ mã không lệch | mỗi khẳng định "đã có" trong `ARCHITECTURE.md` trỏ tới tệp/test tồn tại | verify.sh bước 5 |
-| P0.14 | **Tầng 1–2 không dependency ngoài** (giữ nguyên tắc "lõi sạch" bằng máy) *(đề xuất 2026-11-17)* | [ ] | `scripts/verify.py` thêm bước: mọi mục `[dependencies]` của `kernel-cap` và `kernel-services/*` chỉ được là `path = ...` trong repo; `kernel-frame` chỉ được phụ thuộc `yui-cap`. Hiện **đã đúng** (đã kiểm: cả 3 crate có `[dependencies]` rỗng, `kernel-frame` chỉ có `yui-cap`). DoD: thêm tạm `foo = "1"` vào một crate ⇒ `verify.sh` **đỏ** và nêu tên crate; gỡ ra ⇒ xanh. Dependency mới ở Tầng 3 trở lên vẫn phải duyệt giấy phép theo §6.1 mục 5 |
+| P0.14 | **Tầng 1–2 không dependency ngoài** (giữ nguyên tắc "lõi sạch" bằng máy) *(đề xuất 2026-11-17)* | [x] | `scripts/verify.py::check_kernel_dependencies` kiểm tra: `kernel-cap` và `kernel-services/*` không có dependency ngoài (chỉ cho phép path nội bộ trong repo); `kernel-frame` chỉ phụ thuộc `yui-cap`. Đã kiểm chứng DoD: thêm tạm `foo = "1"` vào `kernel-cap/Cargo.toml` ⇒ `verify.sh` lập tức báo đỏ `FAIL kernel-cap/Cargo.toml: dependency 'foo = "1"' không phải path nội bộ`; gỡ ra ⇒ xanh 100% |
 
 ---
 
@@ -84,7 +84,7 @@ chạy như một tầng dịch vụ trên Linux: bộ gõ, stripper, trợ lý,
 | P1.9 | Audit log người đọc được | [ ] | `audit.log` có ≥ 3 mục thật; mỗi mục có lý do tiếng Việt và **không** chứa bí mật |
 | P1.10 | Đo nền: thời gian khởi động dịch vụ, RAM của `yuid` | [ ] | `yuid` < 8 MB RSS khi rảnh; khởi động < 200 ms (đo bằng `systemd-analyze` + `/proc/pid/status`) |
 | P1.11 | **Direct mode: nghiệm thu trên ứng dụng thật + gõ nhanh** *(đề xuất 2026-11-17)* | [ ] | Bằng chứng hiện có (commit `e885ac9`): `test_ime` **459** check, `YUI_IME_MODE=direct` được nhận, chuỗi mẫu `dd`/`Tieengs`/`window` ra đúng (`đ`, `Tiếng`, `window` giữ nguyên) với 34 BackSpace — nhưng đó là **chạy bằng script Python điều khiển engine**, chưa phải ứng dụng thật. DoD: trên Ubuntu 24.04, ≥ 6 ứng dụng (Firefox, Chromium/Chrome, LibreOffice Writer, gedit hoặc Kate, gnome-terminal, một app Electron) × 2 chế độ (Preedit, Direct) × 3 tốc độ gõ (chậm, ~8, ~15 phím/giây) gõ cùng đoạn 200 từ tiếng Việt: bảng **số ký tự sai/thừa/thiếu** (số, không ghi "ổn"). Kiểm thêm: nhấp chuột giữa từ (reset đúng, **không xoá** nội dung đã commit), chọn vùng rồi gõ, dán, và **Ctrl+Z sau Direct** (mỗi phím có thành 1 bước hoàn tác không?). Kết luận ghi thành danh sách "ứng dụng khuyên dùng Direct" (0 lỗi ở 15 phím/giây) và "dùng Preedit". **Preedit vẫn là mặc định** |
-| P1.12 | **Direct mode: chỉ gửi phần sai khác (giữ tiền tố chung)** *(đề xuất 2026-11-17)* | [ ] | Hiện `DirectComposition::replace_rendered` xoá **cả từ đang gõ** rồi commit lại cả từ ⇒ số BackSpace tăng theo bình phương độ dài từ. Tái tính tay trên đúng chuỗi trong log của bạn: **34 BackSpace** (khớp số bạn báo) so với **5** nếu giữ tiền tố chung (`Tiên`→`Tiêng` không xoá gì; chỉ `Tiêng`→`Tiếng` xoá 3). DoD: `replace_rendered` tính tiền tố chung theo điểm mã (chuỗi NFC) và chỉ phát `backspaces` = phần đuôi cũ + commit phần đuôi mới; **không đổi** cấu trúc `ReplayEdit` nên adapter IBus giữ nguyên. Test: ≥ 200 chuỗi gõ ngẫu nhiên (Telex + VNI, có `ươ`, `đ`, hoa/thường) mô phỏng áp `ReplayEdit` lên một bộ đệm ⇒ văn bản cuối **y hệt** bản thay cả từ ở mọi bước, tổng BackSpace **không lớn hơn**, và chuỗi mẫu trên ra đúng 5. `test_ime` cũ vẫn xanh (459 + mới). Giảm số sự kiện còn giảm cơ hội **chạy đua** giữa BackSpace (chuyển tiếp bất đồng bộ) và commit ở ứng dụng chậm |
+| P1.12 | **Direct mode: chỉ gửi phần sai khác (giữ tiền tố chung)** *(đề xuất 2026-11-17)* | [x] | `DirectComposition::replace_rendered` tính tiền tố chung theo Unicode codepoints NFC; chỉ phát BackSpaces cho phần đuôi cũ và commit phần đuôi mới; giữ nguyên cấu trúc `ReplayEdit`. Chuỗi mẫu `dd` + `Tieengs` + `window` chỉ tốn đúng **5 BackSpace** (giảm từ 34). Test `direct_mode_random_replay_and_common_prefix_invariants` mô phỏng 488 chuỗi (Telex + VNI, có `ươ`/`đ`, hoa/thường, xoá lùi giữa từ, ngẫu nhiên PRNG): văn bản cuối khớp 100% bản thay cả từ ở mọi bước, tổng BackSpace luôn $\le$ bản cũ. `test_ime` đạt **7149 checks** (tăng từ 459), 0 fail |
 
 **Lưu ý P1 (2026-11-17):**
 - *Direct mode (P1.4, `e885ac9`)* là tuỳ chọn thêm, không thay đổi nghiệm thu P1.4. Nó cần IBus surrounding text để biết caret đổi chỗ; ứng dụng không gửi thông tin này thì từ đang gõ có thể không được reset khi bạn nhấp chuột. Đây là lý do P1.11 phải đo trên ứng dụng thật chứ không chỉ script.
@@ -268,7 +268,7 @@ phải đạt đủ xác thực, xác nhận, audit, ngân sách tài nguyên v�
 | P5.6 | Nạp `.yui v3` | `mmap` tệp qua `yuid`, kiểm `fs.read` đúng đường dẫn; test: tệp 1 GB mở < 50 ms, RAM tăng < 5 MB |
 | P5.7 | Bật dịch vụ nền `yuid` | `systemctl enable --now yuid`, socket `0600`, `yuid --info` liệt kê engine thật |
 | P5.8 | Bật điều khiển tiếng Việt qua MCP | test 5 công cụ với câu tiếng Việt có dấu **và** không dấu; mỗi hành động có audit + xác nhận |
-| P5.9 | Kiểm hồi quy toàn bộ | `make test` **≥ 3055** check xanh (2994 C++17 + 61 C11; con số tăng khi có test mới, **không được giảm**); thêm test tích hợp: 1 câu lệnh tiếng Việt → hành động OS thật |
+| P5.9 | Kiểm hồi quy toàn bộ | `make test` **≥ 9745** check xanh (9684 C++17 + 61 C11; con số tăng khi có test mới, **không được giảm**); thêm test tích hợp: 1 câu lệnh tiếng Việt → hành động OS thật |
 | P5.10 | Ghi lại số đo | thời gian phản hồi, RAM tăng thêm, k/W thực tế ở 3 chế độ máy |
 
 ### 7.3 Điều kiện thoát (rollback)
@@ -318,7 +318,7 @@ Dành cho một tác tử AI (hoặc một cuộc chat mới) được giao làm
 
 1. **Kích hoạt:** chỉ khi người dùng nhắn đúng câu **"Tích hợp AI vào hệ điều hành"**. Không có câu đó ⇒ dừng và nói P5 đang khoá. Không tự suy ra từ lời nhắc gián tiếp.
 2. **Đọc trước:** §7 của file này, `Adaptive-MoE/docs/PLAN.md` mục 6, `Adaptive-MoE/docs/OS_BRIDGE.md` (khi P9-15 xong), `include/yui/yui.h`, `ai-bridge-yuid/` và `reference/README.md`.
-3. **Bước 0 — kiểm điều kiện vào (§7.1):** `make test` (phải **≥ 3055 check, 0 fail**), `make check`, `scripts/verify.sh`, `git log -n 5` + `git status` trên **nhánh hiện hành** (không chuyển nhánh). Dán lệnh + đầu ra vào §12. Điều kiện nào đỏ ⇒ **dừng và báo**, không làm tiếp.
+3. **Bước 0 — kiểm điều kiện vào (§7.1):** `make test` (phải **≥ 9745 check, 0 fail**), `make check`, `scripts/verify.sh`, `git log -n 5` + `git status` trên **nhánh hiện hành** (không chuyển nhánh). Dán lệnh + đầu ra vào §12. Điều kiện nào đỏ ⇒ **dừng và báo**, không làm tiếp.
 4. **Làm đúng thứ tự P5.1 → P5.10, mỗi bước một lượt:** chạy lệnh trong cột "Lệnh / tiêu chí", dán lệnh + đầu ra vào §12, **rồi mới** đánh `[x]`. Không gộp bước, không đánh `[x]` khi chưa có bằng chứng (nguyên tắc đầu file này).
 5. **Được sửa:** `ai-bridge-yuid/` (thêm lớp `EngineBackend`, P5.14), `vendor/`, `tests/` (chỉ **thêm** test mới), `docs/`. **Cấm:** `kernel-cap/`, `kernel-services/`, `kernel-frame/`; `daemon/` (đúng `reference/README.md`); đổi tên/chữ ký hàm đã có trong `include/yui/yui.h`; nhúng trọng số mô hình; cấp quyền `admin`; bật mạng cho `web_search`; đặt công cụ `sys_*` trong Python.
 6. **Dừng và hỏi người dùng khi:** một test cũ đỏ; cần khoá/quyền/mạng chưa được cấp; một bước đòi sửa vùng cấm; số đo xấu hơn mốc (ví dụ `yuid` > 8 MB RSS khi rảnh, P1.10); engine báo thiếu `yui_features` (P9-15 chưa xong).
@@ -333,7 +333,7 @@ File: `.github/workflows/ci.yml`. Sáu job, chạy song song trên mọi push/PR
 
 | Job | Chạy gì | Pass khi |
 |---|---|---|
-| `cpp` | `make -j`, `make ibus`, `make test`, `make check`, `make install` vào prefix tạm, link `libyui.a` từ chương trình C ngoài cây | **3055** check (2994 C++17 + 61 C11); IBus build/install; chương trình C in `abi=1` |
+| `cpp` | `make -j`, `make ibus`, `make test`, `make check`, `make install` vào prefix tạm, link `libyui.a` từ chương trình C ngoài cây | **9745** check (9684 C++17 + 61 C11); IBus build/install; chương trình C in `abi=1` |
 | `rust` | `cargo test --workspace`, `cargo build --release`; fmt/clippy advisory | 0 test fail |
 | `docs` | `scripts/verify.sh`: policy JSON parse, không CRLF, liên kết README, không `unsafe` trong crate nhân | tất cả xanh |
 | `cross-arch` | `cargo check --workspace --target {aarch64-unknown-linux-gnu, riscv64gc-unknown-linux-gnu}` | cả hai target type-check |
@@ -422,8 +422,8 @@ P1.4 đã hoàn tất theo tiêu chí latency trung bình; kiểm thử GUI Fire
 
 *Việc nhỏ, độc lập, làm xen kẽ được (đề xuất 2026-11-17; không chặn P2):*
 
-6. **P1.12** (Direct mode chỉ gửi phần sai khác; mã nhỏ, test bằng `make test`, mình làm được ở máy mình) rồi **P1.11** (bạn đo trên ứng dụng thật).
-7. **P0.14** (cổng "Tầng 1–2 không dependency ngoài"; vài chục dòng trong `verify.py`).
+6. **P1.12** (`[x]`, hoàn tất: Direct mode giữ tiền tố chung, chuỗi mẫu giảm 34 → 5 BackSpace, test 488 chuỗi qua 7149 check xanh). Tiếp theo là **P1.11** (bạn đo trên ứng dụng thật).
+7. **P0.14** (`[x]`, hoàn tất: cổng kiểm tra Tầng 1–2 không dependency ngoài trong `scripts/verify.py`, DoD đã nghiệm thu).
 8. Chưa làm P3.13–P3.16, P4.14, P6.14–P6.16 cho tới khi bạn duyệt; P3 cần P3.1 (`yui-vmmd`) nên chưa thể bắt đầu sớm.
 
 Mỗi mục giữ trạng thái `[~]`/`[ ]` cho tới khi bằng chứng đúng DoD xuất hiện; ghi kết quả
@@ -458,6 +458,7 @@ vào nhật ký dưới đây. Không nhận boot/đo phần cứng thay cho CI 
 | 2026-11-16 | P2.8 (`[~]`) — chống symlink escape khi đọc /core | `ImmutablePartition::read` mở root dir rồi đi path từng phần tử với `openat` + `O_NOFOLLOW`, chỉ cho regular files, kiểm cùng inode giữa `fstatat`/`openat`, không ghi output một phần khi lỗi; thêm tests symlink file/dir và nested regular path. `test_fsstore` **48 checks**; `make test` **2842**, `make check` xanh. Còn tích hợp kernel và power-loss QEMU test 20 lần; sandbox không có `cargo`/`qemu-system-*` |
 | 2026-11-17 | Nghiệm thu log Kaggle của bạn (commit `e885ac9`, bản `main`) | **Số liệu bạn báo:** C++/C11 xanh toàn bộ; `test_crypto` 28, `test_codec_json` 102, `test_core` 163, `test_sandbox` 129, `test_ime` 246 (lần chạy đầu) rồi **459** (lần sau, bản Direct), `test_daemon` 103, `test_tools` 61, `test_telemetry` 471, `test_fb` 1184, `test_power` 47; Rust `kernel-cap` **23**, `yui-sched` **13**, `yui-zram` **8** (0 fail); kernel build x86_64 42.272 B (ELF32) + ELF64, aarch64 113.112 B, riscv64 79.176 B; QEMU **cả 3 kiến trúc boot**, profiler chạy, bảng năng lực sống; tổng thời gian notebook 302,9 s. Direct mode: `YUI_IME_MODE=direct` được nhận; chuỗi commit `d, đ, T, Ti, Tie, Tiê, Tiên, Tiêng, Tiếng, w … window`, tổng **34** BackSpace. **Mình đối chiếu:** (1) chạy lại `make test` + `make check` trên bản sao `main`: 2994 C++17 + 61 C11 = **3055 check, 0 fail**, số theo từng file **trùng log của bạn**; (2) tính tay số BackSpace của chuỗi trên: replay cả từ = **34** (khớp log), giữ tiền tố chung = **5** ⇒ P1.12. **Mình không làm được:** `cargo`, QEMU, `make ibus` (thiếu công cụ/`libibus-1.0-dev`), và đọc trạng thái CI trên GitHub (API hết hạn mức) ⇒ Rust/kernel/QEMU ở đây là **số do bạn báo**, chưa có đối chiếu CI từ phía mình. Kết luận: P1.4 giữ `[x]`; P2.2 giữ `[~]`; P2.3 giữ `[x]` |
 | 2026-11-17 | Nâng cấp kế hoạch (không đổi mã) | Đánh giá đợt tư vấn thứ ba của Gemini (§13 C30–C41). Thêm 12 task (xem đầu file), §5.2, §7.7. Sửa số lỗi thời: 2842 → 3055 (P0, P5.9, §8), số test `kernel-cap`/`yui-sched`, bảng trạng thái P1 (3/12; tiêu đề §3 lệch 2/10). `[x]`/`[~]` của task cũ **không đổi**. **Đã chạy `scripts/verify.sh`** trên bản sao repo có tệp mới: *tất cả kiểm tra tĩnh đạt* (liên kết nội bộ, đường dẫn trích trong docs, không CRLF). Không chạy lại `make test` vì chỉ sửa tài liệu |
+| 2026-11-17 | P0.14 (`[x]`), P1.12 (`[x]`) | Hoàn tất 2 task theo kế hoạch: (1) **P0.14**: `scripts/verify.py::check_kernel_dependencies` khóa cứng nguyên tắc "lõi sạch không dependency ngoài" cho Tầng 1–2 (`kernel-cap`, `kernel-services/*`) và chỉ cho phép `yui-cap` ở `kernel-frame`; thử thêm `foo = "1"` vào `kernel-cap/Cargo.toml` ⇒ `verify.sh` báo đỏ FAIL rõ tên crate; gỡ ra ⇒ xanh. (2) **P1.12**: `DirectComposition::replace_rendered` trong `userspace-vi/ime.cpp` tính tiền tố chung theo codepoint NFC, chỉ gửi phần sai khác. Chuỗi mẫu `dd` + `Tieengs` + `window` ra đúng 5 BackSpace (giảm 85% so với 34 cũ). Thêm test `direct_mode_random_replay_and_common_prefix_invariants` kiểm tra 488 chuỗi (Telex & VNI, có `ươ`, `đ`, hoa/thường, xoá lùi giữa từ, PRNG) chứng minh văn bản luôn đồng nhất 100% với bản thay cả từ ở từng phím gõ và tổng BackSpace luôn $\le$ bản cũ. `test_ime` tăng từ 459 lên **7149 checks**; tổng kiểm thử monorepo đạt **9745 checks** (9684 C++17 + 61 C11), 0 fail; `scripts/verify.sh` và `make check` toàn bộ xanh |
 
 
 ---

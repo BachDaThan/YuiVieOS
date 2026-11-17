@@ -7,3 +7,5 @@ description = "YuiVieOS capability microkernel core: capability tables, derived 
 
 [lib]
 name = "yui_cap"
+
+[dependencies]

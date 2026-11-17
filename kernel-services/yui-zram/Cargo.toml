@@ -7,3 +7,5 @@ description = "YuiVieOS in-RAM compressed swap: YUI-LZ codec + page store (Tần
 
 [lib]
 name = "yui_zram"
+
+[dependencies]

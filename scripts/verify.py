@@ -21,6 +21,14 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib  # type: ignore
+    except ImportError:
+        tomllib = None  # type: ignore
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 failures: list[str] = []
 
@@ -330,6 +338,100 @@ def check_frame() -> None:
         ok("banner 'yui: ready' có trong khung")
 
 
+def load_toml(path: pathlib.Path) -> dict:
+    text = path.read_text(encoding="utf-8")
+    if tomllib is not None:
+        return tomllib.loads(text)
+    data: dict[str, dict] = {}
+    current_sec = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current_sec = line[1:-1].strip()
+            data.setdefault(current_sec, {})
+            continue
+        if "=" in line and current_sec:
+            k, v = line.split("=", 1)
+            k, v = k.strip(), v.strip()
+            if v.startswith("{") and v.endswith("}"):
+                inner: dict[str, str] = {}
+                for part in v[1:-1].split(","):
+                    if "=" in part:
+                        ik, iv = part.split("=", 1)
+                        inner[ik.strip()] = iv.strip().strip('"\' ')
+                data[current_sec][k] = inner
+            else:
+                data[current_sec][k] = v.strip('"\' ')
+    return data
+
+
+def check_kernel_dependencies() -> None:
+    """Tầng 1-2 không dependency ngoài (P0.14)."""
+    header("kiểm tra dependency Tầng 1–2 (không dependency ngoài)")
+    tier_crates = [ROOT / "kernel-cap/Cargo.toml"]
+    tier_crates.extend(sorted((ROOT / "kernel-services").glob("*/Cargo.toml")))
+
+    dep_sections = ("dependencies", "dev-dependencies", "build-dependencies")
+
+    for cargo_path in tier_crates:
+        if not cargo_path.is_file():
+            continue
+        rel = cargo_path.relative_to(ROOT)
+        data = load_toml(cargo_path)
+        has_dep = False
+        crate_failed = False
+        for sec in dep_sections:
+            deps = data.get(sec, {})
+            for name, spec in deps.items():
+                has_dep = True
+                if isinstance(spec, str):
+                    bad(f"{rel}: dependency '{name} = \"{spec}\"' không phải path nội bộ (cấm dependency ngoài)")
+                    crate_failed = True
+                elif isinstance(spec, dict):
+                    path_val = spec.get("path")
+                    if not path_val:
+                        bad(f"{rel}: dependency '{name}' thiếu 'path' (cấm dependency ngoài)")
+                        crate_failed = True
+                    else:
+                        target = (cargo_path.parent / path_val).resolve()
+                        if not target.exists() or not str(target).startswith(str(ROOT)):
+                            bad(f"{rel}: dependency '{name}' có path '{path_val}' nằm ngoài repo")
+                            crate_failed = True
+                else:
+                    bad(f"{rel}: dependency '{name}' không hợp lệ (cấm dependency ngoài)")
+                    crate_failed = True
+        if not crate_failed:
+            if not has_dep:
+                ok(f"{rel}: [dependencies] rỗng, 0 dependency ngoài")
+            else:
+                ok(f"{rel}: tất cả dependency đều là path nội bộ trong repo")
+
+    frame_cargo = ROOT / "kernel-frame/Cargo.toml"
+    if frame_cargo.is_file():
+        rel = frame_cargo.relative_to(ROOT)
+        data = load_toml(frame_cargo)
+        frame_failed = False
+        for sec in dep_sections:
+            deps = data.get(sec, {})
+            for name, spec in deps.items():
+                if name != "yui-cap":
+                    bad(f"{rel}: dependency '{name}' không được phép (chỉ được phụ thuộc yui-cap)")
+                    frame_failed = True
+                else:
+                    if not isinstance(spec, dict) or "path" not in spec:
+                        bad(f"{rel}: yui-cap phải dùng path dependency trong repo")
+                        frame_failed = True
+                    else:
+                        target = (frame_cargo.parent / spec["path"]).resolve()
+                        if not target.exists() or not str(target).startswith(str(ROOT)):
+                            bad(f"{rel}: yui-cap có path '{spec['path']}' nằm ngoài repo")
+                            frame_failed = True
+        if not frame_failed:
+            ok(f"{rel}: chỉ phụ thuộc yui-cap nội bộ")
+
+
 # --------------------------------------------------------------------------- 4
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 
@@ -415,6 +517,7 @@ def main() -> int:
     check_ibus_component()
     check_rust()
     check_frame()
+    check_kernel_dependencies()
     check_links()
     check_doc_paths()
     check_line_endings()
