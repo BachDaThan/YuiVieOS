@@ -2,12 +2,14 @@
 // the terminal, the GUI and the MCP bridge obey exactly the same rules.
 #include "yui/shell.hpp"
 
+#include <algorithm>
 #include <sstream>
 
 #include "yui/apppack.hpp"
 #include "yui/b64.hpp"
 #include "yui/codec.hpp"
 #include "yui/ime.hpp"
+#include "yui/telemetry.hpp"
 #include "yui/text.hpp"
 
 namespace yui::shell {
@@ -57,6 +59,82 @@ std::string human_bytes(uint64_t n) {
   return buf;
 }
 
+size_t levenshtein_distance(const std::string& s1, const std::string& s2) {
+  const size_t m = s1.size();
+  const size_t n = s2.size();
+  std::vector<size_t> dp(n + 1, 0);
+  for (size_t j = 0; j <= n; ++j) dp[j] = j;
+
+  for (size_t i = 1; i <= m; ++i) {
+    size_t prev = dp[0];
+    dp[0] = i;
+    for (size_t j = 1; j <= n; ++j) {
+      size_t temp = dp[j];
+      if (s1[i - 1] == s2[j - 1]) {
+        dp[j] = prev;
+      } else {
+        dp[j] = 1 + std::min({prev, dp[j], dp[j - 1]});
+      }
+      prev = temp;
+    }
+  }
+  return dp[n];
+}
+
+// Aliases: Vietnamese and English are interchangeable, along with unaccented forms and shortcuts.
+const std::map<std::string, std::string> kAliases = {
+    // 1. giúp / help
+    {"help", "giúp"},        {"giup", "giúp"},      {"trợgiúp", "giúp"},   {"trogiup", "giúp"},
+    // 2. thôngtin / info
+    {"info", "thôngtin"},    {"thongtin", "thôngtin"},
+    // 3. cấuhình / profile
+    {"profile", "cấuhình"},  {"cauhinh", "cấuhình"},
+    // 4. tinhchỉnh / tune
+    {"tune", "tinhchỉnh"},   {"tinhchinh", "tinhchỉnh"},
+    // 5. gõ / ime
+    {"ime", "gõ"},           {"go", "gõ"},
+    // 6. ghinhớ / remember
+    {"remember", "ghinhớ"},  {"ghinho", "ghinhớ"},
+    // 7. nối / link
+    {"link", "nối"},         {"noi", "nối"},
+    // 8. tìm / search
+    {"search", "tìm"},       {"tim", "tìm"},
+    // 9. đường / path
+    {"path", "đường"},       {"duong", "đường"},
+    // 10. thốngkê / stats
+    {"stats", "thốngkê"},    {"thongke", "thốngkê"},
+    // 11. gọttỉa / trim
+    {"trim", "gọttỉa"},      {"gottia", "gọttỉa"},
+    // 12. mởtệp / openpack
+    {"openpack", "mởtệp"},   {"motep", "mởtệp"},
+    // 13. hộpcát / sandbox
+    {"sandbox", "hộpcát"},   {"hopcat", "hộpcát"},
+    // 14. niêmphong / seal
+    {"seal", "niêmphong"},   {"niemphong", "niêmphong"},
+    // 15. thoát / exit
+    {"exit", "thoát"},       {"thoat", "thoát"},    {"quit", "thoát"},
+    // 16. đotải / telemetry
+    {"telemetry", "đotải"},  {"dotai", "đotải"},
+    // 17. mởkhoá / unseal
+    {"unseal", "mởkhoá"},    {"mokhoa", "mởkhoá"},
+    // 18. xoánút / remove
+    {"remove", "xoánút"},    {"xoanut", "xoánút"},  {"rm", "xoánút"},
+    // 19. nhậtký / audit
+    {"audit", "nhậtký"},     {"nhatky", "nhậtký"},
+    // 20. cảnhbáo / alerts
+    {"alerts", "cảnhbáo"},   {"canhbao", "cảnhbáo"}, {"alert", "cảnhbáo"},
+    // 21. phiênbản / version
+    {"version", "phiênbản"}, {"phienban", "phiênbản"}, {"ver", "phiênbản"},
+    // 22. trakho / vaultinfo
+    {"vaultinfo", "trakho"}, {"vault", "trakho"},
+    // 23. tìmweb / websearch
+    {"websearch", "tìmweb"}, {"timweb", "tìmweb"},  {"web", "tìmweb"},
+    // 24. xoámàn / clear
+    {"clear", "xoámàn"},     {"xoaman", "xoámàn"},  {"cls", "xoámàn"},
+    // 25. thờigian / uptime
+    {"uptime", "thờigian"},  {"thoigian", "thờigian"}, {"time", "thờigian"},
+};
+
 }  // namespace
 
 Shell::Shell(service::Daemon& daemon, const ui::Layout& layout) : daemon_(daemon), layout_(layout) {
@@ -89,6 +167,25 @@ Shell::Shell(service::Daemon& daemon, const ui::Layout& layout) : daemon_(daemon
       {"niêmphong", "seal", "niêmphong <vănbản>", "seal <text>", "Niêm phong dữ liệu vào kho.",
        "Seal data into the vault."},
       {"thoát", "exit", "thoát", "exit", "Rời shell.", "Leave the shell."},
+      {"đotải", "telemetry", "đotải", "telemetry", "Đọc cảm biến nhiệt độ, pin, RAM của máy.",
+       "Read hardware sensors (temp, battery, RAM)."},
+      {"mởkhoá", "unseal", "mởkhoá <dữ_liệu_base64>", "unseal <base64_blob>",
+       "Mở dữ liệu niêm phong từ kho Vault.", "Open sealed data from the vault."},
+      {"xoánút", "remove", "xoánút <id>", "remove <id>", "Xoá một mục khỏi đồ thị tri thức.",
+       "Remove an item from the knowledge graph."},
+      {"nhậtký", "audit", "nhậtký", "audit", "Xem lịch sử kiểm toán của hộp cát.",
+       "View sandbox enforcer audit log."},
+      {"cảnhbáo", "alerts", "cảnhbáo", "alerts", "Xem các cảnh báo an ninh từ Guard.",
+       "View active security alerts from Guard."},
+      {"phiênbản", "version", "phiênbản", "version", "Xem thông tin phiên bản OS và ABI.",
+       "Show OS and ABI version."},
+      {"trakho", "vaultinfo", "trakho", "vaultinfo", "Kiểm tra trạng thái kho bí mật Vault.",
+       "Check vault configuration status."},
+      {"tìmweb", "websearch", "tìmweb <truy_vấn>", "websearch <query>",
+       "Tìm kiếm thông tin web qua yuid.", "Search the web via yuid."},
+      {"xoámàn", "clear", "xoámàn", "clear", "Xoá sạch màn hình terminal.", "Clear terminal screen."},
+      {"thờigian", "uptime", "thờigian", "uptime", "Xem số lệnh đã thực thi trong phiên.",
+       "Show session command count and status."},
   };
 }
 
@@ -111,6 +208,65 @@ std::string Shell::help_text() const {
   return os.str();
 }
 
+std::string Shell::suggest(const std::string& input) const {
+  const std::string q = text::fold(text::trim(input));
+  if (q.empty()) return "";
+
+  struct Cand {
+    std::string display;
+    std::string key;
+  };
+  std::vector<Cand> cands;
+  cands.reserve(commands_.size() * 2 + kAliases.size());
+  for (const auto& c : commands_) {
+    cands.push_back({c.name_vi, text::fold(c.name_vi)});
+    cands.push_back({c.name_en, text::fold(c.name_en)});
+  }
+  for (const auto& kv : kAliases) {
+    cands.push_back({kv.first, text::fold(kv.first)});
+  }
+
+  // 1. Exact match
+  for (const auto& c : cands) {
+    if (c.key == q) return c.display;
+  }
+
+  // 2. Prefix match (prefer commands if input is >= 2 characters)
+  std::string best_prefix;
+  size_t min_pfx_diff = 999;
+  for (const auto& c : cands) {
+    if (c.key.rfind(q, 0) == 0 && c.key.size() > q.size()) {
+      size_t diff = c.key.size() - q.size();
+      if (diff < min_pfx_diff) {
+        min_pfx_diff = diff;
+        best_prefix = c.display;
+      }
+    }
+  }
+
+  // 3. Levenshtein edit distance
+  std::string best_edit;
+  size_t min_dist = 999;
+  for (const auto& c : cands) {
+    size_t d = levenshtein_distance(q, c.key);
+    if (d < min_dist) {
+      min_dist = d;
+      best_edit = c.display;
+    }
+  }
+
+  if (!best_prefix.empty() && (min_dist > 2 || min_pfx_diff <= 3)) {
+    return best_prefix;
+  }
+
+  const size_t max_dist = std::max<size_t>(2, q.size() / 2);
+  if (min_dist <= max_dist && min_dist <= 3) {
+    return best_edit;
+  }
+
+  return "";
+}
+
 std::string Shell::run(const std::string& line) {
   const std::string trimmed = text::trim(line);
   if (trimmed.empty()) return "";
@@ -118,15 +274,6 @@ std::string Shell::run(const std::string& line) {
   if (tokens.empty()) return "";
   const std::string cmd = text::fold(tokens[0]);
 
-  // Aliases: Vietnamese and English are interchangeable.
-  static const std::map<std::string, std::string> kAliases = {
-      {"help", "giúp"},        {"trợgiúp", "giúp"},  {"info", "thôngtin"},
-      {"profile", "cấuhình"},  {"tune", "tinhchỉnh"}, {"ime", "gõ"},
-      {"remember", "ghinhớ"},  {"link", "nối"},       {"search", "tìm"},
-      {"path", "đường"},       {"stats", "thốngkê"},  {"trim", "gọttỉa"},
-      {"openpack", "mởtệp"},   {"sandbox", "hộpcát"}, {"seal", "niêmphong"},
-      {"exit", "thoát"},       {"quit", "thoát"},
-  };
   std::string canon = cmd;
   auto it = kAliases.find(cmd);
   if (it != kAliases.end()) canon = it->second;
@@ -141,7 +288,23 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
     exit_ = true;
     return "Tạm biệt — hẹn gặp lại ở YuiVieOS. / Goodbye.";
   }
-  if (cmd == "giúp") return help_text();
+  if (cmd == "giúp") {
+    if (args.size() > 1) {
+      const std::string target = text::fold(args[1]);
+      for (const auto& c : commands_) {
+        if (text::fold(c.name_vi) == target || text::fold(c.name_en) == target) {
+          std::ostringstream os;
+          os << c.name_vi << " / " << c.name_en << "\n  "
+             << c.help_vi << "\n  " << c.help_en << "\n  "
+             << "Cú pháp VI: " << c.usage_vi << "\n  "
+             << "Syntax EN: " << c.usage_en;
+          return os.str();
+        }
+      }
+      return "Không tìm thấy trợ giúp cho \"" + args[1] + "\".";
+    }
+    return help_text();
+  }
 
   if (cmd == "thôngtin") {
     service::RpcError err;
@@ -196,11 +359,11 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
     std::string label = join_args(args, 2);
     std::string kind = "concept";
     for (const char* k : kKinds) {
-      if (args.back() == k && args.size() >= 4) {
+      if (args.back() == k) {
         kind = k;
         label = join_args(args, 2);
-        const size_t cut = label.rfind(' ');  // drop the trailing kind word
-        label = cut == std::string::npos ? label : label.substr(0, cut);
+        const auto pos = label.rfind(' ');
+        if (pos != std::string::npos) label = label.substr(0, pos);
         break;
       }
     }
@@ -211,7 +374,7 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
     service::RpcError err;
     const auto v = daemon_.handle("graph.upsert", params, err);
     if (err.code) return "Lỗi: " + err.message;
-    return v["created"].as_bool() ? "Đã ghi nhớ: " + args[1] : "Đã cập nhật: " + args[1];
+    return "Đã ghi nhớ " + v["id"].as_string() + " [" + kind + "]";
   }
 
   if (cmd == "nối") {
@@ -223,7 +386,7 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
     service::RpcError err;
     daemon_.handle("graph.link", params, err);
     if (err.code) return "Lỗi: " + err.message;
-    return "Đã nối " + args[1] + " —" + args[2] + "→ " + args[3];
+    return "Đã nối " + args[1] + " —(" + args[2] + ")→ " + args[3];
   }
 
   if (cmd == "tìm") {
@@ -233,12 +396,14 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
     service::RpcError err;
     const auto v = daemon_.handle("graph.query", params, err);
     if (err.code) return "Lỗi: " + err.message;
-    std::ostringstream os;
     const auto& hits = v["hits"].arr();
-    if (hits.empty()) return "Không tìm thấy mục nào khớp \"" + join_args(args, 1) + "\".";
-    for (const auto& h : hits)
-      os << "· " << h["id"].as_string() << " — " << h["label"].as_string() << " ["
-         << h["kind"].as_string() << "]\n";
+    if (hits.empty()) return "Không tìm thấy kết quả nào.";
+    std::ostringstream os;
+    for (size_t i = 0; i < hits.size(); ++i) {
+      if (i) os << "\n";
+      os << "• " << hits[i]["id"].as_string() << ": " << hits[i]["label"].as_string()
+         << " [" << hits[i]["kind"].as_string() << "]";
+    }
     return os.str();
   }
 
@@ -250,12 +415,12 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
     service::RpcError err;
     const auto v = daemon_.handle("graph.path", params, err);
     if (err.code) return "Lỗi: " + err.message;
-    const auto& path = v["path"].arr();
-    if (path.empty()) return "Không có đường đi.";
+    const auto& p = v["path"].arr();
+    if (p.empty()) return "Không có đường đi giữa " + args[1] + " và " + args[2];
     std::string out;
-    for (size_t i = 0; i < path.size(); ++i) {
+    for (size_t i = 0; i < p.size(); ++i) {
       if (i) out += " → ";
-      out += path[i].as_string();
+      out += p[i].as_string();
     }
     return out;
   }
@@ -328,10 +493,120 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
     params.set("plain", b64::encode(reinterpret_cast<const uint8_t*>(plain.data()), plain.size()));
     const auto v = daemon_.handle("vault.seal", params, err);
     if (err.code) return "Lỗi: " + err.message;
-    return "Đã niêm phong (" + std::to_string(v["bytes"].as_int()) + " byte).";
+    return "Đã niêm phong (" + std::to_string(v["bytes"].as_int()) + " byte): " + v["blob"].as_string();
   }
 
-  return "Không hiểu lệnh \"" + cmd + "\". Gõ \"giúp\" để xem danh sách lệnh.";
+  if (cmd == "đotải") {
+    const auto r = telemetry::read();
+    const auto a = telemetry::advise(r);
+    return "Đo tải phần cứng: " + telemetry::summary_vi(r, a);
+  }
+
+  if (cmd == "mởkhoá") {
+    if (args.size() < 2) return "Dùng: mởkhoá <dữ_liệu_base64>";
+    if (daemon_.options().vault_password.empty())
+      return "Kho mã hoá chưa mở: chạy yuid với --vault-key hoặc đặt YUI_VAULT_KEY.";
+    json::Value params(json::Object{});
+    params.set("blob", args[1]);
+    service::RpcError err;
+    const auto v = daemon_.handle("vault.open", params, err);
+    if (err.code) return "Lỗi: " + err.message;
+    std::vector<uint8_t> plain_bytes;
+    if (b64::decode(v["plain"].as_string(), plain_bytes)) {
+      return "Đã mở khoá: " + std::string(plain_bytes.begin(), plain_bytes.end());
+    }
+    return "Đã mở khoá (" + std::to_string(v["bytes"].as_int()) + " byte).";
+  }
+
+  if (cmd == "xoánút") {
+    if (args.size() < 2) return "Dùng: xoánút <id>";
+    json::Value params(json::Object{});
+    params.set("id", args[1]);
+    service::RpcError err;
+    const auto v = daemon_.handle("graph.remove", params, err);
+    if (err.code) return "Lỗi: " + err.message;
+    return v["removed"].as_bool() ? ("Đã xoá nút \"" + args[1] + "\".")
+                                  : ("Không tìm thấy nút \"" + args[1] + "\" để xoá.");
+  }
+
+  if (cmd == "nhậtký") {
+    const auto& audit = daemon_.enforcer().audit();
+    if (audit.empty()) return "Nhật ký kiểm toán hộp cát: 0 sự kiện ghi nhận.";
+    std::ostringstream os;
+    os << "Nhật ký kiểm toán (" << audit.size() << " sự kiện):\n";
+    size_t start = audit.size() > 10 ? audit.size() - 10 : 0;
+    for (size_t i = start; i < audit.size(); ++i) {
+      const auto& e = audit[i];
+      os << "  [" << (e.decision.allowed ? "CHO PHÉP" : "TỪ CHỐI") << "] "
+         << e.subject << " " << e.action.kind << " " << e.action.target
+         << " (" << e.decision.reason << ")\n";
+    }
+    return os.str();
+  }
+
+  if (cmd == "cảnhbáo") {
+    service::RpcError err;
+    const auto v = daemon_.handle("guard.alerts", json::Value(json::Object{}), err);
+    if (err.code) return "Lỗi: " + err.message;
+    const auto& alerts = v["alerts"].arr();
+    if (alerts.empty()) return "Hệ thống an toàn: 0 cảnh báo Guard.";
+    std::ostringstream os;
+    os << "Cảnh báo an ninh (" << alerts.size() << " cảnh báo):\n";
+    for (const auto& a : alerts) {
+      os << "  PID " << a["pid"].as_int() << " [" << a["name"].as_string() << "]: "
+         << a["reason_vi"].as_string() << "\n";
+    }
+    return os.str();
+  }
+
+  if (cmd == "phiênbản") {
+    service::RpcError err;
+    const auto v = daemon_.handle("yuid.info", json::Value(nullptr), err);
+    std::ostringstream os;
+    os << "YuiVieOS Beta · Phiên bản: "
+       << (v.is_object() && v.has("version") ? v["version"].as_string() : "0.4.0")
+       << " · Giao thức: JSON-RPC 2.0 / MCP 2024-11-05 · C-ABI v1";
+    return os.str();
+  }
+
+  if (cmd == "trakho") {
+    const bool opened = !daemon_.options().vault_password.empty();
+    std::ostringstream os;
+    os << "Kho bí mật Vault: "
+       << (opened ? "ĐÃ MỞ (sẵn sàng niêm phong/mở khoá)"
+                  : "CHƯA KÍCH HOẠT (chạy yuid với --vault-key hoặc đặt YUI_VAULT_KEY)");
+    return os.str();
+  }
+
+  if (cmd == "tìmweb") {
+    if (args.size() < 2) return "Dùng: tìmweb <truy_vấn>";
+    json::Value params(json::Object{});
+    params.set("q", join_args(args, 1));
+    service::RpcError err;
+    const auto v = daemon_.handle("web.search", params, err);
+    if (err.code) return "Lỗi: " + err.message;
+    return "Tìm kiếm web: \"" + v["query"].as_string() + "\" [" + v["backend"].as_string() +
+           "] — " + v["note"].as_string();
+  }
+
+  if (cmd == "xoámàn") {
+    return "\033[2J\033[H";
+  }
+
+  if (cmd == "thờigian") {
+    std::ostringstream os;
+    os << "Phiên làm việc YuiVieOS · Lệnh đã chạy: " << history_
+       << " · Giao diện: " << ui::path_name(layout_.path)
+       << " (" << layout_.columns << "x" << layout_.rows << ")";
+    return os.str();
+  }
+
+  const std::string sug = suggest(cmd);
+  std::string msg = "Không hiểu lệnh \"" + cmd + "\". Gõ \"giúp\" để xem danh sách lệnh.";
+  if (!sug.empty()) {
+    msg += " Có phải bạn muốn dùng \"" + sug + "\"?";
+  }
+  return msg;
 }
 
 }  // namespace yui::shell

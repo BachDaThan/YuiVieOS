@@ -171,9 +171,9 @@ P3.7 → P3.8 → P3.9 → P3.10 → P3.11; không nhảy thẳng tới tuyên b
 | Mã | Task | Trạng thái | DoD |
 |---|---|---|---|
 | P4.1 | Compositor: framebuffer (yếu) + Vulkan/DRM (mạnh) | [ ] | Chuyển chế độ theo profiler không cần đăng nhập lại; 30 fps trên máy 2 GB |
-| P4.2 | Telemetry C-ABI (`yui_telemetry`) hoàn chỉnh | [ ] | 3 test C11; khuyến nghị k/W khớp bảng `ARCHITECTURE.md` §6.3 |
+| P4.2 | Telemetry C-ABI (`yui_telemetry`) hoàn chỉnh | [x] | 14 test C11 trong `tests/test_capi.c`; `yui_telemetry` đọc sysfs thật + `yui_telemetry_advise` khuyến nghị k/W khớp bảng `ARCHITECTURE.md` §6.3 |
 | P4.3 | 5 công cụ OS MCP + xác nhận người dùng + audit | [ ] | Đạt toàn bộ DoD và ma trận kiểm thử ở §6.1: MCP 2024-11-05/JSON-RPC 2.0, HMAC capability, confirm/deny không side effect, audit cả allow/deny, chạy trong ngân sách runtime 2 GiB, clean-room; `make clean && make -j2 check` xanh |
-| P4.4 | Shell: 25 lệnh, gợi ý lệnh, song ngữ đầy đủ | [ ] | Mọi lệnh có 2 tên; `giúp` liệt kê đủ; test cho từng tên |
+| P4.4 | Shell: 25 lệnh, gợi ý lệnh, song ngữ đầy đủ | [x] | Đủ 25 lệnh song ngữ (50 tên + alias không dấu), thuật toán gợi ý Levenshtein/prefix; `tests/test_tools.cpp` 289 check phủ mọi cặp lệnh và gợi ý |
 | P4.5 | App Yui (Flutter) build được | [ ] | `flutter build linux` xanh trong CI; 3 màn hình dùng được với `yuid` thật |
 | P4.6 | Trình cài đặt (USB, BIOS + UEFI, A/B) | [ ] | Cài lên máy ảo từ USB, boot lại vào hệ thống đã cài, chữ ký ảnh hợp lệ |
 | P4.7 | Ký số phát hành + `.bundle` | [ ] | Bundle được ký bằng khoá offline; máy từ chối bundle sai chữ ký |
@@ -181,7 +181,7 @@ P3.7 → P3.8 → P3.9 → P3.10 → P3.11; không nhảy thẳng tới tuyên b
 | P4.9 | `yui-update` (check / apply / rollback) trên nền `.bundle` A/B của P2.4 *(đề xuất)* | [ ] | Trong QEMU: bundle hợp lệ ⇒ ghi khe B, khởi động lại vào B, `yui-update rollback` về A; bundle sai chữ ký ⇒ từ chối; **`apply` không tự khởi động lại** khi người dùng đang làm việc (chỉ đặt cờ "áp dụng ở lần khởi động tới"). Ba luồng độc lập: lõi hệ điều hành / mô hình AI (`Yui-Models`) / ứng dụng. Cập nhật sai phân (bsdiff/zsync) là **tuỳ chọn sau**, và máy người dùng chỉ được dùng bộ áp dụng tự viết (clean-room) |
 | P4.10 | Pipeline phát hành bằng GitHub Actions *(đề xuất)* | [ ] | Workflow: dọn runner → build → `qemu` smoke 3 kiến trúc → sinh `manifest.json` **chưa ký** → (bạn ký **ngoại tuyến**) → đẩy lên Releases kênh `canary`, sau 24–48 giờ hoặc khi bạn duyệt thì sang `latest`. DoD: bản có test đỏ **không bao giờ** lên Releases; **không có khoá bí mật Ed25519 trong GitHub Secrets**; mỗi tệp đính kèm < 2 GiB; máy người dùng lấy manifest qua `releases/latest/download/…` (không gọi API); mô hình AI **không** đóng trong ISO mà tải riêng. Thiết kế chữ ký dùng chung với `Adaptive-MoE` P9-7 |
 | P4.11 | Build tái lập được + SBOM *(đề xuất)* | [ ] | Hai lần build từ cùng commit (cố định `SOURCE_DATE_EPOCH`, đường dẫn, thứ tự) cho **sha256 trùng** của `libyui.a`, `yuid`, ảnh nhân; sinh danh mục thành phần + giấy phép tự động (hiện không dependency ngoài ⇒ danh mục phải nói đúng điều đó) |
-| P4.12 | `yui-shell` lai POSIX (pipe, chuyển hướng, nền, `kill`) *(đề xuất)* | [ ] | Hai chế độ trong cùng shell: lệnh Việt–Anh nội bộ (hiện **15 lệnh**, mục tiêu P4.4 là 25) và chuyển tiếp lệnh POSIX. **Trên Linux host (P1)** chạy được ngay bằng `posix_spawn` trong hộp cát; **trên nhân riêng** phải chờ P2.7 (`fork`/`execve` hiện trả `EPERM`). DoD: 20 kịch bản (ống dẫn, chuyển hướng `>` `>>` `<`, chạy nền `&`, `jobs`, `kill`, biến môi trường, trích dẫn); dòng không nhận ra **không tự chạy**; mọi lệnh đi qua cùng `Daemon` như GUI/MCP |
+| P4.12 | `yui-shell` lai POSIX (pipe, chuyển hướng, nền, `kill`) *(đề xuất)* | [ ] | Hai chế độ trong cùng shell: lệnh Việt–Anh nội bộ (hiện đủ **25 lệnh** theo P4.4) và chuyển tiếp lệnh POSIX. **Trên Linux host (P1)** chạy được ngay bằng `posix_spawn` trong hộp cát; **trên nhân riêng** phải chờ P2.7 (`fork`/`execve` hiện trả `EPERM`). DoD: 20 kịch bản (ống dẫn, chuyển hướng `>` `>>` `<`, chạy nền `&`, `jobs`, `kill`, biến môi trường, trích dẫn); dòng không nhận ra **không tự chạy**; mọi lệnh đi qua cùng `Daemon` như GUI/MCP |
 | P4.13 | Đường xác nhận **tin cậy** (chống giả click / clickjacking) *(đề xuất)* | [ ] | Hộp thoại xác nhận của `sys_*` do compositor/nhân vẽ; chỉ nhận sự kiện từ **thiết bị vật lý** do nhân gắn thẻ; ứng dụng không chen được bằng sự kiện tổng hợp. Test: ứng dụng giả gửi click tổng hợp ⇒ bị bỏ qua + audit. **Không** dùng nhịp gõ/sinh trắc hành vi làm căn cứ xác nhận (độ tin cậy thấp, là dữ liệu nhạy cảm, và không chặn được kẻ chen vào đường nhập) |
 | P4.14 | **Cửa sổ liền mạch** (cửa sổ app trong micro-VM hiện trên compositor chủ) *(đề xuất 2026-11-17)* | [ ] | Cửa sổ app Windows/Android hiện như cửa sổ thường. **Tiêu đề + viền do chủ vẽ**, kèm nhãn mức tin cậy + tên app lấy từ manifest — guest **không** đổi được (cách Qubes OS làm; WSLg/crosvm dùng đường truyền khác, theo hiểu biết công khai). Test: guest cố vẽ hộp thoại giả giống hộp thoại hệ thống, che nhãn, đọc điểm ảnh cửa sổ khác, đọc clipboard khi không có thao tác ⇒ **thất bại + audit**; clipboard và kéo-thả đi qua môi giới có xác nhận. Đo **độ trễ nhập (ms) và fps** so với cửa sổ gốc, ghi vào §12 (không cam kết "như bản gốc"). Phụ thuộc P3.1, P4.1, P4.13; đường truyền (virtio-gpu hay proxy Wayland) chọn **sau khi đo**; thành phần ngoài phải duyệt theo §6.1 mục 5. Gộp mục Wayland của §14.2 |
 
@@ -249,7 +249,7 @@ phải đạt đủ xác thực, xác nhận, audit, ngân sách tài nguyên v�
 
 ### 7.1 Điều kiện vào (phải xanh trước khi bắt đầu)
 
-- [ ] P1.5 telemetry chạy; P4.2 `yui_telemetry` có test
+- [x] P1.5 telemetry chạy; P4.2 `yui_telemetry` có test
 - [ ] P4.3 5 công cụ OS MCP + xác nhận + audit có test
 - [ ] `ai-bridge-yuid` giữ nguyên tên phương thức và mã lỗi C-ABI (không phá hợp đồng)
 - [ ] Có mạng tới GitHub **hoặc** có sẵn bản sao hai repo AI trên máy

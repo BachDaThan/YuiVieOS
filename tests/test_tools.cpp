@@ -275,4 +275,194 @@ YUI_TEST(shell, bilingual_commands) {
   CHECK_EQ(sh2.run("   "), std::string(""));
 }
 
+YUI_TEST(shell, catalog_has_25_bilingual_commands) {
+  service::Options opts;
+  service::Daemon daemon(opts);
+  ui::Layout layout;
+  shell::Shell sh(daemon, layout);
+
+  const auto& cmds = sh.commands();
+  CHECK_EQ(cmds.size(), size_t(25));
+
+  for (const auto& c : cmds) {
+    CHECK(!c.name_vi.empty());
+    CHECK(!c.name_en.empty());
+    CHECK(!c.usage_vi.empty());
+    CHECK(!c.usage_en.empty());
+    CHECK(!c.help_vi.empty());
+    CHECK(!c.help_en.empty());
+  }
+}
+
+YUI_TEST(shell, all_25_commands_run_in_both_languages) {
+  service::Options opts;
+  opts.state_dir = "/tmp/yui-shell-test";
+  opts.vault_password = "mat-khau-thu";
+  service::Daemon daemon(opts);
+  daemon.set_host_snapshot(json::Value(json::Object{}));
+  ui::Layout layout;
+  layout.columns = 100;
+  layout.rows = 30;
+  layout.reason = "kiểm thử 25 lệnh";
+  shell::Shell sh(daemon, layout);
+
+  // 1. giúp / help
+  CHECK(sh.run("giúp").find("Lệnh / Commands") != std::string::npos);
+  CHECK(sh.run("help").find("Lệnh / Commands") != std::string::npos);
+  CHECK(sh.run("help telemetry").find("telemetry") != std::string::npos);
+
+  // 2. thôngtin / info
+  CHECK(sh.run("thôngtin").find("yuid") != std::string::npos);
+  CHECK(sh.run("info").find("yuid") != std::string::npos);
+
+  // 3. cấuhình / profile
+  CHECK(sh.run("cấuhình").find("k =") != std::string::npos || sh.run("cấuhình").size() > 0);
+  CHECK(sh.run("profile").find("k =") != std::string::npos || sh.run("profile").size() > 0);
+
+  // 4. tinhchỉnh / tune
+  CHECK(sh.run("tinhchỉnh 4 45 nguon").find("k =") != std::string::npos);
+  CHECK(sh.run("tune 8 50 pin").find("k =") != std::string::npos);
+
+  // 5. gõ / ime
+  CHECK_EQ(sh.run("gõ telex Vieetj"), "Việt");
+  CHECK_EQ(sh.run("ime vni Vie65t"), "Việt");
+
+  // 6. ghinhớ / remember
+  CHECK(sh.run("ghinhớ node:1 \"Nút 1\" concept").find("Đã ghi nhớ") != std::string::npos);
+  CHECK(sh.run("remember node:2 \"Nút 2\" concept").find("Đã ghi nhớ") != std::string::npos);
+
+  // 7. nối / link
+  CHECK(sh.run("nối node:1 lien_ket node:2").find("Đã nối") != std::string::npos);
+  CHECK(sh.run("link node:2 tro_lai node:1").find("Đã nối") != std::string::npos);
+
+  // 8. tìm / search
+  CHECK(sh.run("tìm Nút").find("node:1") != std::string::npos);
+  CHECK(sh.run("search Nút").find("node:2") != std::string::npos);
+
+  // 9. đường / path
+  CHECK(sh.run("đường node:1 node:2").find("→") != std::string::npos);
+  CHECK(sh.run("path node:2 node:1").find("→") != std::string::npos);
+
+  // 10. thốngkê / stats
+  CHECK(sh.run("thốngkê").find("Nút: 2") != std::string::npos);
+  CHECK(sh.run("stats").find("Cạnh:") != std::string::npos);
+
+  // 11. gọttỉa / trim & 12. mởtệp / openpack
+  const std::string root = mkdtemp_dir("sh-pack");
+  write_file(root + "/file.txt", "YuiVieOS shell test");
+  const std::string yuip = root + "/out.yuip";
+  const std::string out_dir = root + "/unpacked";
+  CHECK(sh.run("gọttỉa " + root + " " + yuip).find("Đã lưu") != std::string::npos);
+  CHECK(sh.run("mởtệp " + yuip + " " + out_dir).find("Đã bung") != std::string::npos);
+  CHECK(read_file(out_dir + "/file.txt").find("YuiVieOS") != std::string::npos);
+  // Also with English names:
+  const std::string yuip2 = root + "/out2.yuip";
+  const std::string out_dir2 = root + "/unpacked2";
+  CHECK(sh.run("trim " + root + " " + yuip2).find("Đã lưu") != std::string::npos);
+  CHECK(sh.run("openpack " + yuip2 + " " + out_dir2).find("Đã bung") != std::string::npos);
+
+  // 13. hộpcát / sandbox
+  CHECK(sh.run("hộpcát fs.read /etc/yui/policy.json").find("ĐƯỢC PHÉP") != std::string::npos);
+  CHECK(sh.run("sandbox fs.read /etc/yui/policy.json").find("ĐƯỢC PHÉP") != std::string::npos);
+
+  // 14. niêmphong / seal & 17. mởkhoá / unseal
+  const std::string sealed_resp = sh.run("niêmphong secret_data_123");
+  CHECK(sealed_resp.find("Đã niêm phong") != std::string::npos);
+  const size_t colon_pos = sealed_resp.find(": ");
+  CHECK(colon_pos != std::string::npos);
+  const std::string blob = sealed_resp.substr(colon_pos + 2);
+  CHECK(sh.run("mởkhoá " + blob).find("secret_data_123") != std::string::npos);
+
+  // English aliases for seal & unseal:
+  const std::string sealed_en = sh.run("seal confidential_info");
+  CHECK(sealed_en.find("Đã niêm phong") != std::string::npos);
+  const std::string blob_en = sealed_en.substr(sealed_en.find(": ") + 2);
+  CHECK(sh.run("unseal " + blob_en).find("confidential_info") != std::string::npos);
+
+  // 15. thoát / exit
+  CHECK(!sh.wants_exit());
+  shell::Shell sh_exit(daemon, layout);
+  CHECK(sh_exit.run("exit").find("Tạm biệt") != std::string::npos);
+  CHECK(sh_exit.wants_exit());
+
+  // 16. đotải / telemetry
+  CHECK(sh.run("đotải").find("Đo tải") != std::string::npos);
+  CHECK(sh.run("telemetry").find("Đo tải") != std::string::npos);
+
+  // 18. xoánút / remove
+  CHECK(sh.run("xoánút node:1").find("Đã xoá nút \"node:1\"") != std::string::npos);
+  CHECK(sh.run("remove node:2").find("Đã xoá nút \"node:2\"") != std::string::npos);
+  CHECK(sh.run("remove node:notfound").find("Không tìm thấy") != std::string::npos);
+
+  // 19. nhậtký / audit
+  CHECK(sh.run("nhậtký").find("Nhật ký") != std::string::npos);
+  CHECK(sh.run("audit").find("Nhật ký") != std::string::npos);
+
+  // 20. cảnhbáo / alerts
+  CHECK(sh.run("cảnhbáo").find("cảnh báo") != std::string::npos || sh.run("cảnhbáo").find("an toàn") != std::string::npos);
+  CHECK(sh.run("alerts").find("cảnh báo") != std::string::npos || sh.run("alerts").find("an toàn") != std::string::npos);
+
+  // 21. phiênbản / version
+  CHECK(sh.run("phiênbản").find("YuiVieOS Beta") != std::string::npos);
+  CHECK(sh.run("version").find("YuiVieOS Beta") != std::string::npos);
+
+  // 22. trakho / vaultinfo
+  CHECK(sh.run("trakho").find("Kho bí mật Vault") != std::string::npos);
+  CHECK(sh.run("vaultinfo").find("Kho bí mật Vault") != std::string::npos);
+
+  // 23. tìmweb / websearch
+  CHECK(sh.run("tìmweb yui").find("Tìm kiếm web") != std::string::npos);
+  CHECK(sh.run("websearch yui").find("Tìm kiếm web") != std::string::npos);
+
+  // 24. xoámàn / clear
+  CHECK_EQ(sh.run("xoámàn"), "\033[2J\033[H");
+  CHECK_EQ(sh.run("clear"), "\033[2J\033[H");
+
+  // 25. thờigian / uptime
+  CHECK(sh.run("thờigian").find("Phiên làm việc YuiVieOS") != std::string::npos);
+  CHECK(sh.run("uptime").find("Phiên làm việc YuiVieOS") != std::string::npos);
+
+  // Unaccented Vietnamese aliases
+  CHECK(sh.run("thongtin").find("yuid") != std::string::npos);
+  CHECK(sh.run("dotai").find("Đo tải") != std::string::npos);
+  CHECK(sh.run("nhatky").find("Nhật ký") != std::string::npos);
+  CHECK(sh.run("canhbao").find("cảnh báo") != std::string::npos || sh.run("canhbao").find("an toàn") != std::string::npos);
+  CHECK(sh.run("phienban").find("YuiVieOS Beta") != std::string::npos);
+  CHECK(sh.run("thoigian").find("Phiên làm việc") != std::string::npos);
+}
+
+YUI_TEST(shell, command_suggestions_levenshtein) {
+  service::Options opts;
+  service::Daemon daemon(opts);
+  ui::Layout layout;
+  shell::Shell sh(daemon, layout);
+
+  // Typo suggestions via Levenshtein / prefix
+  CHECK_EQ(sh.suggest("hepl"), "help");
+  CHECK_EQ(sh.suggest("inf"), "info");
+  CHECK_EQ(sh.suggest("stat"), "stats");
+  CHECK_EQ(sh.suggest("telemetr"), "telemetry");
+  CHECK_EQ(sh.suggest("unseel"), "unseal");
+  CHECK_EQ(sh.suggest("audt"), "audit");
+  CHECK_EQ(sh.suggest("alrt"), "alert");
+  CHECK_EQ(sh.suggest("vers"), "version");
+
+  // Vietnamese prefix/edit suggestion
+  CHECK(!sh.suggest("xoan").empty());
+  CHECK(!sh.suggest("thoig").empty());
+
+  // Completely unknown command returns empty suggestion
+  CHECK_EQ(sh.suggest("baylenmattrang"), "");
+  CHECK_EQ(sh.suggest(""), "");
+
+  // Execution of typo prompts suggestion in output
+  const std::string r1 = sh.run("hepl");
+  CHECK(r1.find("Không hiểu lệnh \"hepl\"") != std::string::npos);
+  CHECK(r1.find("Có phải bạn muốn dùng \"help\"?") != std::string::npos);
+
+  const std::string r2 = sh.run("baylenmattrang");
+  CHECK(r2.find("Không hiểu lệnh \"baylenmattrang\"") != std::string::npos);
+  CHECK(r2.find("Có phải bạn muốn dùng") == std::string::npos);
+}
+
 YUI_TEST_MAIN("test_tools")

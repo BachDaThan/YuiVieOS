@@ -180,6 +180,14 @@ Value Daemon::method_graph(const std::string& op, const Value& p, RpcError& err)
     v.set("kinds", kinds);
     return v;
   }
+  if (op == "remove") {
+    if (!require(p, "id", err)) return Value(nullptr);
+    const bool ok = graph_.remove(p["id"].as_string());
+    Value v(json::Object{});
+    v.set("removed", ok);
+    v.set("id", p["id"].as_string());
+    return v;
+  }
   if (op == "export") {
     Value v(json::Object{});
     v.set("graph", graph_.to_json());
