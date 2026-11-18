@@ -148,7 +148,7 @@ $(BUILD)/test_capi: tests/test_capi.c $(BIN)/libyui.a
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Iinclude -o $@ $< $(BIN)/libyui.a -lstdc++ $(LDLIBS)
 
-test: $(addprefix $(OBJ)/test/,$(TESTS)) $(BUILD)/test_capi
+test: all $(addprefix $(OBJ)/test/,$(TESTS)) $(BUILD)/test_capi   # `all` trước: test_tools gọi build/bin/yui-update (P0.15)
 	@set -e; for t in $(TESTS); do echo "── $$t"; ./$(OBJ)/test/$$t; done
 	@echo "── test_capi (C11)"
 	@./$(BUILD)/test_capi

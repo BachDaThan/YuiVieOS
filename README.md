@@ -3,6 +3,9 @@
 **Hệ điều hành thuần Việt, tự chủ hoàn toàn — clean-room 100 %, nhân bằng Rust an toàn.**
 *A Vietnamese-first operating system: smooth on a 2 GB netbook, unrestricted on a workstation.*
 
+> **Dự án mã nguồn mở cá nhân**, làm vì đam mê, phục vụ học tập và nghiên cứu kỹ thuật, chia sẻ miễn phí. Cung cấp **nguyên trạng (AS-IS)**; người dùng tự chịu trách nhiệm khi sử dụng. Không dùng cho quyết định y tế, pháp lý, tài chính. Xem `docs/terms_vi.md` và `docs/privacy_vi.md`.
+> *A personal open-source project made for learning and research, shared free and provided AS-IS; use at your own risk.*
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ TẦNG 5  TRẢI NGHIỆM NGƯỜI DÙNG VIỆT                       userspace-vi/      │
