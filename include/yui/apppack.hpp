@@ -19,6 +19,12 @@
 #include <string>
 #include <vector>
 
+#include "yui/json.hpp"
+
+namespace yui::sandbox {
+struct Policy;
+}
+
 namespace yui::apppack {
 
 using Bytes = std::vector<uint8_t>;
@@ -72,6 +78,52 @@ bool unpack_to(const Bytes& packed, const std::string& dest, std::string* error 
 // sections).  The image stays loadable because section bodies are only touched
 // outside of program-header coverage.
 uint64_t strip_elf_debug(Bytes& image);
+
+// --------------------------------- Proposed Policy Generator (P3.15) --
+enum class ProposedScopeSource {
+  Manifest,       // (a) Khai báo trong manifest
+  ScannedString,  // (b) Quét từ chuỗi tĩnh trong bộ cài (độ tin cậy thấp)
+  SandboxTrial    // (c) Ghi nhận khi chạy thử trong hộp cát ("chặn và ghi")
+};
+
+const char* proposed_scope_source_name(ProposedScopeSource s);
+const char* proposed_scope_source_name_vi(ProposedScopeSource s);
+
+struct ProposedTarget {
+  std::string target;
+  ProposedScopeSource source = ProposedScopeSource::Manifest;
+  std::string confidence;  // "high", "low", "observed"
+  std::string reason_vi;
+};
+
+struct ProposedPolicy {
+  int version = 1;
+  std::string app_id;
+  std::string tier = "microvm";
+  bool enabled = false;  // Không bao giờ tự bật; người dùng duyệt từng đích
+  std::vector<std::string> capabilities;
+  std::vector<ProposedTarget> targets;
+  std::vector<std::string> deny;
+
+  json::Value to_json() const;
+  std::string to_json_string(bool pretty = true) const;
+  static ProposedPolicy from_json(const json::Value& v, std::string* error = nullptr);
+
+  // Chuyển thành Policy của sandbox. Deny luôn thắng allow.
+  sandbox::Policy to_sandbox_policy(bool approve_all = false,
+                                    const std::vector<std::string>& approved_targets = {}) const;
+};
+
+// Trích xuất các tên miền tiềm năng từ dữ liệu tệp
+std::vector<std::string> extract_domains_from_data(const Bytes& data);
+
+// Sinh chính sách đề xuất từ 3 nguồn: manifest, quét chuỗi tĩnh, và chạy thử hộp cát
+ProposedPolicy generate_proposed_policy(
+    const std::string& app_id,
+    const std::string& manifest_json,
+    const std::vector<Entry>& entries,
+    const std::vector<std::string>& sandbox_trial_blocked_domains,
+    const std::vector<std::string>& initial_deny = {});
 
 }  // namespace yui::apppack
 

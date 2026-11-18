@@ -14,7 +14,7 @@
 
 namespace yui::ui {
 
-enum class RenderPath { FramebufferDirect, GpuZeroCopy };
+enum class RenderPath { FramebufferDirect = 0, GpuZeroCopy = 1, HeadlessTui = 2 };
 const char* path_name(RenderPath p);
 
 struct DisplayInfo {
@@ -28,10 +28,12 @@ struct HardwareForUi {
   bool has_gpu = false;
   bool low_power = false;
   std::string simd = "avx2";
+  bool headless = false;
 };
 
 struct Layout {
   RenderPath path = RenderPath::FramebufferDirect;
+  bool compositor_enabled = true;
   int scale_px = 1;      // integer pixel scale for text
   int columns = 80;      // characters per row
   int rows = 24;

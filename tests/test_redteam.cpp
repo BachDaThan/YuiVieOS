@@ -629,4 +629,349 @@ YUI_TEST(redteam, third_party_ime_keylogger_attack_is_thwarted_and_audited) {
   CHECK(denied_audits >= 29 + 4);
 }
 
+// ------------------------------------------------ 4. Lớp 1 Capability Boundary & O(1) Revocation -------
+
+YUI_TEST(redteam, layer1_capability_boundary_derivation_o1_revocation_and_anomaly) {
+  const std::string master_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  sandbox::Authority auth(master_key);
+  sandbox::Enforcer enforcer;
+  const int64_t now = 1700000000;
+
+  // 1. Cấp thẻ gốc (Root Token) cho phiên làm việc Alpha
+  const std::string fam_alpha = "session-alpha-42";
+  const uint64_t root_rights = sandbox::kRightFsRead | sandbox::kRightFsWrite | sandbox::kRightNetConnect;
+  const std::vector<std::string> root_scopes = {"/data", "api.yui.vn"};
+  const sandbox::Token root_token = auth.issue("app:session-alpha", root_rights, root_scopes, now, 3600, 0, fam_alpha);
+
+  CHECK_EQ(root_token.subject, std::string("app:session-alpha"));
+  CHECK_EQ(root_token.family_id, fam_alpha);
+  CHECK_EQ(root_token.generation, 0u);
+  CHECK(auth.verify(root_token, now));
+
+  // Kiểm tra tính toàn vẹn Bearer token serialization / deserialization
+  const std::string bearer = auth.bearer(root_token);
+  sandbox::Token parsed_tok;
+  CHECK(auth.from_bearer(bearer, parsed_tok, now));
+  CHECK_EQ(parsed_tok.subject, root_token.subject);
+  CHECK_EQ(parsed_tok.family_id, fam_alpha);
+  CHECK_EQ(parsed_tok.generation, 0u);
+  CHECK(auth.verify(parsed_tok, now));
+
+  // 2. Dẫn xuất thẻ con (Capability Attenuation / Derivation)
+  // Con 1: Thu hẹp quyền chỉ đọc và thu hẹp phạm vi con /data/sub
+  const sandbox::Token child1 = auth.derive(root_token, "app:session-alpha:worker", sandbox::kRightFsRead, {"/data/sub"}, now + 10, 1800);
+  CHECK_EQ(child1.family_id, fam_alpha);
+  CHECK_EQ(child1.generation, 0u);
+  CHECK_EQ(child1.rights, sandbox::kRightFsRead);
+  CHECK(auth.verify(child1, now + 10));
+
+  // Con 2: Thu hẹp quyền kết nối mạng tới endpoint cụ thể
+  const sandbox::Token child2 = auth.derive(root_token, "app:session-alpha:net", sandbox::kRightNetConnect, {"api.yui.vn:443"}, now + 10, 1800);
+  CHECK_EQ(child2.family_id, fam_alpha);
+  CHECK(auth.verify(child2, now + 10));
+
+  // 3. Thử nghiệm xin vượt quyền: derive tự động tước (attenuate) các bit không có ở thẻ cha
+  const sandbox::Token evil_child = auth.derive(root_token, "app:session-alpha:evil", sandbox::kRightAdmin | sandbox::kRightFsRead, {"/data"}, now + 10, 1800);
+  CHECK((evil_child.rights & sandbox::kRightAdmin) == 0);
+  CHECK_EQ(evil_child.rights, sandbox::kRightFsRead);
+
+  // 4. Tạo phiên làm việc Beta độc lập (unrelated family)
+  const std::string fam_beta = "session-beta-99";
+  const sandbox::Token beta_token = auth.issue("app:session-beta", sandbox::kRightNetConnect, {"update.yui.vn"}, now, 3600, 0, fam_beta);
+  CHECK(auth.verify(beta_token, now));
+
+  // 5. Kiểm tra quyền qua Enforcer trước khi phát hiện bất thường
+  sandbox::Policy policy_alpha;
+  policy_alpha.app_id = "app:session-alpha:worker";
+  policy_alpha.tier = sandbox::Tier::Isolated;
+  policy_alpha.granted = root_rights;
+  policy_alpha.scopes = {"/data", "api.yui.vn"};
+
+  // Thẻ con 1 đọc trong phạm vi hợp lệ -> cho phép
+  const sandbox::Decision dec1 = enforcer.check(policy_alpha, &child1, {"fs.read", "/data/sub/report.txt"}, now + 20, &auth);
+  CHECK(dec1.allowed);
+
+  // Thẻ con 1 cố ghi -> bị từ chối do thẻ con thiếu quyền ghi
+  const sandbox::Decision dec2 = enforcer.check(policy_alpha, &child1, {"fs.write", "/data/sub/report.txt"}, now + 20, &auth);
+  CHECK(!dec2.allowed);
+  CHECK(dec2.reason.find("thiếu quyền") != std::string::npos);
+
+  // 6. Phát hiện bất thường Lớp 1 (Layer 1 Anomaly Detection)
+  // Enforcer phát hiện tiến trình thuộc session-alpha cố gọi syscall ngoài ranh giới
+  const bool anomaly_detected = enforcer.detect_anomaly(
+      auth, fam_alpha, "app:session-alpha", "syscall_boundary_violation", "attempted unbrokered ptrace to host pid 1", now + 30);
+  CHECK(anomaly_detected);
+
+  // Xác nhận nhật ký kiểm toán ghi nhận bất thường kèm lý do tiếng Việt
+  CHECK(!enforcer.audit().empty());
+  const auto& last_audit = enforcer.audit().back();
+  CHECK_EQ(last_audit.subject, std::string("app:session-alpha"));
+  CHECK_EQ(last_audit.action.kind, std::string("anomaly.syscall_boundary_violation"));
+  CHECK(last_audit.decision.reason.find("Phát hiện bất thường Lớp 1") != std::string::npos);
+  CHECK(last_audit.decision.reason.find("Tự động thu hồi họ token") != std::string::npos);
+
+  // 7. Xác nhận thu hồi bắc cầu O(1) theo epoch (Transitive O(1) Revocation)
+  // Toàn bộ họ session-alpha (cả gốc và tất cả con) bị vô hiệu hoá ngay lập tức
+  CHECK(auth.is_family_revoked(fam_alpha, root_token.generation));
+  CHECK(auth.is_family_revoked(fam_alpha, child1.generation));
+  CHECK(auth.is_family_revoked(fam_alpha, child2.generation));
+
+  std::string verify_err;
+  CHECK(!auth.verify(root_token, now + 35, &verify_err));
+  CHECK(verify_err.find("họ thẻ năng lực đã bị thu hồi") != std::string::npos);
+
+  CHECK(!auth.verify(child1, now + 35, &verify_err));
+  CHECK(verify_err.find("họ thẻ năng lực đã bị thu hồi") != std::string::npos);
+
+  CHECK(!auth.verify(child2, now + 35, &verify_err));
+  CHECK(verify_err.find("họ thẻ năng lực đã bị thu hồi") != std::string::npos);
+
+  // Lần kiểm tra tiếp theo của Enforcer trên token con lập tức từ chối và ghi log
+  const sandbox::Decision dec_after = enforcer.check(policy_alpha, &child1, {"fs.read", "/data/sub/report.txt"}, now + 35, &auth);
+  CHECK(!dec_after.allowed);
+  CHECK(dec_after.reason.find("thẻ năng lực không hợp lệ") != std::string::npos);
+  CHECK(dec_after.reason.find("họ thẻ năng lực đã bị thu hồi") != std::string::npos);
+
+  // Quan trọng: Phiên làm việc khác (session-beta) hoàn toàn không bị ảnh hưởng!
+  CHECK(!auth.is_family_revoked(fam_beta, beta_token.generation));
+  CHECK(auth.verify(beta_token, now + 35));
+
+  sandbox::Policy policy_beta;
+  policy_beta.app_id = "app:session-beta";
+  policy_beta.tier = sandbox::Tier::Isolated;
+  policy_beta.granted = sandbox::kRightNetConnect;
+  policy_beta.scopes = {"update.yui.vn"};
+
+  const sandbox::Decision dec_beta = enforcer.check(policy_beta, &beta_token, {"net.connect", "update.yui.vn:443"}, now + 35, &auth);
+  CHECK(dec_beta.allowed);
+}
+
+// --------------------------------- 7. Red-Team tích hợp ba lớp phòng thủ (P3.11) --
+
+YUI_TEST(redteam, three_layer_integrated_defense_containment) {
+  sandbox::Enforcer enforcer;
+  const std::string master_k = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+  sandbox::Authority auth(master_k);
+  sandbox::MicroVmSupervisor supervisor(&enforcer, &auth);
+  sandbox::SecretlessBroker broker(&enforcer, &auth);
+
+  const int64_t now = 1700000000;
+  const std::string fam_target = "fam-microvm-agent";
+  const std::string fam_other = "fam-microvm-daemon";
+
+  // Thiết lập 2 micro-VM
+  sandbox::Policy pol_target;
+  pol_target.version = 1;
+  pol_target.app_id = "app:agent-worker";
+  pol_target.tier = sandbox::Tier::MicroVm;
+  pol_target.granted = sandbox::kRightNetConnect | sandbox::kRightFsRead;
+  pol_target.scopes = {"api.target-hub.yui.vn:443"};
+  pol_target.allow_east_west = false;
+  pol_target.allow_direct_dns = false;
+
+  sandbox::Policy pol_other;
+  pol_other.version = 1;
+  pol_other.app_id = "app:other-worker";
+  pol_other.tier = sandbox::Tier::MicroVm;
+  pol_other.granted = sandbox::kRightNetConnect;
+  pol_other.scopes = {"service.yui.vn:443"};
+
+  auto* session_target = supervisor.create_session("vm-target-1", "app:agent-worker", pol_target, fam_target, now);
+  auto* session_other = supervisor.create_session("vm-other-2", "app:other-worker", pol_other, fam_other, now);
+
+  CHECK(session_target != nullptr);
+  CHECK(session_other != nullptr);
+  CHECK_EQ(supervisor.active_count(), size_t(2));
+
+  // Cấp token gốc và token con
+  sandbox::Token root_target = auth.issue("app:agent-worker", sandbox::kRightNetConnect | sandbox::kRightFsRead,
+                                          {"api.target-hub.yui.vn:443"}, now, 3600, 0, fam_target);
+  sandbox::Token child_target = auth.derive(root_target, "app:agent-sub", sandbox::kRightNetConnect,
+                                            {"api.target-hub.yui.vn:443"}, now, 1800);
+
+  // [LỚP 1 + LỚP 2]: Phát hiện bất thường Lớp 1 -> Revoke O(1) + Freeze/Huỷ Lớp 2
+  const bool anomaly = enforcer.detect_anomaly(
+      auth, fam_target, "app:agent-worker", "vm_kvm_escape_ioctl", "unauthorized hypercall bypass attempt", now + 10);
+  CHECK(anomaly);
+
+  // Kiểm tra Lớp 1 đã thu hồi tức thì toàn bộ họ token theo generation
+  CHECK(auth.is_family_revoked(fam_target, root_target.generation));
+  CHECK(auth.is_family_revoked(fam_target, child_target.generation));
+  std::string rev_err;
+  CHECK(!auth.verify(child_target, now + 11, &rev_err));
+  CHECK(rev_err.find("họ thẻ năng lực đã bị thu hồi") != std::string::npos);
+
+  // Lớp 2 phản ứng: chuyển running -> frozen -> destroyed
+  const bool l2_handled = supervisor.on_layer1_anomaly(fam_target, "anomaly detected by L1", now + 12);
+  CHECK(l2_handled);
+
+  CHECK_EQ(session_target->state(), sandbox::MicroVmState::Destroyed);
+  CHECK_EQ(supervisor.active_count(), size_t(1));
+
+  // Mọi request kế tiếp từ guest tới phiên bị huỷ đều fail-closed trước khi xử lý
+  const sandbox::Decision dec_blocked = supervisor.dispatch_guest_request("vm-target-1", {"net.connect", "api.target-hub.yui.vn:443"}, now + 13, &child_target);
+  CHECK(!dec_blocked.allowed);
+  CHECK(dec_blocked.reason.find("đã bị tiêu huỷ (Destroyed)") != std::string::npos);
+
+  // Phiên khác (vm-other-2) không bị ảnh hưởng, vẫn Running
+  CHECK_EQ(session_other->state(), sandbox::MicroVmState::Running);
+
+  // [LỚP 3]: Egress Zero-Trust, Anti-DNS-Tunneling, Secretless Broker
+  sandbox::EgressFilter egress;
+  egress.add_from_policy(pol_target);
+
+  // 1. Chặn peer-to-peer / East-West giữa các sandbox
+  sandbox::EgressRequest r_p2p;
+  r_p2p.domain = "vm-other-2.local";
+  r_p2p.port = 8080;
+  r_p2p.is_east_west = true;
+  const sandbox::EgressDecision d_p2p = egress.check(r_p2p);
+  CHECK(!d_p2p.allowed);
+  CHECK(d_p2p.reason_vi.find("chặn kết nối ngang (east-west)") != std::string::npos);
+
+  // 2. Chặn truy vấn DNS trực tiếp ra cổng 53
+  sandbox::EgressRequest r_dns;
+  r_dns.ip = "1.1.1.1";
+  r_dns.port = 53;
+  const sandbox::EgressDecision d_dns = egress.check(r_dns);
+  CHECK(!d_dns.allowed);
+  CHECK(d_dns.reason_vi.find("chặn DNS trực tiếp (cổng 53)") != std::string::npos);
+
+  // 3. Chặn DNS Tunnel: nhãn dài > 63 octet
+  const std::string malformed_long = std::string(64, 'x') + ".tunnel.net";
+  std::string err_long;
+  CHECK(!sandbox::EgressFilter::validate_dns_name(malformed_long, &err_long));
+  CHECK(err_long.find("vượt quá 63 octet") != std::string::npos);
+
+  // 4. Chặn DNS Tunnel: payload entropy cao (> 4.2 bit/char)
+  const std::string high_entropy_tunnel = "w9k1p4z7x2b8m5c3v0q.exfil.org";
+  std::string err_h;
+  CHECK(!sandbox::EgressFilter::validate_dns_name(high_entropy_tunnel, &err_h));
+  CHECK(err_h.find("entropy nhãn") != std::string::npos);
+
+  // 5. Chặn kết nối tới domain ngoài allowlist
+  sandbox::EgressRequest r_disallowed;
+  r_disallowed.domain = "malicious-c2.org";
+  r_disallowed.port = 443;
+  const sandbox::EgressDecision d_c2 = egress.check(r_disallowed);
+  CHECK(!d_c2.allowed);
+  CHECK(d_c2.reason_vi.find("ngoài phạm vi cho phép") != std::string::npos);
+
+  // 6. Tên miền hợp lệ đi qua EgressFilter bình thường (không bị regression)
+  std::string err_valid;
+  CHECK(sandbox::EgressFilter::validate_dns_name("api.target-hub.yui.vn", &err_valid));
+  CHECK(err_valid.empty());
+
+  sandbox::EgressRequest r_valid;
+  r_valid.domain = "api.target-hub.yui.vn";
+  r_valid.port = 443;
+  const sandbox::EgressDecision d_valid = egress.check(r_valid);
+  CHECK(d_valid.allowed);
+  CHECK(d_valid.reason_vi.find("khớp allowlist") != std::string::npos);
+
+  // 7. Broker giữ bí mật ngoài biên, gắn xác thực cho request hợp lệ
+  const std::string mock_upstream_cred = "mock-auth-token-sample-12345";
+  broker.register_service_secret("svc:hub", mock_upstream_cred);
+
+  // Cấp token cho other worker để test request hợp lệ
+  sandbox::Token valid_other_token = auth.issue("app:other-worker", sandbox::kRightNetConnect,
+                                                {"service.yui.vn:443"}, now + 20, 3600, 0, fam_other);
+
+  sandbox::EgressFilter egress_other;
+  egress_other.add_from_policy(pol_other);
+
+  sandbox::BrokeredRequest b_req;
+  b_req.service_id = "svc:hub";
+  b_req.target_host = "service.yui.vn";
+  b_req.target_port = 443;
+  b_req.path = "/api/v1/ping";
+  b_req.payload = "{}";
+
+  const sandbox::BrokeredResponse b_resp = broker.forward_request("app:other-worker", &valid_other_token, egress_other, b_req, now + 21);
+  CHECK(b_resp.success);
+  CHECK(b_resp.secret_attached);
+  CHECK(b_resp.data.find(mock_upstream_cred) == std::string::npos);
+
+  // 8. Toàn bộ kịch bản kiểm toán ghi lại đầy đủ allow và deny
+  bool has_allow_audit = false;
+  bool has_deny_audit = false;
+  for (const auto& a : enforcer.audit()) {
+    if (a.decision.allowed) has_allow_audit = true;
+    else has_deny_audit = true;
+    CHECK(!a.decision.reason.empty());
+    // Bí mật không bao giờ lọt vào audit
+    CHECK(a.decision.reason.find(mock_upstream_cred) == std::string::npos);
+  }
+  CHECK(has_allow_audit);
+  CHECK(has_deny_audit);
+}
+
+YUI_TEST(redteam, clickjacking_and_compatibility_evasion_attempts) {
+  // Redteam Scenario: Kẻ tấn công cố tình vượt rào chống giả click (clickjacking)
+  // và lạm dụng cơ chế tương thích (compatibility mode)
+  sandbox::Enforcer enforcer;
+  sandbox::Authority auth("fedcba98765432100123456789abcdef0123456789abcdef0123456789abcdef");
+  sandbox::TrustedConfirmationHost conf_host(&enforcer);
+  sandbox::CompatibilityManager compat_mgr(&enforcer, &auth, &conf_host);
+
+  // 1. Thử tấn công giả lập click bằng chuỗi 50 sự kiện nhân tạo (SyntheticApp)
+  std::string dlg_id = conf_host.show_dialog(
+      "app:malicious-app",
+      "Cấp quyền kết nối ra máy chủ C2?",
+      "Cấp quyền kết nối ra máy chủ C2?",
+      50000);
+
+  CHECK(!dlg_id.empty());
+  CHECK(conf_host.is_active(dlg_id));
+
+  for (int i = 0; i < 50; ++i) {
+    sandbox::TaggedInputEvent ev;
+    ev.source = sandbox::InputSourceKind::SyntheticApp;
+    ev.hardware_device_id = 0;
+    ev.x = 150;
+    ev.y = 220;
+    ev.is_button_down = true;
+    CHECK(!conf_host.handle_input(dlg_id, ev, 50100 + i * 10));  // Toàn bộ 50 sự kiện giả mạo đều bị chặn đứng
+  }
+  CHECK(conf_host.is_active(dlg_id));  // Hộp thoại không hề bị xác nhận tự động
+  CHECK_EQ(conf_host.synthetic_attacks_blocked(), size_t(50));
+
+  // 2. Thử tấn công làm phiền (Nuisance spamming DoS): Gửi dồn dập hàng loạt kết nối bị chặn
+  // nhằm làm tràn giao diện xác nhận (UI prompt flooding)
+  for (int i = 0; i < 100; ++i) {
+    compat_mgr.on_blocked_request("app:malicious-app", "net.connect", "evil.c2.com", 60000 + i);
+  }
+  // Nhờ cơ chế bóp xung (throttle) và yên lặng, số lần hỏi người dùng bị giới hạn nghiêm ngặt
+  CHECK(compat_mgr.prompt_count() <= 1);
+
+  // Sau khi người dùng bấm từ chối 3 lần:
+  compat_mgr.record_denial("app:malicious-app", 65000);
+  compat_mgr.record_denial("app:malicious-app", 65001);
+  compat_mgr.record_denial("app:malicious-app", 65002);
+  CHECK(compat_mgr.is_permanently_quiet("app:malicious-app"));
+
+  // Kẻ tấn công spam tiếp 50 lần nữa -> 0 prompt mới nào được phép sinh ra
+  size_t prompts_before = compat_mgr.prompt_count();
+  for (int i = 0; i < 50; ++i) {
+    compat_mgr.on_blocked_request("app:malicious-app", "net.connect", "evil.c2.com", 70000 + i);
+  }
+  CHECK_EQ(compat_mgr.prompt_count(), prompts_before);
+
+  // 3. Thử tái sử dụng thẻ phiên đã bị thu hồi (Revoked session capability reuse)
+  int64_t now_s = 80000;
+  compat_mgr.set_app_compatibility("app:untrusted-plugin", true);
+  auto grant = compat_mgr.grant_session_capability("app:untrusted-plugin", "net.connect", "192.168.1.50:80", 300, now_s);
+
+  // Thẻ ban đầu hợp lệ
+  std::string v_err;
+  CHECK(auth.verify(grant.token, now_s + 10, &v_err));
+
+  // Kẻ tấn công kích hoạt hành vi bất thường -> Thu hồi tức thời O(1)
+  compat_mgr.revoke_app("app:untrusted-plugin", now_s + 15);
+
+  // Thử tái sử dụng thẻ -> Thẻ bị từ chối ngay lập tức tại cổng xác thực
+  CHECK(!auth.verify(grant.token, now_s + 20, &v_err));
+  CHECK(v_err.find("đã bị thu hồi") != std::string::npos);
+}
+
 YUI_TEST_MAIN("test_redteam")

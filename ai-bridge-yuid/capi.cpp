@@ -209,6 +209,17 @@ int yui_vni(const char* keys, char* out, size_t cap) {
   return rc;
 }
 
+int yui_ime_convert(const char* method, const char* keys, char* out, size_t cap) {
+  if (!method || !keys || !out) return YUI_E_INVALID;
+  if (std::strcmp(method, "telex") == 0) {
+    return yui_telex(keys, out, cap);
+  }
+  if (std::strcmp(method, "vni") == 0) {
+    return yui_vni(keys, out, cap);
+  }
+  return YUI_E_INVALID;
+}
+
 int yui_vault_seal(const char* password, const void* plain, size_t len, int log2n, yui_buf* out) {
   if (!password || !out || (!plain && len)) return YUI_E_INVALID;
   out->data = nullptr;

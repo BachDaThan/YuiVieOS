@@ -28,7 +28,9 @@ struct HostProfile {
   bool charging = false;
   double temperature_c = -1.0;  // -1 when no sensor is readable
   engine::SimdInfo simd;
-  std::string tier;      // "may-yeu" | "can-bang" | "may-manh"
+  std::string tier;      // "sieu-yeu" | "may-yeu" | "can-bang" | "may-manh"
+  bool headless = false; // true when tier == "sieu-yeu" (RAM < 1.5 GB)
+  bool zero_ai = false;  // true when tier == "sieu-yeu": no model loaded, fallback to BM25/rules
   std::string summary;   // Vietnamese one-liner for the shell
   engine::TuneInput tune_input;
   engine::TuneResult tune;

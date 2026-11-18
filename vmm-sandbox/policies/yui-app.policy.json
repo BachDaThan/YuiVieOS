@@ -1,4 +1,5 @@
 {
+  "version": 1,
   "app": "app:yui",
   "tier": "isolated",
   "capabilities": [
@@ -18,5 +19,7 @@
     "net:telemetry.*"
   ],
   "persistent_storage": true,
-  "allow_child_processes": false
+  "allow_child_processes": false,
+  "allow_east_west": false,
+  "allow_direct_dns": false
 }

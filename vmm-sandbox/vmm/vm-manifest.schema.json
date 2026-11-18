@@ -24,6 +24,9 @@
       "description": "Quyền đi qua yuid: vault, graph, model, net.connect, power…"
     },
     "deny": { "type": "array", "items": { "type": "string" }, "default": [] },
-    "persistent_storage": { "type": "boolean", "default": false }
+    "persistent_storage": { "type": "boolean", "default": false },
+    "version": { "type": "integer", "default": 1 },
+    "allow_east_west": { "type": "boolean", "default": false, "description": "Giao tiếp ngang (east-west) giữa các sandbox (mặc định deny)" },
+    "allow_direct_dns": { "type": "boolean", "default": false, "description": "Cho phép DNS trực tiếp ra cổng 53 (mặc định deny, chỉ broker nội bộ)" }
   }
 }

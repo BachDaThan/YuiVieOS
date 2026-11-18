@@ -26,6 +26,9 @@ struct Options {
   std::string cap_master_key = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
   bool offline = true;         // web.search returns an explicit offline notice
   bool verbose = false;
+  size_t audit_max_bytes = 1024 * 1024;  // 1 MB default
+  int audit_retention_days = 30;         // 30 days retention
+  bool audit_hash_domains = false;       // optional domain anonymization
 };
 
 // JSON-RPC 2.0 error codes (subset).
@@ -68,6 +71,10 @@ class Daemon {
   const sandbox::Enforcer& enforcer() const { return enforcer_; }
   sandbox::Authority& authority() { return authority_; }
   const sandbox::Authority& authority() const { return authority_; }
+  sandbox::TrustedConfirmationHost& trusted_confirmation() { return trusted_confirmation_; }
+  const sandbox::TrustedConfirmationHost& trusted_confirmation() const { return trusted_confirmation_; }
+  sandbox::CompatibilityManager& compatibility() { return compat_mgr_; }
+  const sandbox::CompatibilityManager& compatibility() const { return compat_mgr_; }
 
   const std::string& power_mode() const { return power_mode_; }
   int charge_limit() const { return charge_limit_; }
@@ -76,6 +83,9 @@ class Daemon {
 
   void audit_log(const std::string& subject, const std::string& action_kind,
                  const std::string& target, bool allowed, const std::string& reason);
+  void audit_rotate();
+  bool audit_clear();
+  std::string anonymize_target(const std::string& target) const;
 
   // Tests and the shell can inject a canned host snapshot.
   void set_host_snapshot(json::Value v) {
@@ -97,12 +107,15 @@ class Daemon {
   json::Value method_telemetry();
   // Guard chống bất thường nền: guard.observe / guard.alerts / guard.decide.
   json::Value method_guard(const std::string& op, const json::Value& params, RpcError& err);
+  json::Value method_compat(const std::string& op, const json::Value& params, RpcError& err);
 
   Options opts_;
   graph::Graph graph_;
   json::Value host_ = json::Value(json::Object{});
   sandbox::Enforcer enforcer_;
   sandbox::Authority authority_;
+  sandbox::TrustedConfirmationHost trusted_confirmation_;
+  sandbox::CompatibilityManager compat_mgr_;
   guard::Guard guard_;
   bool has_host_ = false;
   size_t vault_ops_ = 0;

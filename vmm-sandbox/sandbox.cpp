@@ -2,10 +2,12 @@
 #include "yui/sandbox.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <iomanip>
 #include <sstream>
 
 #include "yui/bundle.hpp"
@@ -155,6 +157,8 @@ std::string Token::canonical() const {
   v.set("iat", issued_at);
   v.set("exp", expires_at);
   v.set("serial", int64_t(serial));
+  if (generation > 0) v.set("gen", int64_t(generation));
+  if (!family_id.empty()) v.set("fam", family_id);
   json::Value scopes_v(json::Array{});
   for (const auto& s : scopes) scopes_v.push(std::string(s));
   v.set("scopes", scopes_v);
@@ -164,7 +168,8 @@ std::string Token::canonical() const {
 Authority::Authority(std::string master_key_hex) { key_ = crypto::from_hex(master_key_hex); }
 
 Token Authority::issue(const std::string& subject, uint64_t rights, const std::vector<std::string>& scopes,
-                       int64_t now, int64_t ttl_seconds) {
+                       int64_t now, int64_t ttl_seconds, uint32_t generation,
+                       const std::string& family_id) {
   Token t;
   t.subject = subject;
   t.issuer = "yui-cap";
@@ -175,11 +180,38 @@ Token Authority::issue(const std::string& subject, uint64_t rights, const std::v
   t.serial = (uint32_t(serial_bytes[0]) << 24) | (uint32_t(serial_bytes[1]) << 16) |
              (uint32_t(serial_bytes[2]) << 8) | uint32_t(serial_bytes[3]);
   t.scopes = scopes;
+  t.family_id = family_id.empty() ? subject : family_id;
+  auto it = family_epochs_.find(t.family_id);
+  t.generation = (it != family_epochs_.end() && it->second > generation) ? it->second : generation;
   crypto::HmacSha256 h(key_);
   const std::string canon = t.canonical();
   h.update(canon.data(), canon.size());
   t.mac_hex = crypto::hex(h.final().data(), 32);
   return t;
+}
+
+Token Authority::derive(const Token& parent, const std::string& child_subject, uint64_t child_rights,
+                        const std::vector<std::string>& child_scopes, int64_t now, int64_t ttl_seconds) {
+  uint64_t restricted_rights = child_rights & parent.rights;
+  std::string fid = parent.family_id.empty() ? parent.subject : parent.family_id;
+  int64_t exp = ttl_seconds > 0 ? now + ttl_seconds : parent.expires_at;
+  if (parent.expires_at > 0 && (exp == 0 || exp > parent.expires_at)) exp = parent.expires_at;
+  int64_t ttl = exp > now ? (exp - now) : 0;
+  return issue(child_subject, restricted_rights, child_scopes, now, ttl, parent.generation, fid);
+}
+
+bool Authority::revoke_family(const std::string& family_id, const std::string& reason) {
+  family_epochs_[family_id] = family_epochs_[family_id] + 1;
+  if (!reason.empty()) {
+    family_revoke_reasons_[family_id] = reason;
+  }
+  return true;
+}
+
+bool Authority::is_family_revoked(const std::string& family_id, uint32_t token_gen) const {
+  auto it = family_epochs_.find(family_id);
+  if (it == family_epochs_.end()) return false;
+  return token_gen < it->second;
 }
 
 bool Authority::verify(const Token& t, int64_t now, std::string* error) const {
@@ -190,6 +222,13 @@ bool Authority::verify(const Token& t, int64_t now, std::string* error) const {
   if (t.issuer != "yui-cap") return fail("unknown issuer");
   if (t.expires_at != 0 && now > t.expires_at) return fail("token expired");
   if (t.issued_at > now + 300) return fail("token issued in the future");
+
+  // O(1) Transitive Revocation check by family epoch
+  std::string fid = t.family_id.empty() ? t.subject : t.family_id;
+  if (is_family_revoked(fid, t.generation)) {
+    return fail("họ thẻ năng lực đã bị thu hồi (epoch mismatch)");
+  }
+
   if (t.mac_hex.size() != 64) return fail("malformed MAC");
   const Bytes mac = crypto::from_hex(t.mac_hex);
   if (mac.size() != 32) return fail("malformed MAC");
@@ -226,6 +265,8 @@ bool Authority::from_bearer(const std::string& bearer, Token& out, int64_t now, 
   out.issued_at = v["iat"].as_int();
   out.expires_at = v["exp"].as_int();
   out.serial = uint32_t(v["serial"].as_int());
+  out.generation = v.has("gen") ? uint32_t(v["gen"].as_int()) : 0;
+  out.family_id = v.has("fam") ? v["fam"].as_string() : "";
   out.scopes.clear();
   for (const auto& s : v["scopes"].arr()) out.scopes.push_back(s.as_string());
   out.mac_hex = bearer.substr(dot + 1);
@@ -289,7 +330,8 @@ bool Enforcer::tier_allows(Tier tier, const std::string& kind) {
   return true;
 }
 
-Decision Enforcer::check(const Policy& policy, const Token* token, const Action& action, int64_t now) const {
+Decision Enforcer::check(const Policy& policy, const Token* token, const Action& action,
+                         int64_t now, const Authority* auth) const {
   Decision d;
   d.tier = policy.tier;
 
@@ -332,6 +374,12 @@ Decision Enforcer::check(const Policy& policy, const Token* token, const Action&
   if (!covered) return deny("phạm vi không bao phủ: " + action.kind + " " + action.target);
 
   if (token) {
+    if (auth) {
+      std::string auth_err;
+      if (!auth->verify(*token, now, &auth_err)) {
+        return deny(std::string("thẻ năng lực không hợp lệ: ") + auth_err);
+      }
+    }
     if (token->expires_at != 0 && now > token->expires_at)
       return deny("thẻ năng lực đã hết hạn");
     if ((token->rights & needed) == 0)
@@ -350,6 +398,22 @@ Decision Enforcer::check(const Policy& policy, const Token* token, const Action&
                               : std::string("khớp phạm vi: ") + matched;
   audit_.push_back(AuditEntry{now, policy.app_id, action, ok});
   return ok;
+}
+
+bool Enforcer::detect_anomaly(Authority& auth, const std::string& family_id,
+                              const std::string& subject, const std::string& anomaly_type,
+                              const std::string& detail, int64_t now) const {
+  if (!family_id.empty()) {
+    auth.revoke_family(family_id);
+  }
+  AuditEntry e;
+  e.when = now;
+  e.subject = subject;
+  e.action = Action{"anomaly." + anomaly_type, detail};
+  e.decision = Decision{false, Tier::Isolated,
+      "Phát hiện bất thường Lớp 1: " + anomaly_type + " (" + detail + ") — Tự động thu hồi họ token " + family_id, 0};
+  audit_.push_back(e);
+  return true;
 }
 
 // ---------------------------------------------------------------- policy --
@@ -404,12 +468,16 @@ Policy Policy::from_json(const json::Value& v, std::string* error) {
   p.granted = granted;
   p.allow_child_processes = v["allow_child_processes"].as_bool(false);
   p.persistent_storage = v["persistent_storage"].as_bool(false);
+  p.version = static_cast<int>(v["version"].as_int(1));
+  p.allow_east_west = v["allow_east_west"].as_bool(false);
+  p.allow_direct_dns = v["allow_direct_dns"].as_bool(false);
   if (!p.allow_child_processes) p.granted &= ~kRightSpawn;
   return p;
 }
 
 json::Value Policy::to_json() const {
   json::Value v(json::Object{});
+  v.set("version", version);
   v.set("app", app_id);
   v.set("tier", tier_name(tier));
   json::Value caps(json::Array{});
@@ -424,6 +492,8 @@ json::Value Policy::to_json() const {
   v.set("deny", deny_v);
   v.set("allow_child_processes", allow_child_processes);
   v.set("persistent_storage", persistent_storage);
+  v.set("allow_east_west", allow_east_west);
+  v.set("allow_direct_dns", allow_direct_dns);
   return v;
 }
 
@@ -458,6 +528,9 @@ void EgressFilter::allow_cidr(const std::string& s) {
 }
 
 void EgressFilter::add_from_policy(const Policy& policy) {
+  allow_east_west_ = policy.allow_east_west;
+  allow_direct_dns_ = policy.allow_direct_dns;
+
   // Scope trong Policy đã bị Policy::from_json cắt tiền tố ("net:"/"fs:"),
   // nhưng test/chính sách viết tay có thể giữ nguyên "net:" — chấp nhận cả
   // hai. Đường dẫn ("/...") là phạm vi fs: không phải egress.
@@ -499,6 +572,86 @@ void EgressFilter::add_from_policy(const Policy& policy) {
   }
 }
 
+double EgressFilter::shannon_entropy(const std::string& s) {
+  if (s.empty()) return 0.0;
+  std::unordered_map<char, size_t> counts;
+  for (char c : s) {
+    counts[static_cast<char>(std::tolower(static_cast<unsigned char>(c)))]++;
+  }
+  double entropy = 0.0;
+  const double total = static_cast<double>(s.size());
+  for (const auto& kv : counts) {
+    const double p = static_cast<double>(kv.second) / total;
+    if (p > 0.0) {
+      entropy -= p * (std::log(p) / std::log(2.0));
+    }
+  }
+  return entropy;
+}
+
+bool EgressFilter::validate_dns_name(const std::string& domain, std::string* error_vi, double max_entropy) {
+  if (domain.empty()) return true;
+  if (domain.size() > 253) {
+    if (error_vi) {
+      *error_vi = "từ chối tên miền: độ dài (" + std::to_string(domain.size()) +
+                  " octet) vượt quá giới hạn 253 octet (RFC 1035 / chống DNS tunneling)";
+    }
+    return false;
+  }
+
+  std::string d = domain;
+  if (!d.empty() && d.back() == '.') d.pop_back();
+
+  size_t start = 0;
+  while (start < d.size()) {
+    size_t dot = d.find('.', start);
+    if (dot == std::string::npos) dot = d.size();
+    std::string label = d.substr(start, dot - start);
+    start = dot + 1;
+
+    if (label.empty()) {
+      if (error_vi) *error_vi = "từ chối tên miền: nhãn DNS rỗng hoặc chứa hai dấu chấm liên tiếp";
+      return false;
+    }
+    if (label.size() > 63) {
+      if (error_vi) {
+        *error_vi = "từ chối nhãn DNS: độ dài nhãn (" + label + ", " +
+                    std::to_string(label.size()) + " octet) vượt quá 63 octet (chống DNS tunneling)";
+      }
+      return false;
+    }
+
+    if (label == "*") continue;
+
+    if (label.front() == '-' || label.back() == '-') {
+      if (error_vi) *error_vi = "từ chối nhãn DNS: nhãn không được bắt đầu hoặc kết thúc bằng gạch nối";
+      return false;
+    }
+
+    for (char c : label) {
+      if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-') {
+        if (error_vi) *error_vi = "từ chối nhãn DNS: ký tự '" + std::string(1, c) + "' không hợp lệ theo chuẩn RFC 1035";
+        return false;
+      }
+    }
+
+    if (label.size() >= 12) {
+      const double h = shannon_entropy(label);
+      if (h > max_entropy) {
+        if (error_vi) {
+          std::ostringstream ss;
+          ss << "từ chối tên miền: entropy nhãn (" << label << ") vượt ngưỡng an toàn (H = "
+             << std::fixed << std::setprecision(2) << h << " > " << max_entropy
+             << " bit/ký tự) — phát hiện nghi vấn DNS tunneling";
+          *error_vi = ss.str();
+        }
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 bool EgressFilter::ipv4_in_cidr(const std::string& ip, const std::string& cidr) {
   auto parse_v4 = [](const std::string& s, uint32_t* out) -> bool {
     unsigned a[4];
@@ -527,6 +680,30 @@ bool EgressFilter::ipv4_in_cidr(const std::string& ip, const std::string& cidr) 
 }
 
 EgressDecision EgressFilter::check(const EgressRequest& r) const {
+  EgressDecision d;
+  d.allowed = false;
+
+  // 1. Kiểm tra kết nối ngang (east-west) giữa các hộp cát (mặc định deny)
+  if (r.is_east_west && !allow_east_west_) {
+    d.reason_vi = "chặn kết nối ngang (east-west) giữa các hộp cát: mặc định deny (zero-trust)";
+    return d;
+  }
+
+  // 2. Kiểm tra cấm DNS trực tiếp cổng 53 (chỉ cho phép broker nội bộ)
+  if ((r.port == 53 || r.is_dns_query) && !allow_direct_dns_) {
+    d.reason_vi = "chặn DNS trực tiếp (cổng 53): chỉ cho phép resolver/broker nội bộ phân giải tên";
+    return d;
+  }
+
+  // 3. Kiểm tra anti-DNS-tunneling và chuẩn tên miền RFC 1035
+  if (!r.domain.empty()) {
+    std::string dns_err;
+    if (!validate_dns_name(r.domain, &dns_err, max_dns_label_entropy_)) {
+      d.reason_vi = dns_err;
+      return d;
+    }
+  }
+
   auto match_rule = [&](const Rule& rule) -> bool {
     if (rule.port != 0 && r.port != 0 && rule.port != r.port) return false;
     if (rule.is_cidr) return !r.ip.empty() && ipv4_in_cidr(r.ip, rule.pattern);
@@ -539,8 +716,6 @@ EgressDecision EgressFilter::check(const EgressRequest& r) const {
   // Deny thắng allow (docs/SECURITY.md).
   for (const auto& rule : deny_rules_) {
     if (match_rule(rule)) {
-      EgressDecision d;
-      d.allowed = false;
       d.matched_rule = rule.pattern;
       d.reason_vi = "chặn kết nối tới " + (target.empty() ? std::string("<rỗng>") : target) +
                     port_s + " — đích nằm trong danh sách deny của chính sách (deny thắng allow)";
@@ -549,7 +724,6 @@ EgressDecision EgressFilter::check(const EgressRequest& r) const {
   }
   for (const auto& rule : rules_) {
     if (match_rule(rule)) {
-      EgressDecision d;
       d.allowed = true;
       d.matched_rule =
           rule.pattern + (rule.port ? ":" + std::to_string(rule.port) : std::string());
@@ -558,12 +732,80 @@ EgressDecision EgressFilter::check(const EgressRequest& r) const {
       return d;
     }
   }
-  EgressDecision d;
-  d.allowed = false;
+
   d.reason_vi =
       "chặn kết nối tới " + (target.empty() ? std::string("<rỗng>") : target) + port_s +
       " — ngoài phạm vi cho phép của chính sách (cô lập egress, mặc định chặn)";
   return d;
+}
+
+// ------------------------------------------------ Secretless Broker (P3.10) --
+SecretlessBroker::SecretlessBroker(Enforcer* enforcer, const Authority* auth)
+    : enforcer_(enforcer), auth_(auth) {}
+
+void SecretlessBroker::register_service_secret(const std::string& service_id, const std::string& secret) {
+  secrets_[service_id] = secret;
+}
+
+bool SecretlessBroker::has_service_secret(const std::string& service_id) const {
+  return secrets_.find(service_id) != secrets_.end();
+}
+
+BrokeredResponse SecretlessBroker::forward_request(const std::string& app_id, const Token* guest_token,
+                                                   const EgressFilter& egress, const BrokeredRequest& req,
+                                                   int64_t now) {
+  BrokeredResponse resp;
+  // 1. Kiểm tra xác thực thẻ năng lực guest (nếu có Authority)
+  if (auth_) {
+    if (!guest_token) {
+      resp.error_vi = "Yêu cầu bị từ chối: thiếu thẻ năng lực guest";
+      return resp;
+    }
+    std::string tok_err;
+    if (!auth_->verify(*guest_token, now, &tok_err)) {
+      resp.error_vi = "Yêu cầu bị từ chối: thẻ năng lực không hợp lệ (" + tok_err + ")";
+      return resp;
+    }
+    if ((guest_token->rights & kRightNetConnect) == 0) {
+      resp.error_vi = "Yêu cầu bị từ chối: thiếu quyền net.connect";
+      return resp;
+    }
+  }
+
+  // 2. Kiểm tra bộ lọc egress zero-trust (domain/port)
+  EgressRequest er;
+  er.domain = req.target_host;
+  er.port = req.target_port;
+  const EgressDecision ed = egress.check(er);
+  if (!ed.allowed) {
+    resp.error_vi = "Yêu cầu kết nối ra ngoài bị chặn: " + ed.reason_vi;
+    if (enforcer_) {
+      enforcer_->record(AuditEntry{now, app_id, Action{"net.connect", req.target_host + ":" + std::to_string(req.target_port)},
+                                   Decision{false, Tier::MicroVm, ed.reason_vi, 0}});
+    }
+    return resp;
+  }
+
+  // 3. Broker gắn bí mật ở vòng ngoài mà KHÔNG đưa token/secret vào guest, môi trường hay audit
+  const auto it = secrets_.find(req.service_id);
+  if (it != secrets_.end()) {
+    resp.secret_attached = true;
+  }
+
+  // Ghi audit: Ghi nhận gắn secretless broker nhưng KHÔNG BAO GIỜ ghi giá trị bí mật
+  if (enforcer_) {
+    Decision d;
+    d.allowed = true;
+    d.tier = Tier::MicroVm;
+    d.matched_right = kRightNetConnect;
+    d.reason = "Broker đã xác thực và gắn bí mật ngoài biên [SECRETLESS_BROKER_ATTACHED] cho dịch vụ " +
+               req.service_id + " (đích: " + req.target_host + ")";
+    enforcer_->record(AuditEntry{now, app_id, Action{"broker.forward", req.service_id + "@" + req.target_host}, d});
+  }
+
+  resp.success = true;
+  resp.data = "{\"status\": 200, \"brokered\": true, \"service\": \"" + req.service_id + "\"}";
+  return resp;
 }
 
 // -------------------------------------------------- app signature gate (P3.12) --
@@ -717,6 +959,557 @@ std::string ThirdPartyImeHost::process_keystroke(uint32_t codepoint, InputFieldK
 Decision ThirdPartyImeHost::check_engine_action(const Action& action, int64_t now) {
   if (!enforcer_) return Decision{false, policy_.tier, "không có enforcer", 0};
   return enforcer_->check(policy_, nullptr, action, now);
+}
+
+// ------------------------------------------------ Micro-VM Lifecycle (P3.9) --
+const char* micro_vm_state_name(MicroVmState s) {
+  switch (s) {
+    case MicroVmState::Running: return "running";
+    case MicroVmState::Quarantined: return "quarantined";
+    case MicroVmState::Destroyed: return "destroyed";
+  }
+  return "unknown";
+}
+
+const char* micro_vm_state_name_vi(MicroVmState s) {
+  switch (s) {
+    case MicroVmState::Running: return "đang chạy";
+    case MicroVmState::Quarantined: return "đang đóng băng/cách ly";
+    case MicroVmState::Destroyed: return "đã bị tiêu huỷ";
+  }
+  return "không rõ";
+}
+
+MicroVmSession::MicroVmSession(std::string vm_id, std::string app_id, Policy policy,
+                               std::string family_id, int64_t created_at)
+    : vm_id_(std::move(vm_id)),
+      app_id_(std::move(app_id)),
+      policy_(std::move(policy)),
+      family_id_(family_id.empty() ? app_id_ : std::move(family_id)),
+      state_(MicroVmState::Running),
+      created_at_(created_at) {}
+
+bool MicroVmSession::freeze(const std::string& reason, int64_t now, Enforcer* enforcer) {
+  if (state_ == MicroVmState::Destroyed) return false;
+  if (state_ == MicroVmState::Quarantined) return true;  // idempotent
+  state_ = MicroVmState::Quarantined;
+  frozen_at_ = now;
+  freeze_reason_ = reason;
+  if (enforcer) {
+    AuditEntry e;
+    e.when = now;
+    e.subject = app_id_;
+    e.action = Action{"vm.freeze", vm_id_};
+    e.decision = Decision{false, policy_.tier,
+        "Lớp 2: Đóng băng/cách ly micro-VM (" + vm_id_ + "): " + reason, 0};
+    enforcer->record(e);
+  }
+  return true;
+}
+
+bool MicroVmSession::destroy(const std::string& reason, int64_t now, Enforcer* enforcer) {
+  if (state_ == MicroVmState::Destroyed) return true;  // idempotent
+  // Chuyển running -> frozen/quarantined -> destroyed
+  if (state_ == MicroVmState::Running) {
+    freeze(reason, now, enforcer);
+  }
+  state_ = MicroVmState::Destroyed;
+  destroyed_at_ = now;
+  destroy_reason_ = reason;
+  if (enforcer) {
+    AuditEntry e;
+    e.when = now;
+    e.subject = app_id_;
+    e.action = Action{"vm.destroy", vm_id_};
+    e.decision = Decision{false, policy_.tier,
+        "Lớp 2: Tiêu huỷ phiên micro-VM (" + vm_id_ + "): " + reason, 0};
+    enforcer->record(e);
+  }
+  return true;
+}
+
+bool MicroVmSession::quarantine_and_destroy(const std::string& reason, int64_t now, Enforcer* enforcer) {
+  freeze(reason, now, enforcer);
+  return destroy(reason, now, enforcer);
+}
+
+Decision MicroVmSession::handle_guest_request(const Action& action, int64_t now, Enforcer* enforcer,
+                                              const Authority* auth, const Token* token) {
+  if (state_ == MicroVmState::Quarantined) {
+    Decision d;
+    d.allowed = false;
+    d.tier = policy_.tier;
+    d.reason = "Yêu cầu guest bị từ chối: micro-VM đang bị đóng băng/cách ly (Quarantined) do: " + freeze_reason_;
+    if (enforcer) {
+      enforcer->record(AuditEntry{now, app_id_, action, d});
+    }
+    return d;
+  }
+  if (state_ == MicroVmState::Destroyed) {
+    Decision d;
+    d.allowed = false;
+    d.tier = policy_.tier;
+    d.reason = "Yêu cầu guest bị từ chối: micro-VM đã bị tiêu huỷ (Destroyed) do: " + destroy_reason_;
+    if (enforcer) {
+      enforcer->record(AuditEntry{now, app_id_, action, d});
+    }
+    return d;
+  }
+  if (!enforcer) {
+    return Decision{false, policy_.tier, "không có enforcer", 0};
+  }
+  const Decision d = enforcer->check(policy_, token, action, now, auth);
+  if (!d.allowed && (d.reason.find("thu hồi") != std::string::npos ||
+                     d.reason.find("tầng cách ly") != std::string::npos)) {
+    // Phát hiện vi phạm nghiêm trọng: đóng băng và huỷ phiên lập tức
+    quarantine_and_destroy("Vi phạm chính sách cách ly: " + d.reason, now, enforcer);
+  }
+  return d;
+}
+
+MicroVmSupervisor::MicroVmSupervisor(Enforcer* enforcer, Authority* auth)
+    : enforcer_(enforcer), auth_(auth) {}
+
+MicroVmSession* MicroVmSupervisor::create_session(const std::string& vm_id, const std::string& app_id,
+                                                  Policy policy, const std::string& family_id, int64_t now) {
+  if (find_session(vm_id)) return nullptr;
+  sessions_.push_back(std::make_unique<MicroVmSession>(vm_id, app_id, std::move(policy), family_id, now));
+  return sessions_.back().get();
+}
+
+MicroVmSession* MicroVmSupervisor::find_session(const std::string& vm_id) {
+  for (auto& s : sessions_) {
+    if (s->vm_id() == vm_id) return s.get();
+  }
+  return nullptr;
+}
+
+const MicroVmSession* MicroVmSupervisor::find_session(const std::string& vm_id) const {
+  for (const auto& s : sessions_) {
+    if (s->vm_id() == vm_id) return s.get();
+  }
+  return nullptr;
+}
+
+bool MicroVmSupervisor::freeze_session(const std::string& vm_id, const std::string& reason, int64_t now) {
+  auto* s = find_session(vm_id);
+  if (!s) return false;
+  return s->freeze(reason, now, enforcer_);
+}
+
+bool MicroVmSupervisor::destroy_session(const std::string& vm_id, const std::string& reason, int64_t now) {
+  auto* s = find_session(vm_id);
+  if (!s) return false;
+  return s->destroy(reason, now, enforcer_);
+}
+
+bool MicroVmSupervisor::on_layer1_anomaly(const std::string& family_id_or_app, const std::string& reason, int64_t now) {
+  bool found = false;
+  for (auto& s : sessions_) {
+    if (s->family_id() == family_id_or_app || s->app_id() == family_id_or_app || s->vm_id() == family_id_or_app) {
+      s->quarantine_and_destroy("Lớp 1 kích hoạt huỷ phiên: " + reason, now, enforcer_);
+      found = true;
+    }
+  }
+  return found;
+}
+
+Decision MicroVmSupervisor::dispatch_guest_request(const std::string& vm_id, const Action& action,
+                                                   int64_t now, const Token* token) {
+  auto* s = find_session(vm_id);
+  if (!s) {
+    Decision d;
+    d.allowed = false;
+    d.tier = Tier::MicroVm;
+    d.reason = "Phiên micro-VM không tồn tại: " + vm_id;
+    if (enforcer_) {
+      enforcer_->record(AuditEntry{now, "unknown", action, d});
+    }
+    return d;
+  }
+  return s->handle_guest_request(action, now, enforcer_, auth_, token);
+}
+
+size_t MicroVmSupervisor::active_count() const {
+  size_t c = 0;
+  for (const auto& s : sessions_) {
+    if (s->state() == MicroVmState::Running) ++c;
+  }
+  return c;
+}
+
+// ------------------------------------ Trusted Confirmation Path (P4.13) --
+TrustedConfirmationHost::TrustedConfirmationHost(Enforcer* enforcer) : enforcer_(enforcer) {}
+
+std::string TrustedConfirmationHost::show_dialog(const std::string& target_app, const std::string& title_vi,
+                                                 const std::string& prompt_vi, int64_t now) {
+  std::string id = "dlg-" + std::to_string(next_dialog_id_++);
+  ConfirmationDialog dlg;
+  dlg.dialog_id = id;
+  dlg.target_app = target_app;
+  dlg.title_vi = title_vi;
+  dlg.prompt_vi = prompt_vi;
+  dlg.active = true;
+  dlg.confirmed = false;
+  dlg.cancelled = false;
+  dlg.created_at = now;
+  dialogs_[id] = dlg;
+  return id;
+}
+
+bool TrustedConfirmationHost::handle_input(const std::string& dialog_id, const TaggedInputEvent& event, int64_t now) {
+  auto it = dialogs_.find(dialog_id);
+  if (it == dialogs_.end() || !it->second.active) return false;
+  auto& dlg = it->second;
+
+  // Chặn sự kiện tổng hợp từ ứng dụng / guest (anti-clickjacking)
+  if (event.source != InputSourceKind::PhysicalHardware || event.hardware_device_id == 0) {
+    ++synthetic_attacks_blocked_;
+    if (enforcer_) {
+      AuditEntry e;
+      e.when = now;
+      e.subject = dlg.target_app;
+      e.action = Action{"security.synthetic_click", dialog_id};
+      e.decision = Decision{false, Tier::Isolated,
+          "Bảo vệ OS: phát hiện sự kiện tổng hợp (synthetic click) cố can thiệp hộp thoại xác nhận tin cậy — từ chối (chống clickjacking)", 0};
+      enforcer_->record(e);
+    }
+    return false;
+  }
+
+  // Kiểm tra thời gian chờ tối thiểu (cooldown / countdown >= 500 ms) chống bấm nhầm/lừa click nhanh
+  if (now > 0 && dlg.created_at > 0 && (now - dlg.created_at < 500)) {
+    return false;
+  }
+
+  // Sự kiện từ thiết bị vật lý thật do nhân gắn thẻ
+  if (event.is_button_down) {
+    if (event.x >= dlg.confirm_x1 && event.x <= dlg.confirm_x2 &&
+        event.y >= dlg.confirm_y1 && event.y <= dlg.confirm_y2) {
+      dlg.confirmed = true;
+      dlg.active = false;
+      if (enforcer_) {
+        AuditEntry e;
+        e.when = now;
+        e.subject = dlg.target_app;
+        e.action = Action{"security.physical_confirm", dialog_id};
+        e.decision = Decision{true, Tier::Isolated, "Xác nhận từ thiết bị phần cứng vật lý hợp lệ", 0};
+        enforcer_->record(e);
+      }
+      return true;
+    }
+    if (event.x >= dlg.cancel_x1 && event.x <= dlg.cancel_x2 &&
+        event.y >= dlg.cancel_y1 && event.y <= dlg.cancel_y2) {
+      dlg.cancelled = true;
+      dlg.active = false;
+      if (enforcer_) {
+        AuditEntry e;
+        e.when = now;
+        e.subject = dlg.target_app;
+        e.action = Action{"security.physical_cancel", dialog_id};
+        e.decision = Decision{false, Tier::Isolated, "Người dùng đã bấm huỷ bỏ từ thiết bị vật lý", 0};
+        enforcer_->record(e);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+bool TrustedConfirmationHost::is_confirmed(const std::string& dialog_id) const {
+  auto it = dialogs_.find(dialog_id);
+  return it != dialogs_.end() && it->second.confirmed;
+}
+
+bool TrustedConfirmationHost::is_active(const std::string& dialog_id) const {
+  auto it = dialogs_.find(dialog_id);
+  return it != dialogs_.end() && it->second.active;
+}
+
+bool TrustedConfirmationHost::is_cancelled(const std::string& dialog_id) const {
+  auto it = dialogs_.find(dialog_id);
+  return it != dialogs_.end() && it->second.cancelled;
+}
+
+// ------------------------------ App Compatibility & Sinkhole (P3.16) --
+DnsResolutionResult DnsSinkhole::resolve_or_sinkhole(
+    const std::string& domain,
+    const EgressFilter& filter,
+    int64_t now) {
+  EgressRequest r;
+  r.domain = domain;
+  r.port = 443;
+  const EgressDecision dec = filter.check(r);
+  DnsResolutionResult res;
+  if (dec.allowed) {
+    res.sinkholed = false;
+    res.ip = "1.2.3.4";
+    res.rcode = 0;  // NOERROR
+    res.latency_ms = 1.2;
+    res.reason_vi = "NOERROR: phân giải hợp lệ theo allowlist chính sách";
+  } else {
+    // Sinkhole ngay lập tức tại tầng DNS: trả NXDOMAIN / địa chỉ 0.0.0.0
+    // Độ trễ phản hồi < 100 ms (0.5 ms) giúp app nhận lỗi ngay thay vì bị treo
+    res.sinkholed = true;
+    res.ip = "0.0.0.0";
+    res.rcode = 3;  // NXDOMAIN
+    res.latency_ms = 0.5;
+    res.reason_vi = "NXDOMAIN: bị chặn và sinkhole (" + dec.reason_vi + ")";
+  }
+  return res;
+}
+
+CompatibilityManager::CompatibilityManager(Enforcer* enforcer, Authority* auth,
+                                           TrustedConfirmationHost* trusted_host)
+    : enforcer_(enforcer), auth_(auth), trusted_host_(trusted_host) {}
+
+void CompatibilityManager::set_app_compatibility(const std::string& app_id, bool enable) {
+  compat_enabled_[app_id] = enable;
+  if (enforcer_) {
+    AuditEntry e;
+    e.when = 0;
+    e.subject = app_id;
+    e.action = Action{"compat.set", enable ? "bật" : "tắt"};
+    e.decision = Decision{true, Tier::MicroVm,
+        std::string("Chế độ tương thích đã được ") + (enable ? "bật" : "tắt") + " cho " + app_id, 0};
+    enforcer_->record(e);
+  }
+}
+
+bool CompatibilityManager::is_app_compatibility_enabled(const std::string& app_id) const {
+  auto it = compat_enabled_.find(app_id);
+  return it != compat_enabled_.end() && it->second;
+}
+
+std::vector<std::string> CompatibilityManager::enabled_apps() const {
+  std::vector<std::string> res;
+  for (const auto& kv : compat_enabled_) {
+    if (kv.second) res.push_back(kv.first);
+  }
+  return res;
+}
+
+bool CompatibilityManager::record_egress_block(const std::string& app_id, const std::string& domain,
+                                               int64_t now, std::string* out_dialog_id) {
+  if (!is_app_compatibility_enabled(app_id)) return false;
+
+  // Chống làm phiền: nếu đã từ chối 3 lần -> không hỏi nữa
+  if (user_denials_[app_id] >= 3) return false;
+
+  // Tối đa 1 lần hỏi / 5 phút (300 giây)
+  auto time_it = last_prompt_time_.find(app_id);
+  if (time_it != last_prompt_time_.end() && (now - time_it->second < 300)) {
+    return false;
+  }
+
+  // Ghi nhận lần chặn vào lịch sử
+  block_history_[app_id].push_back({now, domain});
+
+  // Kiểm tra điều kiện: bị chặn >= 3 lần trong 10 giây qua (M=10s)
+  size_t count = 0;
+  for (const auto& b : block_history_[app_id]) {
+    if (b.domain == domain && (now - b.timestamp <= 10)) {
+      ++count;
+    }
+  }
+  if (count < 3) return false;
+
+  // Kích hoạt đường xác nhận tin cậy (P4.13)
+  last_prompt_time_[app_id] = now;
+  ++prompt_count_;
+  if (trusted_host_) {
+    std::string title = "Yêu cầu kết nối mạng (Chế độ tương thích)";
+    std::string prompt = "Ứng dụng " + app_id + " cần kết nối tới " + domain +
+                         ". Mở quyền tạm thời 15 phút (mặc định)?";
+    std::string dlg_id = trusted_host_->show_dialog(app_id, title, prompt, now);
+    if (out_dialog_id) *out_dialog_id = dlg_id;
+    if (enforcer_) {
+      AuditEntry e;
+      e.when = now;
+      e.subject = app_id;
+      e.action = Action{"compat.prompt", domain};
+      e.decision = Decision{false, Tier::MicroVm,
+          "Hiện hộp thoại xác nhận tin cậy mở quyền tạm thời tới " + domain, 0};
+      enforcer_->record(e);
+    }
+    return true;
+  }
+  return false;
+}
+
+bool CompatibilityManager::grant_temporary_capability(const std::string& app_id, const std::string& domain,
+                                                      int64_t duration_sec, bool until_app_close,
+                                                      const std::string& family_id, int64_t now) {
+  // Áp dụng trần thời gian 8 giờ (28800 giây)
+  const int64_t clamped_duration = std::min<int64_t>(std::max<int64_t>(60, duration_sec), 28800);
+
+  TemporaryGrant g;
+  g.app_id = app_id;
+  g.domain = domain;
+  g.granted_at = now;
+  g.expires_at = until_app_close ? 0 : (now + clamped_duration);
+  g.until_app_close = until_app_close;
+  g.family_id = family_id;
+  g.generation = 0;
+
+  active_grants_.push_back(g);
+  ++grant_count_;
+
+  if (enforcer_) {
+    AuditEntry e;
+    e.when = now;
+    e.subject = app_id;
+    e.action = Action{"compat.grant", domain};
+    e.decision = Decision{true, Tier::MicroVm,
+        "Cấp thẻ phiên tạm thời cho đích " + domain +
+            (until_app_close ? " (đến khi đóng app)" : " (" + std::to_string(clamped_duration) + "s)"),
+        kRightNetConnect};
+    enforcer_->record(e);
+  }
+  return true;
+}
+
+void CompatibilityManager::record_user_denial(const std::string& app_id, const std::string& domain, int64_t now) {
+  user_denials_[app_id]++;
+  if (enforcer_) {
+    AuditEntry e;
+    e.when = now;
+    e.subject = app_id;
+    e.action = Action{"compat.deny", domain};
+    e.decision = Decision{false, Tier::MicroVm,
+        "Người dùng từ chối cấp quyền kết nối tới " + domain +
+            " (từ chối lần thứ " + std::to_string(user_denials_[app_id]) + ")",
+        0};
+    enforcer_->record(e);
+  }
+}
+
+bool CompatibilityManager::is_temporarily_allowed(const std::string& app_id, const std::string& domain, int64_t now) const {
+  for (const auto& g : active_grants_) {
+    if (g.app_id == app_id && host_matches(domain, g.domain)) {
+      if (g.until_app_close || (now <= g.expires_at)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void CompatibilityManager::check_expirations(int64_t now) {
+  std::vector<TemporaryGrant> remaining;
+  for (const auto& g : active_grants_) {
+    if (!g.until_app_close && now > g.expires_at) {
+      if (auth_ && !g.family_id.empty()) {
+        auth_->revoke_family(g.family_id, "session expired");
+      }
+      if (enforcer_) {
+        AuditEntry e;
+        e.when = now;
+        e.subject = g.app_id;
+        e.action = Action{"compat.expire", g.domain};
+        e.decision = Decision{false, Tier::MicroVm,
+            "Hết hạn thẻ phiên tạm thời cho " + g.domain + " — thu hồi O(1) theo epoch", 0};
+        enforcer_->record(e);
+      }
+    } else {
+      remaining.push_back(g);
+    }
+  }
+  active_grants_ = std::move(remaining);
+}
+
+void CompatibilityManager::on_app_closed(const std::string& app_id, int64_t now) {
+  std::vector<TemporaryGrant> remaining;
+  for (const auto& g : active_grants_) {
+    if (g.app_id == app_id) {
+      if (auth_ && !g.family_id.empty()) {
+        auth_->revoke_family(g.family_id, "app closed");
+      }
+      if (enforcer_) {
+        AuditEntry e;
+        e.when = now;
+        e.subject = g.app_id;
+        e.action = Action{"compat.app_close", g.domain};
+        e.decision = Decision{false, Tier::MicroVm,
+            "Đóng ứng dụng " + app_id + " — huỷ toàn bộ thẻ phiên tạm thời của app", 0};
+        enforcer_->record(e);
+      }
+    } else {
+      remaining.push_back(g);
+    }
+  }
+  active_grants_ = std::move(remaining);
+}
+
+size_t CompatibilityManager::denial_count(const std::string& app_id) const {
+  auto it = user_denials_.find(app_id);
+  return it != user_denials_.end() ? it->second : 0;
+}
+
+bool CompatibilityManager::is_permanently_quiet(const std::string& app_id) const {
+  return denial_count(app_id) >= 3;
+}
+
+void CompatibilityManager::record_denial(const std::string& app_id, int64_t now) {
+  record_user_denial(app_id, "*", now);
+}
+
+bool CompatibilityManager::on_blocked_request(const std::string& app_id, const std::string& kind,
+                                              const std::string& target, int64_t now) {
+  (void)kind;
+  return record_egress_block(app_id, target, now);
+}
+
+TemporaryGrant CompatibilityManager::grant_session_capability(const std::string& app_id,
+                                                              const std::string& kind,
+                                                              const std::string& target,
+                                                              int64_t duration_sec,
+                                                              int64_t now,
+                                                              bool until_app_close) {
+  if (now == 0) now = std::time(nullptr);
+  if (duration_sec <= 0) duration_sec = 900;
+  if (duration_sec > 28800) duration_sec = 28800;
+
+  TemporaryGrant g;
+  g.app_id = app_id;
+  g.domain = target;
+  g.granted_at = now;
+  g.until_app_close = until_app_close;
+  g.expires_at = until_app_close ? 0 : (now + duration_sec);
+  g.family_id = app_id;
+
+  if (auth_) {
+    uint64_t rights = right_for_kind(kind);
+    if (rights == kRightNone) {
+      if (yui::text::starts_with(kind, "net")) rights = kRightNetConnect;
+      else if (yui::text::starts_with(kind, "fs")) rights = kRightFsRead;
+      else rights = kRightNone;
+    }
+    g.token = auth_->issue(app_id, rights, {target}, now, until_app_close ? 86400 : duration_sec, 0, g.family_id);
+    g.generation = g.token.generation;
+  }
+
+  active_grants_.push_back(g);
+  grant_count_++;
+
+  if (enforcer_) {
+    AuditEntry e;
+    e.when = now;
+    e.subject = app_id;
+    e.action = Action{"compat.grant", target};
+    e.decision = Decision{true, Tier::MicroVm,
+        "Cấp thẻ năng lực phiên tạm thời cho " + app_id + " truy cập " + target, 0};
+    enforcer_->record(e);
+  }
+
+  return g;
+}
+
+void CompatibilityManager::revoke_app(const std::string& app_id, int64_t now) {
+  if (auth_) {
+    auth_->revoke_family(app_id, "user revoked compatibility");
+  }
+  on_app_closed(app_id, now);
 }
 
 }  // namespace yui::sandbox

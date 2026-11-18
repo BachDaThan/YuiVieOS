@@ -159,14 +159,17 @@ Advice advise(const Reading& r, const Thresholds& t) {
                            r.battery_percent < t.low_battery_percent && !r.charging;
   const double heat = std::max(r.cpu_c, r.gpu_c);
   const bool too_hot = heat > t.hot_c;
+  const bool ultra_weak = r.machine_class == "sieu-yeu";
   const bool weak = r.machine_class == "may-yeu";
   const bool strong = r.machine_class == "may-manh";
 
-  if (weak || battery_low || too_hot) {
+  if (ultra_weak || weak || battery_low || too_hot) {
     a.mode = "tiet-kiem";
     a.k = 1;
     a.window = 16;
-    if (too_hot) {
+    if (ultra_weak) {
+      a.reason = "Máy siêu yếu (RAM < 1.5 GB): Headless/TUI, zero-AI fallback (BM25/luật), k=1, W=16";
+    } else if (too_hot) {
       char buf[128];
       std::snprintf(buf, sizeof buf, "Nhiệt độ %.1f°C vượt ngưỡng %.0f°C: hạ về k=1, W=16 để giữ máy mát",
                     heat, t.hot_c);

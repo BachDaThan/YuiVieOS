@@ -39,6 +39,11 @@ int main(void) {
   CHECK(yui_vni("Vie65t Nam", out, sizeof(out)) > 0);
   CHECK(strcmp(out, "Việt Nam") == 0);
   CHECK(yui_telex("ab", out, 2) == YUI_E_TOO_SMALL);  /* needs 2 chars + NUL */
+  CHECK(yui_ime_convert("telex", "Tieengs Vieetj", out, sizeof(out)) > 0);
+  CHECK(strcmp(out, "Tiếng Việt") == 0);
+  CHECK(yui_ime_convert("vni", "Vie65t Nam", out, sizeof(out)) > 0);
+  CHECK(strcmp(out, "Việt Nam") == 0);
+  CHECK(yui_ime_convert("invalid", "Tieengs", out, sizeof(out)) == YUI_E_INVALID);
 
   /* Compression round-trip. */
   {

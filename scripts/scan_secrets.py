@@ -31,11 +31,15 @@ IGNORE = []          # chuỗi con từ tệp .scan-secrets-ignore (mỗi dòng 
 
 
 def load_ignore(root):
-    p = os.path.join(root, ".scan-secrets-ignore")
+    candidates = [
+        os.path.join(root, ".scan-secrets-ignore"),
+        os.path.join(root, "scripts", ".scan-secrets-ignore"),
+    ]
     IGNORE[:] = []
-    if os.path.exists(p):
-        with open(p, encoding="utf-8") as fh:
-            IGNORE.extend(x.strip() for x in fh if x.strip() and not x.startswith("#"))
+    for p in candidates:
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as fh:
+                IGNORE.extend(x.strip() for x in fh if x.strip() and not x.startswith("#"))
 
 
 def scan_text(text, where):
