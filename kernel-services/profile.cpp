@@ -117,6 +117,7 @@ void read_gpu(HostProfile& p) {
 }  // namespace
 
 std::string classify(const HostProfile& p) {
+  if (p.ram_gb > 0 && p.ram_gb < 1.5) return "sieu-yeu";
   const bool weak = p.ram_gb > 0 && p.ram_gb < 4.0;
   const bool strong = (p.ram_gb >= 16.0 && p.threads >= 8) || (p.threads >= 16 && p.ram_gb >= 8.0);
   if (weak || p.threads <= 2) return "may-yeu";
@@ -126,7 +127,7 @@ std::string classify(const HostProfile& p) {
 
 std::string summary_vi(const HostProfile& p) {
   std::ostringstream os;
-  os << "Máy " << (p.tier == "may-yeu" ? "yếu" : (p.tier == "may-manh" ? "mạnh" : "cân bằng"));
+  os << "Máy " << (p.tier == "sieu-yeu" ? "siêu yếu" : (p.tier == "may-yeu" ? "yếu" : (p.tier == "may-manh" ? "mạnh" : "cân bằng")));
   if (!p.cpu_model.empty()) os << " · " << p.cpu_model;
   os << " · " << p.threads << " luồng";
   if (p.ram_gb > 0) {
@@ -139,6 +140,9 @@ std::string summary_vi(const HostProfile& p) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), " · %.1f°C", p.temperature_c);
     os << buf;
+  }
+  if (p.tier == "sieu-yeu") {
+    os << " · Headless/TUI (zero-AI fallback BM25/luật)";
   }
   os << " → k=" << p.tune.k << ", cửa sổ " << p.tune.window;
   return os.str();
@@ -170,6 +174,8 @@ HostProfile probe() {
   }
 
   p.tier = classify(p);
+  p.headless = (p.tier == "sieu-yeu");
+  p.zero_ai = (p.tier == "sieu-yeu");
   p.tune_input.ram_gb = p.ram_gb > 0 ? p.ram_gb : 8.0;
   p.tune_input.temperature_c = p.temperature_c > 0 ? p.temperature_c : 45.0;
   p.tune_input.on_battery = p.on_battery;
@@ -207,6 +213,9 @@ json::Value to_json(const HostProfile& p) {
   simd.set("vector_bits", int(p.simd.vector_bits));
   v.set("simd", simd);
   v.set("tier", p.tier);
+  v.set("headless", p.tier == "sieu-yeu");
+  v.set("zero_ai", p.tier == "sieu-yeu");
+  v.set("model_loaded", p.tier != "sieu-yeu");
   json::Value tune(json::Object{});
   tune.set("k", p.tune.k);
   tune.set("window", p.tune.window);

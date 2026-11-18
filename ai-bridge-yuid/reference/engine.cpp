@@ -299,12 +299,18 @@ TuneResult auto_tune(const TuneInput& in) {
   TuneResult r;
   r.threads = in.cpu_threads > 0 ? in.cpu_threads : 1;
 
+  const bool ultra_constrained = in.ram_gb > 0 && in.ram_gb < 1.5;
   const bool constrained = in.ram_gb < 4.0 || in.low_power_mode || in.cpu_threads <= 2;
   const bool hot = in.temperature_c >= 80.0;
   const bool warm = in.temperature_c >= 65.0;
   const bool rich = in.ram_gb >= 16.0 && in.cpu_threads >= 8;
 
-  if (constrained) {
+  if (ultra_constrained) {
+    r.profile = "sieu-yeu";
+    r.k = 1;
+    r.window = 16;
+    r.reason = "Máy siêu yếu (RAM < 1.5 GB): Headless/TUI, zero-AI fallback (BM25/luật), k=1, cửa sổ 16.";
+  } else if (constrained) {
     r.profile = "may-yeu";
     r.k = 2;
     r.window = 1024;
@@ -321,7 +327,7 @@ TuneResult auto_tune(const TuneInput& in) {
     r.reason = "Cấu hình cân bằng: k=4, cửa sổ 4096.";
   }
 
-  if (in.on_battery && r.profile != "may-yeu") {
+  if (in.on_battery && r.profile != "may-yeu" && r.profile != "sieu-yeu") {
     r.k = std::max(2, r.k - 1);
     r.window = std::max(1024, r.window / 2);
     r.reason += " Đang dùng pin nên giảm tải.";

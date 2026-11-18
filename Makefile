@@ -97,7 +97,7 @@ kernel:
 qemu:
 	./scripts/qemu-smoke.sh $(ARCH) --build
 
-all: $(BIN)/yuid $(BIN)/libyui.a $(BIN)/libyui.so \
+all: $(BIN)/yuid $(BIN)/libyui.a $(BIN)/libyui.so.1 $(BIN)/libyui.so $(BUILD)/yui.pc \
      $(BIN)/yui-profiler $(BIN)/yui-trim $(BIN)/yui-shell $(BIN)/yui-splash $(BIN)/yui-update
 
 $(OBJ)/%.o: %.cpp $(HEADERS)
@@ -112,9 +112,17 @@ $(BIN)/libyui.a: $(LIB_OBJ) $(OBJ)/capi.o
 	@mkdir -p $(dir $@)
 	ar rcs $@ $^
 
-$(BIN)/libyui.so: $(LIB_OBJ) $(OBJ)/capi.o
+$(BIN)/libyui.so.1: $(LIB_OBJ) $(OBJ)/capi.o
 	@mkdir -p $(dir $@)
-	$(CXX) -shared -o $@ $^ $(LDLIBS)
+	$(CXX) -shared -Wl,-soname,libyui.so.1 -o $@ $^ $(LDLIBS)
+
+$(BIN)/libyui.so: $(BIN)/libyui.so.1
+	@mkdir -p $(dir $@)
+	ln -sf libyui.so.1 $@
+
+$(BUILD)/yui.pc: Makefile
+	@mkdir -p $(dir $@)
+	@printf "prefix=%s\nexec_prefix=\$${prefix}\nlibdir=%s/build/bin\nincludedir=%s/include\n\nName: yui\nDescription: YuiVieOS C-ABI library for AI, IME, graph, vault, telemetry and capabilities\nVersion: 0.1.0\nLibs: -L\$${libdir} -lyui -lpthread -lm\nCflags: -I\$${includedir}\n" "$(PREFIX)" "$(CURDIR)" "$(CURDIR)" > $@
 
 $(BIN)/yuid: $(OBJ)/ai-bridge-yuid/daemon/main.o $(BIN)/libyui.a
 	@mkdir -p $(dir $@)
@@ -171,6 +179,13 @@ check: all test verify
 	@echo "── smoke: yui-update"
 	@./$(BIN)/yui-update --trogiup > /dev/null
 	@./$(BIN)/yui-update status --state-dir /tmp/smoke-update > /dev/null
+	@echo "── smoke: pkg-config + C demo"
+	@PKG_CONFIG_PATH=$(CURDIR)/build $(CC) examples/c/demo.c $$(PKG_CONFIG_PATH=$(CURDIR)/build pkg-config --cflags --libs yui) -o $(BUILD)/demo_c
+	@LD_LIBRARY_PATH=$(BIN):$$LD_LIBRARY_PATH $(BUILD)/demo_c > /dev/null
+	@echo "── smoke: python bindings demo"
+	@python3 examples/python/demo.py > /dev/null
+	@echo "── smoke: mcp integration client"
+	@python3 tools/mcp_client.py --server ./$(BIN)/yuid > /dev/null
 	@echo "all checks passed"
 
 install: all
@@ -181,7 +196,9 @@ install: all
 	install -Dm755 $(BIN)/yui-splash $(DESTDIR)$(PREFIX)/bin/yui-splash
 	install -Dm755 $(BIN)/yui-update $(DESTDIR)$(PREFIX)/bin/yui-update
 	install -Dm644 $(BIN)/libyui.a $(DESTDIR)$(PREFIX)/lib/libyui.a
-	install -Dm755 $(BIN)/libyui.so $(DESTDIR)$(PREFIX)/lib/libyui.so
+	install -Dm755 $(BIN)/libyui.so.1 $(DESTDIR)$(PREFIX)/lib/libyui.so.1
+	ln -sf libyui.so.1 $(DESTDIR)$(PREFIX)/lib/libyui.so
+	install -Dm644 $(BUILD)/yui.pc $(DESTDIR)$(PREFIX)/lib/pkgconfig/yui.pc
 	install -Dm644 include/yui/yui.h $(DESTDIR)$(PREFIX)/include/yui/yui.h
 	@if test -x "$(BIN)/yui-ibus-engine"; then \
 		$(MAKE) --no-print-directory install-ibus; \

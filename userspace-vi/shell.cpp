@@ -120,7 +120,7 @@ const std::map<std::string, std::string> kAliases = {
     // 18. xoánút / remove
     {"remove", "xoánút"},    {"xoanut", "xoánút"},  {"rm", "xoánút"},
     // 19. nhậtký / audit
-    {"audit", "nhậtký"},     {"nhatky", "nhậtký"},
+    {"audit", "nhậtký"},     {"nhatky", "nhậtký"},  {"xoánhậtký", "nhậtký"}, {"xoanhatky", "nhậtký"}, {"clearaudit", "nhậtký"},
     // 20. cảnhbáo / alerts
     {"alerts", "cảnhbáo"},   {"canhbao", "cảnhbáo"}, {"alert", "cảnhbáo"},
     // 21. phiênbản / version
@@ -133,6 +133,8 @@ const std::map<std::string, std::string> kAliases = {
     {"clear", "xoámàn"},     {"xoaman", "xoámàn"},  {"cls", "xoámàn"},
     // 25. thờigian / uptime
     {"uptime", "thờigian"},  {"thoigian", "thờigian"}, {"time", "thờigian"},
+    // 26. tươngthích / compat (P3.16)
+    {"compat", "tươngthích"}, {"tuongthich", "tươngthích"}, {"compatibility", "tươngthích"},
 };
 
 }  // namespace
@@ -186,6 +188,9 @@ Shell::Shell(service::Daemon& daemon, const ui::Layout& layout) : daemon_(daemon
       {"xoámàn", "clear", "xoámàn", "clear", "Xoá sạch màn hình terminal.", "Clear terminal screen."},
       {"thờigian", "uptime", "thờigian", "uptime", "Xem số lệnh đã thực thi trong phiên.",
        "Show session command count and status."},
+      {"tươngthích", "compat", "tươngthích [app] [bật|tắt]", "compat [app] [on|off]",
+       "Bật/tắt chế độ tương thích hộp cát cho ứng dụng (mặc định tắt).",
+       "Enable or disable sandbox compatibility mode for an app (default off)."},
   };
 }
 
@@ -530,6 +535,10 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
   }
 
   if (cmd == "nhậtký") {
+    if (args.size() > 1 && (args[1] == "xoá" || args[1] == "xoa" || args[1] == "clear" || args[1] == "--clear")) {
+      daemon_.audit_clear();
+      return "Đã xoá sạch nhật ký kiểm toán (0 sự kiện).";
+    }
     const auto& audit = daemon_.enforcer().audit();
     if (audit.empty()) return "Nhật ký kiểm toán hộp cát: 0 sự kiện ghi nhận.";
     std::ostringstream os;
@@ -599,6 +608,46 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
        << " · Giao diện: " << ui::path_name(layout_.path)
        << " (" << layout_.columns << "x" << layout_.rows << ")";
     return os.str();
+  }
+
+  if (cmd == "tươngthích") {
+    if (args.size() == 1) {
+      service::RpcError err;
+      const auto r = daemon_.handle("compat.list", json::Value(json::Object{}), err);
+      if (err.code != 0) return "Lỗi: " + err.message;
+      std::ostringstream os;
+      os << "Chế độ tương thích ứng dụng (Compatibility Mode):\n";
+      const auto& arr = r["enabled_apps"].arr();
+      if (arr.empty()) {
+        os << "  (không có ứng dụng nào bật — mặc định TẮT cho toàn bộ ứng dụng)\n";
+      } else {
+        os << "  Ứng dụng đang bật:\n";
+        for (const auto& a : arr) {
+          os << "   • " << a.as_string() << "\n";
+        }
+      }
+      os << "  Lượt hỏi xác nhận: " << r["prompt_count"].as_int()
+         << " · Thẻ tạm thời đã cấp: " << r["grant_count"].as_int();
+      return os.str();
+    }
+    const std::string target_app = args[1];
+    if (args.size() == 2) {
+      service::RpcError err;
+      json::Value p(json::Object{});
+      p.set("app", target_app);
+      const auto r = daemon_.handle("compat.get", p, err);
+      if (err.code != 0) return "Lỗi: " + err.message;
+      return "Ứng dụng " + target_app + ": " + (r["enabled"].as_bool() ? "ĐANG BẬT" : "TẮT (mặc định)");
+    }
+    const std::string action = text::fold(args[2]);
+    bool enable = (action == "bật" || action == "bat" || action == "on" || action == "1" || action == "true");
+    service::RpcError err;
+    json::Value p(json::Object{});
+    p.set("app", target_app);
+    p.set("enabled", enable);
+    const auto r = daemon_.handle("compat.set", p, err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    return r["reason_vi"].as_string();
   }
 
   const std::string sug = suggest(cmd);

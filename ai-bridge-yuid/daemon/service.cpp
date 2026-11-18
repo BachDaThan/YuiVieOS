@@ -4,10 +4,12 @@
 #include <cstdlib>
 #include <ctime>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "yui/apppack.hpp"
 #include "yui/b64.hpp"
 #include "yui/codec.hpp"
+#include "yui/crypto.hpp"
 #include "yui/engine.hpp"
 #include "yui/ime.hpp"
 #include "yui/profile.hpp"
@@ -93,26 +95,62 @@ Daemon::Daemon(Options opts)
     : opts_(std::move(opts)),
       authority_(opts_.cap_master_key.empty()
                      ? "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
-                     : opts_.cap_master_key) {}
+                     : opts_.cap_master_key),
+      trusted_confirmation_(&enforcer_),
+      compat_mgr_(&enforcer_, &authority_, &trusted_confirmation_) {}
+
+std::string Daemon::anonymize_target(const std::string& target) const {
+  if (target.rfind("http://", 0) == 0 || target.rfind("https://", 0) == 0 ||
+      target.rfind("net:", 0) == 0 || (target.find('.') != std::string::npos && target[0] != '/')) {
+    return "sha256:" + crypto::hex(crypto::sha256(target)).substr(0, 16);
+  }
+  return target;
+}
+
+void Daemon::audit_rotate() {
+  if (opts_.state_dir.empty()) return;
+  std::string path = opts_.state_dir + "/audit.log";
+  std::string rotated = opts_.state_dir + "/audit.log.1";
+  ::rename(path.c_str(), rotated.c_str());
+}
+
+bool Daemon::audit_clear() {
+  enforcer_.clear_audit();
+  if (!opts_.state_dir.empty()) {
+    std::string path = opts_.state_dir + "/audit.log";
+    FILE* f = std::fopen(path.c_str(), "w");
+    if (f) std::fclose(f);
+    std::string rotated = opts_.state_dir + "/audit.log.1";
+    ::unlink(rotated.c_str());
+  }
+  return true;
+}
 
 void Daemon::audit_log(const std::string& subject, const std::string& action_kind,
                        const std::string& target, bool allowed, const std::string& reason) {
   int64_t now_s = std::time(nullptr);
+  std::string logged_target = opts_.audit_hash_domains ? anonymize_target(target) : target;
   sandbox::AuditEntry e;
   e.when = now_s;
   e.subject = subject.empty() ? "mcp:anonymous" : subject;
-  e.action = sandbox::Action{action_kind, target};
+  e.action = sandbox::Action{action_kind, logged_target};
   e.decision = sandbox::Decision{allowed, sandbox::Tier::Native, reason, 0};
   enforcer_.record(e);
 
   if (!opts_.state_dir.empty()) {
     ::mkdir(opts_.state_dir.c_str(), 0755);
     std::string path = opts_.state_dir + "/audit.log";
+
+    struct stat st;
+    if (::stat(path.c_str(), &st) == 0 && static_cast<size_t>(st.st_size) >= opts_.audit_max_bytes) {
+      audit_rotate();
+    }
+
     FILE* f = std::fopen(path.c_str(), "a");
     if (f) {
       std::fprintf(f, "[%lld] sub=%s action=%s target=%s decision=%s reason=\"%s\"\n",
                    static_cast<long long>(now_s), e.subject.c_str(), action_kind.c_str(),
-                   target.c_str(), allowed ? "ALLOWED" : "DENIED", reason.c_str());
+                   logged_target.c_str(), allowed ? "ALLOWED" : "DENIED", reason.c_str());
       std::fclose(f);
     }
   }
@@ -145,6 +183,10 @@ Value Daemon::method_info() {
   v.set("graph_nodes", graph_.stats().nodes);
   v.set("graph_edges", graph_.stats().edges);
   v.set("udh", false);  // placeholder for future UDH negotiation
+  const bool is_sieu_yeu = has_host_ && host_["tier"].as_string() == "sieu-yeu";
+  v.set("model_loaded", !is_sieu_yeu);
+  v.set("zero_ai", is_sieu_yeu);
+  v.set("headless", is_sieu_yeu);
   return v;
 }
 
@@ -183,6 +225,13 @@ Value Daemon::method_tune(const Value& params, RpcError& err) {
   v.set("threads", r.threads);
   v.set("profile", r.profile);
   v.set("reason", r.reason);
+  if (r.profile == "sieu-yeu") {
+    v.set("model_loaded", false);
+    v.set("zero_ai", true);
+    v.set("fallback", "bm25+rules");
+    v.set("headless", true);
+    v.set("compositor", false);
+  }
   return v;
 }
 
@@ -547,6 +596,50 @@ Value Daemon::method_guard(const std::string& op, const Value& p, RpcError& err)
   return Value(nullptr);
 }
 
+Value Daemon::method_compat(const std::string& op, const Value& p, RpcError& err) {
+  if (op == "get") {
+    std::string app = param_string(p, "app");
+    if (app.empty()) {
+      err.code = kInvalidParams;
+      err.message = "thiếu tham số 'app'";
+      return Value(nullptr);
+    }
+    Value v(json::Object{});
+    v.set("app", app);
+    v.set("enabled", compat_mgr_.is_app_compatibility_enabled(app));
+    return v;
+  }
+  if (op == "set") {
+    std::string app = param_string(p, "app");
+    if (app.empty()) {
+      err.code = kInvalidParams;
+      err.message = "thiếu tham số 'app'";
+      return Value(nullptr);
+    }
+    bool enable = p["enabled"].as_bool(false);
+    compat_mgr_.set_app_compatibility(app, enable);
+    Value v(json::Object{});
+    v.set("app", app);
+    v.set("enabled", enable);
+    v.set("reason_vi", std::string("Chế độ tương thích đã ") + (enable ? "bật" : "tắt") + " cho " + app);
+    return v;
+  }
+  if (op == "list") {
+    Value arr(json::Array{});
+    for (const auto& a : compat_mgr_.enabled_apps()) {
+      arr.push(a);
+    }
+    Value v(json::Object{});
+    v.set("enabled_apps", arr);
+    v.set("prompt_count", int64_t(compat_mgr_.prompt_count()));
+    v.set("grant_count", int64_t(compat_mgr_.grant_count()));
+    return v;
+  }
+  err.code = kMethodNotFound;
+  err.message = "thao tác compat không xác định: " + op;
+  return Value(nullptr);
+}
+
 Value Daemon::method_os(const std::string& op) {
   Value v(json::Object{});
   if (!has_host_) set_host_snapshot(profile::to_json(profile::probe()));
@@ -590,9 +683,32 @@ Value Daemon::handle(const std::string& method, const Value& params, RpcError& e
   if (text::starts_with(method, "pack.")) return method_pack(method.substr(5), params, err);
   if (method == "sandbox.check") return method_sandbox_check(params, err);
   if (text::starts_with(method, "guard.")) return method_guard(method.substr(6), params, err);
+  if (text::starts_with(method, "compat.")) return method_compat(method.substr(7), params, err);
   if (method == "ime.convert") return method_ime(params, err);
   if (method == "web.search") return method_web_search(params, err);
   if (method == "telemetry.read") return method_telemetry();
+  if (method == "audit.clear") {
+    audit_clear();
+    Value v(json::Object{});
+    v.set("cleared", true);
+    return v;
+  }
+  if (method == "audit.entries") {
+    Value arr(json::Array{});
+    for (const auto& entry : enforcer_.audit()) {
+      Value item(json::Object{});
+      item.set("when", entry.when);
+      item.set("subject", entry.subject);
+      item.set("kind", entry.action.kind);
+      item.set("target", entry.action.target);
+      item.set("allowed", entry.decision.allowed);
+      item.set("reason", entry.decision.reason);
+      arr.push(item);
+    }
+    Value res(json::Object{});
+    res.set("entries", arr);
+    return res;
+  }
   if (text::starts_with(method, "os.")) return method_os(method.substr(3));
   if (method == "engine.tune") return method_tune(params, err);
 

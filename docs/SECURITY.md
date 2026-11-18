@@ -232,7 +232,7 @@ Chuỗi dữ liệu: `telemetry` (tải từng tiến trình) → `guard::Guard`
 Test: `tests/test_redteam.cpp` (kịch bản đào coin, tải nhấp nháy dưới ngưỡng,
 tiến trình có cửa sổ/quyền không bị ảnh hưởng, chuỗi quyết định qua `yuid`).
 
-### 10.2 Bộ lọc egress theo năng lực
+### 10.2 Bộ lọc egress theo năng lực, Zero-Trust và Secretless Broker (P3.10)
 
 Tiến trình ở chế độ `isolated`/`microvm` **mặc định bị chặn** mọi kết nối ra
 ngoài; chỉ đích nằm trong allowlist của `policies/*.json` (`net:host[:port]`,
@@ -240,11 +240,30 @@ ngoài; chỉ đích nằm trong allowlist của `policies/*.json` (`net:host[:p
 rule chỉ định cổng thì chỉ đúng cổng đó. Mọi quyết định kèm lý do tiếng Việt
 để audit ("chặn kết nối tới … — ngoài phạm vi cho phép của chính sách").
 
-Cài đặt: `vmm-sandbox/sandbox.cpp::EgressFilter` (song song với lớp năng lực
-`Enforcer::check` — token chỉ cấp `net.connect` trong phạm vi khai báo, gọi
-ngoài phạm vi bị từ chối + audit). Test: `tests/test_redteam.cpp`
-(mặc định chặn, wildcard, sai cổng, CIDR, deny thắng allow, khoá hậu tố giả mạo
-`api.trithuc.vn.evil.example`).
+Các cơ chế phòng vệ mở rộng (P3.10):
+1. **East-West Zero-Trust**: Giao tiếp ngang giữa các sandbox (`is_east_west`) mặc
+   định bị từ chối (`allow_east_west = false`). Các container/micro-VM không thể
+   tự do giao tiếp nội bộ qua mạng nếu không được khai báo tường minh.
+2. **Chống rò rỉ qua DNS (Anti-DNS-Tunneling)**:
+   - Cấm DNS trực tiếp ra Internet trên cổng 53 (`allow_direct_dns = false`). Mọi
+     truy vấn tên miền bắt buộc phải qua resolver/broker nội bộ có kiểm soát.
+   - Kiểm tra chuẩn tên miền RFC 1035: Tên miền không vượt quá 253 octet, mỗi nhãn
+     không vượt quá 63 octet, ký tự chỉ gồm chữ cái, chữ số và gạch nối (không
+     bắt đầu/kết thúc bằng gạch nối).
+   - Đo lường **Shannon Entropy**: Tính toán $H = -\sum p_i \log_2(p_i)$ trên các
+     nhãn tên miền (độ dài $\ge 12$). Bất kỳ nhãn nào có entropy vượt ngưỡng hiệu
+     chuẩn $H > 4.2$ bit/ký tự (dấu hiệu điển hình của payload mã hoá base32/base36
+     từ dnscat2, iodine...) đều bị từ chối lập tức với lý do cảnh báo nguy cơ DNS tunneling.
+3. **Secretless Broker**:
+   - Mọi khoá xác thực, API token và bí mật ngoại vi được quản lý tập trung ở vòng
+     ngoài (`SecretlessBroker`), hoàn toàn cách ly khỏi bộ nhớ guest micro-VM.
+   - Ứng dụng guest chỉ gửi yêu cầu ý định kèm thẻ năng lực hợp lệ (`kRightNetConnect`).
+   - Broker thẩm định thẻ năng lực, kiểm tra allowlist egress, tự động gắn bí mật
+     ngoài biên (`[SECRETLESS_BROKER_ATTACHED]`) trước khi gửi lên upstream.
+   - Bí mật thô tuyệt đối không được đưa vào guest, biến môi trường hay nhật ký audit.
+
+Cài đặt: `vmm-sandbox/sandbox.cpp::EgressFilter` và `SecretlessBroker`. Test:
+`tests/test_sandbox.cpp` và `tests/test_redteam.cpp`.
 
 ### 10.3 Test Red-Team
 

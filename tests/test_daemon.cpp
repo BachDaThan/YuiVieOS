@@ -4,6 +4,7 @@
 #include <chrono>
 #include <fstream>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -16,6 +17,7 @@
 #include "yui/b64.hpp"
 #include "yui/server.hpp"
 #include "yui/service.hpp"
+#include "yui/shell.hpp"
 #include "yui/yui.h"
 
 using namespace yui;
@@ -154,6 +156,13 @@ YUI_TEST(daemon, ime_and_pack_and_policy) {
 
   const auto tune = call(d, "yuid.tune", R"({"ram_gb":2,"cpu_threads":2,"temperature_c":50})");
   CHECK_EQ(tune["result"]["profile"].as_string(), std::string("may-yeu"));
+  const auto tune_sieu_yeu = call(d, "yuid.tune", R"({"ram_gb":1.4,"cpu_threads":2,"temperature_c":45})");
+  CHECK_EQ(tune_sieu_yeu["result"]["profile"].as_string(), std::string("sieu-yeu"));
+  CHECK_EQ(tune_sieu_yeu["result"]["model_loaded"].as_bool(), false);
+  CHECK_EQ(tune_sieu_yeu["result"]["zero_ai"].as_bool(), true);
+  CHECK_EQ(tune_sieu_yeu["result"]["headless"].as_bool(), true);
+  CHECK_EQ(tune_sieu_yeu["result"]["compositor"].as_bool(), false);
+  CHECK_EQ(tune_sieu_yeu["result"]["fallback"].as_string(), std::string("bm25+rules"));
   const auto bad_tune = call(d, "yuid.tune", R"({"ram_gb":8,"cpu_threads":0})");
   CHECK_EQ(bad_tune["error"]["code"].as_int(), int64_t(service::kInvalidParams));
 }
@@ -601,6 +610,95 @@ YUI_TEST(daemon, mcp_os_tools_stress_and_latency) {
   // Clean-room & performance verification: 1,000 calls must run in under 200 ms total; p95 latency < 500 µs (0.5 ms)
   CHECK_MSG(elapsed < 200.0, "1000 lời gọi phải hoàn tất < 200 ms");
   CHECK_MSG(p95_us < 500.0, "p95 latency phải < 500 µs");
+}
+
+YUI_TEST(daemon, audit_log_readable_vietnamese_and_no_secrets) {
+  service::Options opts;
+  opts.state_dir = "/tmp/yui-p1-9-audit-" + std::to_string(std::time(nullptr));
+  opts.vault_password = "super-secret-vault-master-password-12345";
+  service::Daemon d(opts);
+
+  const int64_t now = std::time(nullptr);
+  sandbox::Token tok = d.authority().issue(
+      "agent:assistant",
+      sandbox::kRightPower | sandbox::kRightAdmin,
+      {"*"}, now, 3600);
+  std::string bearer = d.authority().bearer(tok);
+
+  service::RpcError err;
+  d.mcp_tool_call(json::parse(R"({"name":"sys_power","arguments":{"mode":"performance","confirm":false,"token":")" + bearer + R"("}})") .value, err);
+  d.mcp_tool_call(json::parse(R"({"name":"sys_power","arguments":{"mode":"performance","confirm":true,"token":")" + bearer + R"("}})") .value, err);
+  d.mcp_tool_call(json::parse(R"({"name":"sys_scheduler","arguments":{"profile":"tiet-kiem-pin","confirm":true,"token":")" + bearer + R"("}})") .value, err);
+  d.mcp_tool_call(json::parse(R"({"name":"sys_proc","arguments":{"action":"list","token":")" + bearer + R"("}})") .value, err);
+
+  std::ifstream f(opts.state_dir + "/audit.log");
+  CHECK(f.is_open());
+  std::vector<std::string> lines;
+  std::string line;
+  while (std::getline(f, line)) {
+    if (!line.empty()) lines.push_back(line);
+  }
+  f.close();
+
+  // DoD P1.9: audit.log có ≥ 3 mục thật
+  CHECK(lines.size() >= 3);
+  // Mỗi mục có lý do tiếng Việt và không chứa bí mật
+  for (const auto& l : lines) {
+    CHECK(l.find("reason=\"") != std::string::npos);
+    bool has_vietnamese = (l.find("xác nhận") != std::string::npos ||
+                           l.find("thành công") != std::string::npos ||
+                           l.find("liệt kê") != std::string::npos ||
+                           l.find("cấu hình") != std::string::npos);
+    CHECK(has_vietnamese);
+    CHECK(l.find("super-secret-vault-master-password-12345") == std::string::npos);
+    CHECK(l.find(bearer) == std::string::npos);
+    CHECK(l.find(opts.cap_master_key) == std::string::npos);
+  }
+}
+
+YUI_TEST(daemon, audit_log_rotation_and_clear_and_domain_hash) {
+  service::Options opts;
+  opts.state_dir = "/tmp/yui-p7-5-audit-" + std::to_string(std::time(nullptr));
+  opts.audit_max_bytes = 200;
+  opts.audit_hash_domains = true;
+  service::Daemon d(opts);
+
+  d.audit_log("sandbox:browser", "net.connect", "https://analytics.evil-tracker.example.com/telemetry", true, "kết nối được cho phép");
+  d.audit_log("sandbox:crawler", "dns.resolve", "api.internal.service.example.org", true, "phân giải DNS thành công");
+
+  std::ifstream f1(opts.state_dir + "/audit.log");
+  CHECK(f1.is_open());
+  std::string c1((std::istreambuf_iterator<char>(f1)), std::istreambuf_iterator<char>());
+  f1.close();
+
+  CHECK(c1.find("analytics.evil-tracker.example.com") == std::string::npos);
+  CHECK(c1.find("api.internal.service.example.org") == std::string::npos);
+  CHECK(c1.find("target=sha256:") != std::string::npos);
+
+  d.audit_log("app:worker", "fs.read", "/var/data/job1.txt", true, "đọc dữ liệu công việc");
+  d.audit_log("app:worker", "fs.write", "/var/data/job2.txt", true, "ghi kết quả công việc");
+
+  struct stat st_rot;
+  CHECK(::stat((opts.state_dir + "/audit.log.1").c_str(), &st_rot) == 0);
+
+  service::RpcError err;
+  const auto clear_res = d.handle("audit.clear", json::Value(json::Object{}), err);
+  CHECK(!err.code);
+  CHECK(clear_res["cleared"].as_bool());
+
+  struct stat st_main;
+  CHECK(::stat((opts.state_dir + "/audit.log").c_str(), &st_main) == 0);
+  CHECK(st_main.st_size == 0);
+  CHECK(::stat((opts.state_dir + "/audit.log.1").c_str(), &st_rot) != 0);
+  CHECK(d.enforcer().audit().empty());
+
+  ui::Layout layout;
+  shell::Shell sh(d, layout);
+  d.audit_log("test", "test", "target", true, "thử nghiệm");
+  CHECK(!d.enforcer().audit().empty());
+  std::string sh_out = sh.run("nhậtký xoá");
+  CHECK(sh_out.find("Đã xoá sạch") != std::string::npos);
+  CHECK(d.enforcer().audit().empty());
 }
 
 YUI_TEST_MAIN("test_daemon")

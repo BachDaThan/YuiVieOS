@@ -28,7 +28,8 @@ void usage() {
       "  --no-elf-strip        Không xoá ký hiệu gỡ lỗi trong ELF\n"
       "  --keep-locales vi,en  Danh sách ngôn ngữ giữ lại\n"
       "  --level N             Mức nén 0..9 (mặc định 7)\n"
-      "  --dry-run             Chỉ báo cáo, không ghi tệp\n");
+      "  --dry-run             Chỉ báo cáo, không ghi tệp\n"
+      "  --propose-policy <tệp> Sinh chính sách hộp cát đề xuất (.proposed.json)\n");
 }
 
 bool read_all(const std::string& path, yui::apppack::Bytes& out) {
@@ -55,7 +56,7 @@ std::string human(uint64_t n) {
 
 int main(int argc, char** argv) {
   yui::apppack::TrimOptions opts;
-  std::string source, out_path, unpack_path, info_path, dest;
+  std::string source, out_path, unpack_path, info_path, dest, propose_path;
   bool dry_run = false;
   std::vector<std::string> positional;
 
@@ -79,6 +80,7 @@ int main(int argc, char** argv) {
     else if (a == "--no-dedupe") opts.dedupe = false;
     else if (a == "--no-elf-strip") opts.strip_debug_elf = false;
     else if (a == "--dry-run") dry_run = true;
+    else if (a == "--propose-policy") propose_path = next("--propose-policy");
     else if (a == "--level") opts.level = std::atoi(next("--level").c_str());
     else if (a == "--keep-locales") {
       opts.keep_locales.clear();
@@ -170,5 +172,31 @@ int main(int argc, char** argv) {
   std::fwrite(packed.data(), 1, packed.size(), f);
   std::fclose(f);
   std::printf("Đã ghi: %s (%s)\n", out_path.c_str(), human(packed.size()).c_str());
+
+  if (!propose_path.empty()) {
+    std::vector<yui::apppack::Entry> entries;
+    yui::apppack::TrimReport tr;
+    std::string coll_err;
+    if (yui::apppack::collect(source, opts, entries, tr, &coll_err)) {
+      std::string manifest_json;
+      yui::apppack::Bytes m_data;
+      if (read_all(source + "/vm-manifest.json", m_data) || read_all(source + "/manifest.json", m_data)) {
+        manifest_json.assign(reinterpret_cast<const char*>(m_data.data()), m_data.size());
+      }
+      std::string app_name = source;
+      size_t slash = app_name.rfind('/');
+      if (slash != std::string::npos) app_name = app_name.substr(slash + 1);
+      const auto prop = yui::apppack::generate_proposed_policy("app:" + app_name, manifest_json, entries, {});
+      FILE* pf = std::fopen(propose_path.c_str(), "w");
+      if (pf) {
+        const std::string s = prop.to_json_string(true);
+        std::fwrite(s.data(), 1, s.size(), pf);
+        std::fclose(pf);
+        std::printf("Đã sinh chính sách đề xuất: %s (%zu đích, mặc định tắt)\n",
+                    propose_path.c_str(), prop.targets.size());
+      }
+    }
+  }
+
   return 0;
 }

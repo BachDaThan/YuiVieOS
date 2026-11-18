@@ -585,4 +585,390 @@ YUI_TEST(sandbox, p3_13_third_party_ime_isolated_and_sensitive_fields_protected)
   CHECK(d_own_cfg.allowed);
 }
 
+// --------------------------------------------- Layer 2: Micro-VM Lifecycle (P3.9) --
+
+YUI_TEST(sandbox, layer2_micro_vm_quarantine_freeze_and_destruction) {
+  Enforcer enforcer;
+  const std::string master_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  Authority auth(master_key);
+  MicroVmSupervisor supervisor(&enforcer, &auth);
+
+  const int64_t now = 1700000000;
+
+  // 1. Khởi tạo 2 phiên micro-VM độc lập
+  Policy game_policy;
+  game_policy.app_id = "app:legacy-game";
+  game_policy.tier = Tier::MicroVm;
+  game_policy.granted = kRightNetConnect | kRightGpu;
+  game_policy.scopes = {"game.yui.vn:443"};
+
+  Policy calc_policy;
+  calc_policy.app_id = "app:wine-calc";
+  calc_policy.tier = Tier::MicroVm;
+  calc_policy.granted = kRightNone;
+
+  auto* session_game = supervisor.create_session("vm-game-42", "app:legacy-game", game_policy, "fam-session-game", now);
+  auto* session_calc = supervisor.create_session("vm-calc-99", "app:wine-calc", calc_policy, "fam-session-calc", now);
+
+  CHECK(session_game != nullptr);
+  CHECK(session_calc != nullptr);
+  CHECK_EQ(supervisor.active_count(), size_t(2));
+  CHECK_EQ(supervisor.total_count(), size_t(2));
+
+  CHECK_EQ(session_game->state(), MicroVmState::Running);
+  CHECK_EQ(session_calc->state(), MicroVmState::Running);
+  CHECK_EQ(std::string(micro_vm_state_name(session_game->state())), std::string("running"));
+  CHECK_EQ(std::string(micro_vm_state_name_vi(session_game->state())), std::string("đang chạy"));
+
+  // 2. Cấp token và gửi yêu cầu hợp lệ tới vm-game-42
+  Token game_token = auth.issue("app:legacy-game", kRightNetConnect, {"game.yui.vn:443"}, now, 3600, 0, "fam-session-game");
+  const Decision d_ok = supervisor.dispatch_guest_request("vm-game-42", {"net.connect", "game.yui.vn:443"}, now + 1, &game_token);
+  CHECK(d_ok.allowed);
+
+  // 3. Mô phỏng Lớp 1 phát hiện bất thường: vượt ranh giới micro-VM
+  const bool anomaly = enforcer.detect_anomaly(
+      auth, "fam-session-game", "app:legacy-game", "kvm_ioctl_evasion", "attempted unbrokered KVM escape", now + 10);
+  CHECK(anomaly);
+
+  // Lớp 2 phản ứng: chuyển running -> frozen/quarantined -> destroyed trước khi xử lý yêu cầu kế tiếp
+  const bool handled = supervisor.on_layer1_anomaly("fam-session-game", "KVM evasion detected by Layer 1", now + 11);
+  CHECK(handled);
+
+  // Phiên vm-game-42 bị huỷ; active_count giảm còn 1
+  CHECK_EQ(session_game->state(), MicroVmState::Destroyed);
+  CHECK_EQ(std::string(micro_vm_state_name(session_game->state())), std::string("destroyed"));
+  CHECK_EQ(std::string(micro_vm_state_name_vi(session_game->state())), std::string("đã bị tiêu huỷ"));
+  CHECK_EQ(supervisor.active_count(), size_t(1));
+
+  // 4. Mọi yêu cầu guest kế tiếp gửi tới phiên đã huỷ lập tức bị từ chối trước khi thực thi
+  const Decision d_after = supervisor.dispatch_guest_request("vm-game-42", {"net.connect", "game.yui.vn:443"}, now + 12, &game_token);
+  CHECK(!d_after.allowed);
+  CHECK(d_after.reason.find("đã bị tiêu huỷ (Destroyed)") != std::string::npos);
+
+  // 5. Thao tác huỷ phải là idempotent (gọi lại không sinh lỗi hay double-free)
+  CHECK(supervisor.destroy_session("vm-game-42", "destroy again", now + 13));
+  CHECK_EQ(session_game->state(), MicroVmState::Destroyed);
+
+  // Một phiên đã huỷ không thể chuyển ngược về Quarantined
+  CHECK(!session_game->freeze("try un-destroy", now + 14, &enforcer));
+
+  // 6. Tính khoanh vùng: Phiên vm-calc-99 hoàn toàn không bị ảnh hưởng!
+  CHECK_EQ(session_calc->state(), MicroVmState::Running);
+  CHECK(supervisor.find_session("vm-calc-99") != nullptr);
+
+  // 7. Thao tác freeze thủ công trên session còn lại
+  CHECK(supervisor.freeze_session("vm-calc-99", "admin freeze", now + 15));
+  CHECK_EQ(session_calc->state(), MicroVmState::Quarantined);
+  CHECK_EQ(supervisor.active_count(), size_t(0));
+
+  // Khi đang bị Quarantined, yêu cầu guest cũng bị từ chối ngay lập tức
+  const Decision d_calc = supervisor.dispatch_guest_request("vm-calc-99", {"gpu", ""}, now + 16, nullptr);
+  CHECK(!d_calc.allowed);
+  CHECK(d_calc.reason.find("đang bị đóng băng/cách ly (Quarantined)") != std::string::npos);
+
+  // 8. Kiểm tra nhật ký kiểm toán (audit log) ghi đủ các chuyển trạng thái
+  size_t freeze_audits = 0;
+  size_t destroy_audits = 0;
+  for (const auto& a : enforcer.audit()) {
+    if (a.action.kind == "vm.freeze") ++freeze_audits;
+    if (a.action.kind == "vm.destroy") ++destroy_audits;
+  }
+  CHECK(freeze_audits >= 2);
+  CHECK(destroy_audits >= 1);
+}
+
+// ----------------------------- Layer 3: Egress Zero-Trust & Broker (P3.10) --
+
+YUI_TEST(sandbox, layer3_egress_zero_trust_anti_dns_tunneling_and_secretless_broker) {
+  Enforcer enforcer;
+  const std::string master_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  Authority auth(master_key);
+  SecretlessBroker broker(&enforcer, &auth);
+
+  const int64_t now = 1700000000;
+
+  // 1. Kiểm tra chính sách và EgressFilter: mặc định deny east-west & DNS direct (port 53)
+  Policy p;
+  p.app_id = "app:weather-service";
+  p.tier = Tier::MicroVm;
+  p.version = 1;
+  p.allow_east_west = false;
+  p.allow_direct_dns = false;
+  p.scopes = {"api.weather.yui.vn:443", "*.trusted-source.vn:443"};
+
+  EgressFilter filter;
+  filter.add_from_policy(p);
+
+  // (a) Giao tiếp ngang (East-West) bị chặn
+  EgressRequest r_ew;
+  r_ew.domain = "api.weather.yui.vn";
+  r_ew.port = 443;
+  r_ew.is_east_west = true;
+  const EgressDecision d_ew = filter.check(r_ew);
+  CHECK(!d_ew.allowed);
+  CHECK(d_ew.reason_vi.find("chặn kết nối ngang (east-west)") != std::string::npos);
+
+  // (b) DNS trực tiếp cổng 53 bị cấm (chỉ resolver nội bộ)
+  EgressRequest r_dns53;
+  r_dns53.ip = "8.8.8.8";
+  r_dns53.port = 53;
+  const EgressDecision d_dns53 = filter.check(r_dns53);
+  CHECK(!d_dns53.allowed);
+  CHECK(d_dns53.reason_vi.find("chặn DNS trực tiếp (cổng 53)") != std::string::npos);
+
+  // 2. Chống DNS-tunneling & chuẩn RFC 1035
+  // (a) Tên miền vượt quá 253 octet
+  std::string huge_domain;
+  for (int i = 0; i < 26; ++i) huge_domain += "abcdefghij.";
+  huge_domain += "com";  // > 260 chars
+  std::string err_huge;
+  CHECK(!EgressFilter::validate_dns_name(huge_domain, &err_huge));
+  CHECK(err_huge.find("vượt quá giới hạn 253 octet") != std::string::npos);
+
+  // (b) Nhãn DNS vượt quá 63 octet
+  std::string long_label = std::string(64, 'a') + ".yui.vn";
+  std::string err_label;
+  CHECK(!EgressFilter::validate_dns_name(long_label, &err_label));
+  CHECK(err_label.find("vượt quá 63 octet") != std::string::npos);
+
+  // (c) Nhãn DNS bắt đầu/kết thúc bằng dấu gạch nối hoặc ký tự lạ
+  std::string err_hyphen;
+  CHECK(!EgressFilter::validate_dns_name("-badlabel.yui.vn", &err_hyphen));
+  CHECK(err_hyphen.find("bắt đầu hoặc kết thúc bằng gạch nối") != std::string::npos);
+
+  // (d) Phát hiện payload DNS tunneling qua entropy cao (H > 4.2 bit/ký tự)
+  // Payload điển hình từ dnscat2 / iodine mã hoá base36 ngẫu nhiên
+  const std::string high_entropy_tunnel = "3k9m1z8b5f7p4w2q6j0v.attacker-tunnel.com";
+  std::string err_tunnel;
+  CHECK(!EgressFilter::validate_dns_name(high_entropy_tunnel, &err_tunnel));
+  CHECK(err_tunnel.find("entropy nhãn") != std::string::npos);
+  CHECK(err_tunnel.find("phát hiện nghi vấn DNS tunneling") != std::string::npos);
+
+  // (e) Tên miền chuẩn tự nhiên (tiếng Việt/Anh) có entropy an toàn
+  std::string err_valid;
+  CHECK(EgressFilter::validate_dns_name("api.weather.yui.vn", &err_valid));
+  CHECK(err_valid.empty());
+  CHECK(EgressFilter::validate_dns_name("tin-tuc.trusted-source.vn", &err_valid));
+
+  // 3. Secretless Broker: giữ bí mật ngoài biên guest
+  // Broker lưu thông tin xác thực bí mật của nhà cung cấp dịch vụ thời tiết
+  const std::string weather_broker_credential = "sample-cred-987654321-xyz";
+  broker.register_service_secret("svc:weather", weather_broker_credential);
+  CHECK(broker.has_service_secret("svc:weather"));
+
+  // Guest token được cấp quyền net.connect
+  Token valid_guest_token = auth.issue("app:weather-service", kRightNetConnect, {"api.weather.yui.vn:443"}, now, 3600);
+
+  // Gửi request hợp lệ qua broker
+  BrokeredRequest req_ok;
+  req_ok.service_id = "svc:weather";
+  req_ok.target_host = "api.weather.yui.vn";
+  req_ok.target_port = 443;
+  req_ok.path = "/v1/hanoi";
+  req_ok.payload = "{\"city\": \"Hanoi\"}";
+
+  const BrokeredResponse resp_ok = broker.forward_request("app:weather-service", &valid_guest_token, filter, req_ok, now + 1);
+  CHECK(resp_ok.success);
+  CHECK(resp_ok.secret_attached);  // Broker đã gắn bí mật ở ngoài biên
+  // Khẳng định: response data trả về cho guest TUYỆT ĐỐI KHÔNG chứa secret!
+  CHECK(resp_ok.data.find(weather_broker_credential) == std::string::npos);
+
+  // Kiểm tra nhật ký kiểm toán: Ghi nhận broker gắn xác thực nhưng KHÔNG ĐƯỢC làm lộ chuỗi secret!
+  bool audit_found = false;
+  for (const auto& a : enforcer.audit()) {
+    if (a.action.kind == "broker.forward") {
+      audit_found = true;
+      CHECK(a.decision.reason.find("[SECRETLESS_BROKER_ATTACHED]") != std::string::npos);
+      // Chuỗi bí mật thô tuyệt đối không được xuất hiện trong audit reason
+      CHECK(a.decision.reason.find(weather_broker_credential) == std::string::npos);
+    }
+  }
+  CHECK(audit_found);
+
+  // 4. Guest gửi request tới domain không có trong egress allowlist
+  BrokeredRequest req_untrusted;
+  req_untrusted.service_id = "svc:weather";
+  req_untrusted.target_host = "evil-exfiltration-hub.com";
+  req_untrusted.target_port = 443;
+  const BrokeredResponse resp_blocked = broker.forward_request("app:weather-service", &valid_guest_token, filter, req_untrusted, now + 2);
+  CHECK(!resp_blocked.success);
+  CHECK(resp_blocked.error_vi.find("ngoài phạm vi cho phép của chính sách") != std::string::npos);
+
+  // 5. Guest không có thẻ năng lực hợp lệ bị broker từ chối ngay lập tức
+  Token no_net_token = auth.issue("app:weather-service", kRightFsRead, {}, now, 3600);
+  const BrokeredResponse resp_no_perm = broker.forward_request("app:weather-service", &no_net_token, filter, req_ok, now + 3);
+  CHECK(!resp_no_perm.success);
+  CHECK(resp_no_perm.error_vi.find("thiếu quyền net.connect") != std::string::npos);
+}
+
+YUI_TEST(sandbox, trusted_confirmation_anti_clickjacking_p4_13) {
+  // P4.13: Kiểm tra đường xác nhận tin cậy chống clickjacking
+  Enforcer enforcer;
+  TrustedConfirmationHost host(&enforcer);
+
+  // Tạo hộp thoại yêu cầu xác nhận hành vi nhạy cảm
+  std::string dlg_id = host.show_dialog(
+      "app:photo-editor",
+      "Yêu cầu quyền truy cập tệp nhạy cảm",
+      "Ứng dụng muốn đọc khóa SSH. Bạn có đồng ý?",
+      10000);
+
+  CHECK(!dlg_id.empty());
+  CHECK(host.is_active(dlg_id));
+  CHECK(!host.is_confirmed(dlg_id));
+  CHECK(!host.is_cancelled(dlg_id));
+
+  // Tấn công 1: Click bằng sự kiện tổng hợp (SyntheticApp / synthetic script)
+  TaggedInputEvent synth_event;
+  synth_event.source = InputSourceKind::SyntheticApp;
+  synth_event.hardware_device_id = 0;
+  synth_event.x = 150;
+  synth_event.y = 210;
+  synth_event.is_button_down = true;
+
+  bool delivered = host.handle_input(dlg_id, synth_event, 11000);
+  CHECK(!delivered);  // Bị chặn vì là SyntheticApp!
+  CHECK(host.is_active(dlg_id));  // Hộp thoại vẫn chưa bị click lừa
+  CHECK_EQ(host.synthetic_attacks_blocked(), size_t(1));
+
+  // Tấn công 2: Click phần cứng thật nhưng quá sớm (chưa đủ 500ms cooldown)
+  TaggedInputEvent early_event;
+  early_event.source = InputSourceKind::PhysicalHardware;
+  early_event.hardware_device_id = 1;
+  early_event.x = 150;
+  early_event.y = 210;
+  early_event.is_button_down = true;
+
+  CHECK(!host.handle_input(dlg_id, early_event, 10200));  // 200ms < 500ms
+  CHECK(host.is_active(dlg_id));
+
+  // Tấn công 3: Click phần cứng thật sau cooldown nhưng toạ độ nằm ngoài nút
+  TaggedInputEvent misaligned_event;
+  misaligned_event.source = InputSourceKind::PhysicalHardware;
+  misaligned_event.hardware_device_id = 1;
+  misaligned_event.x = 50;
+  misaligned_event.y = 50;
+  misaligned_event.is_button_down = true;
+
+  CHECK(!host.handle_input(dlg_id, misaligned_event, 11000));
+  CHECK(host.is_active(dlg_id));
+
+  // Thao tác hợp lệ: Phần cứng thật bấm nút Huỷ (Cancel: 240..360, 200..240)
+  TaggedInputEvent valid_cancel;
+  valid_cancel.source = InputSourceKind::PhysicalHardware;
+  valid_cancel.hardware_device_id = 1;
+  valid_cancel.x = 280;
+  valid_cancel.y = 220;
+  valid_cancel.is_button_down = true;
+
+  CHECK(host.handle_input(dlg_id, valid_cancel, 11000));
+  CHECK(!host.is_active(dlg_id));
+  CHECK(host.is_cancelled(dlg_id));
+  CHECK(!host.is_confirmed(dlg_id));
+
+  // Kiểm tra nhật ký kiểm toán enforcer: Có ghi nhận nỗ lực giả click bị chặn
+  bool audit_clickjack = false;
+  for (const auto& a : enforcer.audit()) {
+    if (a.action.kind == "security.synthetic_click" && !a.decision.allowed) {
+      audit_clickjack = true;
+      CHECK(a.decision.reason.find("chống clickjacking") != std::string::npos);
+    }
+  }
+  CHECK(audit_clickjack);
+
+  // Tạo hộp thoại thứ 2 và bấm nút Xác nhận thật (Confirm: 100..220, 200..240)
+  std::string dlg2_id = host.show_dialog("app:photo-editor", "Yêu cầu", "Đọc ảnh", 20000);
+  TaggedInputEvent valid_confirm;
+  valid_confirm.source = InputSourceKind::PhysicalHardware;
+  valid_confirm.hardware_device_id = 1;
+  valid_confirm.x = 150;
+  valid_confirm.y = 220;
+  valid_confirm.is_button_down = true;
+
+  CHECK(host.handle_input(dlg2_id, valid_confirm, 21000));
+  CHECK(!host.is_active(dlg2_id));
+  CHECK(host.is_confirmed(dlg2_id));
+  CHECK(!host.is_cancelled(dlg2_id));
+}
+
+YUI_TEST(sandbox, compatibility_mode_dns_sinkhole_and_session_cap_p3_16) {
+  // P3.16: Chế độ tương thích + DNS Sinkhole + Session Capability Grant & Revocation
+  // 1. Kiểm thử DNS Sinkhole
+  Policy pol;
+  pol.scopes = {"api.weather.yui.vn:443", "repo.os.vn:443"};
+  EgressFilter filter;
+  filter.add_from_policy(pol);
+
+  auto res_allowed = DnsSinkhole::resolve_or_sinkhole("api.weather.yui.vn", filter, 1000);
+  CHECK(!res_allowed.sinkholed);
+  CHECK_EQ(res_allowed.rcode, 0);
+  CHECK(!res_allowed.ip.empty());
+  CHECK(res_allowed.latency_ms < 100.0);
+
+  auto res_blocked = DnsSinkhole::resolve_or_sinkhole("adserver.telemetry-tracker.com", filter, 1000);
+  CHECK(res_blocked.sinkholed);
+  CHECK_EQ(res_blocked.rcode, 3);
+  CHECK_EQ(res_blocked.ip, "0.0.0.0");
+  CHECK(res_blocked.latency_ms < 100.0);
+
+  // 2. Chế độ tương thích theo ứng dụng (CompatibilityManager)
+  Enforcer enf;
+  Authority auth("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
+  TrustedConfirmationHost host(&enf);
+  CompatibilityManager mgr(&enf, &auth, &host);
+
+  // Mặc định TẮT cho toàn bộ ứng dụng
+  CHECK(!mgr.is_app_compatibility_enabled("app:demo"));
+  CHECK(!mgr.is_app_compatibility_enabled("app:other"));
+
+  // Bật riêng cho app:demo
+  mgr.set_app_compatibility("app:demo", true);
+  CHECK(mgr.is_app_compatibility_enabled("app:demo"));
+  CHECK(!mgr.is_app_compatibility_enabled("app:other"));  // Ứng dụng khác không bị ảnh hưởng
+
+  // Cơ chế chống làm phiền (anti-nuisance throttling):
+  // Lần 1 và 2 bị chặn trong cửa sổ 10s -> Chưa đủ ngưỡng 3 lần, không hỏi người dùng
+  CHECK(!mgr.on_blocked_request("app:demo", "net.connect", "telemetry.vendor.com", 1000));
+  CHECK(!mgr.on_blocked_request("app:demo", "net.connect", "telemetry.vendor.com", 1002));
+
+  // Lần 3 bị chặn tại t=1005 (3 lần trong 10s) -> Đủ điều kiện kích hoạt prompt
+  CHECK(mgr.on_blocked_request("app:demo", "net.connect", "telemetry.vendor.com", 1005));
+  CHECK_EQ(mgr.prompt_count(), size_t(1));
+
+  // Lần 4 tại t=1008 -> Bị bóp (throttle: tối đa 1 prompt / 5 phút = 300s)
+  CHECK(!mgr.on_blocked_request("app:demo", "net.connect", "telemetry.vendor.com", 1008));
+
+  // Thử nghiệm cơ chế yên lặng vĩnh viễn (permanent quiet) sau 3 lần từ chối
+  mgr.record_denial("app:demo", 1100);
+  mgr.record_denial("app:demo", 1101);
+  mgr.record_denial("app:demo", 1102);
+  CHECK(mgr.is_permanently_quiet("app:demo"));
+
+  // Khi đã vào trạng thái yên lặng vĩnh viễn, kể cả bị chặn liên tiếp nhiều lần cũng KHÔNG BAO GIỜ hỏi lại
+  int64_t future_time = 2000;
+  mgr.on_blocked_request("app:demo", "net.connect", "telemetry.vendor.com", future_time);
+  mgr.on_blocked_request("app:demo", "net.connect", "telemetry.vendor.com", future_time + 1);
+  mgr.on_blocked_request("app:demo", "net.connect", "telemetry.vendor.com", future_time + 2);
+  CHECK(!mgr.on_blocked_request("app:demo", "net.connect", "telemetry.vendor.com", future_time + 3));
+
+  // 3. Thẻ phiên (Session Capability) và thu hồi O(1)
+  int64_t now_s = 5000;
+  mgr.set_app_compatibility("app:office", true);
+  TemporaryGrant grant = mgr.grant_session_capability("app:office", "fs.read", "/var/documents/report.pdf", 3600, now_s);
+  CHECK_EQ(grant.app_id, "app:office");
+  CHECK_EQ(grant.expires_at, now_s + 3600);
+  CHECK_EQ(mgr.grant_count(), size_t(1));
+
+  // Thẻ cấp ra có hiệu lực
+  std::string verify_err;
+  CHECK(auth.verify(grant.token, now_s + 60, &verify_err));
+
+  // Thu hồi tức thì O(1) khi phiên kết thúc hoặc người dùng bấm thu hồi
+  mgr.revoke_app("app:office", now_s + 120);
+
+  // Kiểm tra xác thực thẻ sau thu hồi: Phải bị từ chối
+  CHECK(!auth.verify(grant.token, now_s + 130, &verify_err));
+  CHECK(verify_err.find("đã bị thu hồi") != std::string::npos);
+}
+
 YUI_TEST_MAIN("test_sandbox")

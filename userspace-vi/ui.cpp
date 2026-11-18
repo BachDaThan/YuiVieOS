@@ -7,6 +7,7 @@ namespace yui::ui {
 
 const char* path_name(RenderPath p) {
   switch (p) {
+    case RenderPath::HeadlessTui: return "headless-tui";
     case RenderPath::FramebufferDirect: return "framebuffer-direct";
     case RenderPath::GpuZeroCopy: return "vulkan-drm-zero-copy";
   }
@@ -15,6 +16,18 @@ const char* path_name(RenderPath p) {
 
 Layout plan(const DisplayInfo& display, const HardwareForUi& hw) {
   Layout l;
+  if (hw.headless || (hw.ram_gb > 0 && hw.ram_gb < 1.5)) {
+    l.path = RenderPath::HeadlessTui;
+    l.compositor_enabled = false;
+    l.scale_px = 1;
+    l.cell_width_px = 8;
+    l.cell_height_px = 16;
+    l.columns = 80;
+    l.rows = 24;
+    l.reason = "RAM dưới 1,5 GB (máy siêu yếu): chế độ Headless/TUI, tắt compositor.";
+    return l;
+  }
+  l.compositor_enabled = true;
   const int dpi = std::max(72, display.dpi);
   // Integer scaling only: fractional scaling is what makes weak GPUs sweat.
   l.scale_px = dpi >= 192 ? 3 : (dpi >= 144 ? 2 : 1);

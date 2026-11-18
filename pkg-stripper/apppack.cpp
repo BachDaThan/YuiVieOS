@@ -13,6 +13,7 @@
 
 #include "yui/codec.hpp"
 #include "yui/crypto.hpp"
+#include "yui/sandbox.hpp"
 #include "yui/text.hpp"
 
 namespace yui::apppack {
@@ -430,6 +431,318 @@ bool unpack_to(const Bytes& packed, const std::string& dest, std::string* error)
     return false;
   }
   return extract(entries, dest, error);
+}
+
+// --------------------------------- Proposed Policy Generator (P3.15) --
+const char* proposed_scope_source_name(ProposedScopeSource s) {
+  switch (s) {
+    case ProposedScopeSource::Manifest: return "manifest";
+    case ProposedScopeSource::ScannedString: return "scanned_string";
+    case ProposedScopeSource::SandboxTrial: return "sandbox_trial";
+  }
+  return "unknown";
+}
+
+const char* proposed_scope_source_name_vi(ProposedScopeSource s) {
+  switch (s) {
+    case ProposedScopeSource::Manifest: return "khai báo trong manifest";
+    case ProposedScopeSource::ScannedString: return "quét từ chuỗi tĩnh trong bộ cài";
+    case ProposedScopeSource::SandboxTrial: return "ghi nhận khi chạy thử trong hộp cát";
+  }
+  return "không rõ";
+}
+
+json::Value ProposedPolicy::to_json() const {
+  json::Value v(json::Object{});
+  v.set("version", version);
+  v.set("app", app_id);
+  v.set("tier", tier);
+  v.set("enabled", enabled);
+  v.set("comment_vi", "Tệp gợi ý chính sách hộp cát — không bao giờ tự bật, người dùng duyệt từng đích");
+
+  json::Value caps(json::Array{});
+  for (const auto& c : capabilities) caps.push(c);
+  v.set("capabilities", caps);
+
+  json::Value tgts(json::Array{});
+  for (const auto& t : targets) {
+    json::Value item(json::Object{});
+    item.set("target", t.target);
+    item.set("source", proposed_scope_source_name(t.source));
+    item.set("confidence", t.confidence);
+    item.set("reason_vi", t.reason_vi);
+    tgts.push(item);
+  }
+  v.set("proposed_targets", tgts);
+
+  json::Value scopes_v(json::Array{});
+  for (const auto& t : targets) scopes_v.push(t.target);
+  v.set("scopes", scopes_v);
+
+  json::Value d_arr(json::Array{});
+  for (const auto& d : deny) d_arr.push(d);
+  v.set("deny", d_arr);
+  return v;
+}
+
+std::string ProposedPolicy::to_json_string(bool pretty) const {
+  return to_json().dump(pretty);
+}
+
+ProposedPolicy ProposedPolicy::from_json(const json::Value& v, std::string* error) {
+  ProposedPolicy p;
+  if (!v.is_object()) {
+    if (error) *error = "JSON không phải đối tượng";
+    return p;
+  }
+  p.version = static_cast<int>(v["version"].as_int(1));
+  p.app_id = v["app"].as_string();
+  p.tier = v["tier"].as_string("microvm");
+  p.enabled = v["enabled"].as_bool(false);
+
+  for (const auto& c : v["capabilities"].arr()) {
+    p.capabilities.push_back(c.as_string());
+  }
+
+  for (const auto& item : v["proposed_targets"].arr()) {
+    ProposedTarget t;
+    t.target = item["target"].as_string();
+    std::string src = item["source"].as_string();
+    if (src == "manifest") t.source = ProposedScopeSource::Manifest;
+    else if (src == "sandbox_trial") t.source = ProposedScopeSource::SandboxTrial;
+    else t.source = ProposedScopeSource::ScannedString;
+    t.confidence = item["confidence"].as_string("low");
+    t.reason_vi = item["reason_vi"].as_string();
+    p.targets.push_back(t);
+  }
+
+  // Nếu không có proposed_targets nhưng có scopes
+  if (p.targets.empty()) {
+    for (const auto& s : v["scopes"].arr()) {
+      ProposedTarget t;
+      t.target = s.as_string();
+      t.source = ProposedScopeSource::Manifest;
+      t.confidence = "high";
+      t.reason_vi = "Khai báo trong scopes";
+      p.targets.push_back(t);
+    }
+  }
+
+  for (const auto& d : v["deny"].arr()) {
+    p.deny.push_back(d.as_string());
+  }
+  return p;
+}
+
+sandbox::Policy ProposedPolicy::to_sandbox_policy(bool approve_all,
+                                                  const std::vector<std::string>& approved_targets) const {
+  sandbox::Policy sp;
+  sp.version = version;
+  sp.app_id = app_id;
+  sandbox::tier_from(tier, sp.tier);
+  sp.granted = sandbox::kRightNone;
+
+  for (const auto& c : capabilities) {
+    if (c == "*") {
+      sp.granted = ~0ull;
+    } else {
+      sp.granted |= sandbox::rights_from_string(c);
+    }
+  }
+
+  for (const auto& t : targets) {
+    bool approved = approve_all;
+    if (!approved) {
+      for (const auto& at : approved_targets) {
+        if (at == t.target) {
+          approved = true;
+          break;
+        }
+      }
+    }
+    if (approved) {
+      sp.scopes.push_back(t.target);
+      if (t.target.find('/') == std::string::npos) {
+        sp.granted |= sandbox::kRightNetConnect;
+      } else {
+        sp.granted |= sandbox::kRightFsRead;
+      }
+    }
+  }
+
+  sp.deny = deny;
+  return sp;
+}
+
+std::vector<std::string> extract_domains_from_data(const Bytes& data) {
+  std::vector<std::string> results;
+  if (data.empty()) return results;
+
+  std::string cur;
+  auto is_domain_char = [](char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '.' || c == '-' || c == ':';
+  };
+
+  std::vector<std::string> candidates;
+  for (size_t i = 0; i < data.size(); ++i) {
+    char c = static_cast<char>(data[i]);
+    if (is_domain_char(c)) {
+      cur += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    } else {
+      if (cur.size() >= 4 && cur.size() <= 80 && cur.find('.') != std::string::npos) {
+        candidates.push_back(cur);
+      }
+      cur.clear();
+    }
+  }
+  if (cur.size() >= 4 && cur.size() <= 80 && cur.find('.') != std::string::npos) {
+    candidates.push_back(cur);
+  }
+
+  // Lọc các đuôi tệp phổ biến
+  static const char* kIgnoredExts[] = {
+      ".cpp", ".hpp", ".c", ".h", ".txt", ".json", ".xml", ".png", ".jpg", ".jpeg",
+      ".gif", ".so", ".a", ".o", ".md", ".dat", ".bin", ".py", ".rs", ".sh", ".html", ".css", ".js"
+  };
+
+  for (const auto& cand : candidates) {
+    // Phải có ít nhất một dấu chấm
+    size_t dot = cand.find('.');
+    if (dot == std::string::npos || dot == 0 || dot == cand.size() - 1) continue;
+
+    bool skip = false;
+    for (const char* ext : kIgnoredExts) {
+      if (cand.size() >= std::strlen(ext) &&
+          cand.compare(cand.size() - std::strlen(ext), std::strlen(ext), ext) == 0) {
+        skip = true;
+        break;
+      }
+    }
+    if (skip) continue;
+
+    // Tách port nếu có
+    std::string domain_only = cand;
+    size_t col = cand.rfind(':');
+    if (col != std::string::npos && col + 1 < cand.size()) {
+      domain_only = cand.substr(0, col);
+    }
+
+    if (sandbox::EgressFilter::validate_dns_name(domain_only)) {
+      if (std::find(results.begin(), results.end(), domain_only) == results.end()) {
+        results.push_back(domain_only);
+      }
+    }
+  }
+  return results;
+}
+
+ProposedPolicy generate_proposed_policy(
+    const std::string& app_id,
+    const std::string& manifest_json,
+    const std::vector<Entry>& entries,
+    const std::vector<std::string>& sandbox_trial_blocked_domains,
+    const std::vector<std::string>& initial_deny) {
+  ProposedPolicy prop;
+  prop.version = 1;
+  prop.app_id = app_id;
+  prop.tier = "microvm";
+  prop.enabled = false;
+  prop.capabilities = {"net.connect", "fs.read"};
+
+  // (a) Đích khai báo trong manifest
+  if (!manifest_json.empty()) {
+    const auto v = json::parse(manifest_json);
+    if (v.ok && v.value.is_object()) {
+      auto add_target = [&](const std::string& s, const std::string& reason) {
+        if (s.empty()) return;
+        for (const auto& ex : prop.targets) {
+          if (ex.target == s) return;
+        }
+        ProposedTarget t;
+        t.target = s;
+        t.source = ProposedScopeSource::Manifest;
+        t.confidence = "high";
+        t.reason_vi = reason;
+        prop.targets.push_back(t);
+      };
+
+      for (const auto& s : v.value["scopes"].arr()) {
+        add_target(s.as_string(), "Đích khai báo trong scopes của manifest");
+      }
+      for (const auto& s : v.value["net_allow"].arr()) {
+        add_target(s.as_string(), "Đích khai báo trong net_allow của manifest");
+      }
+      for (const auto& s : v.value["fs_allow"].arr()) {
+        add_target(s.as_string(), "Đích khai báo trong fs_allow của manifest");
+      }
+      for (const auto& c : v.value["capabilities"].arr()) {
+        std::string cap = c.as_string();
+        if (cap.rfind("net:", 0) == 0) {
+          add_target(cap.substr(4), "Khai báo trong capabilities (net:*)");
+        } else if (cap.rfind("fs:", 0) == 0) {
+          add_target(cap.substr(3), "Khai báo trong capabilities (fs:*)");
+        }
+      }
+    }
+  }
+
+  // (b) Tên miền quét từ chuỗi tĩnh trong bộ cài
+  for (const auto& e : entries) {
+    if (e.kind == 'd') continue;  // Bỏ qua liên kết dedupe
+    auto scanned = extract_domains_from_data(e.data);
+    for (const auto& domain : scanned) {
+      bool exists = false;
+      for (const auto& existing : prop.targets) {
+        if (existing.target == domain) {
+          exists = true;
+          break;
+        }
+      }
+      if (!exists) {
+        ProposedTarget t;
+        t.target = domain;
+        t.source = ProposedScopeSource::ScannedString;
+        t.confidence = "low";
+        t.reason_vi = "Tên miền quét từ chuỗi trong tệp " + e.path;
+        prop.targets.push_back(t);
+      }
+    }
+  }
+
+  // (c) Đích ghi nhận khi chạy thử trong hộp cát (chặn và ghi)
+  for (const auto& raw_domain : sandbox_trial_blocked_domains) {
+    std::string domain = raw_domain;
+    if (domain.rfind("dns:", 0) == 0) domain = domain.substr(4);
+    else if (domain.rfind("net:", 0) == 0) domain = domain.substr(4);
+
+    bool exists = false;
+    for (auto& existing : prop.targets) {
+      if (existing.target == domain) {
+        exists = true;
+        break;
+      }
+    }
+    if (!exists) {
+      ProposedTarget t;
+      t.target = domain;
+      t.source = ProposedScopeSource::SandboxTrial;
+      t.confidence = "observed";
+      t.reason_vi = "Đích ghi nhận khi chạy thử trong hộp cát (chặn và ghi)";
+      prop.targets.push_back(t);
+    }
+  }
+
+  // Cấu hình deny mặc định: deny luôn thắng allow
+  std::vector<std::string> default_deny = {"/home/user/.ssh", "/etc/shadow", "/home/user/.gnupg"};
+  for (const auto& d : default_deny) prop.deny.push_back(d);
+  for (const auto& d : initial_deny) {
+    if (std::find(prop.deny.begin(), prop.deny.end(), d) == prop.deny.end()) {
+      prop.deny.push_back(d);
+    }
+  }
+
+  return prop;
 }
 
 }  // namespace yui::apppack

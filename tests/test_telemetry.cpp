@@ -125,7 +125,7 @@ YUI_TEST(telemetry, strong_machine_on_battery_is_slower) {
 }
 
 YUI_TEST(telemetry, advice_bounds_are_inside_the_documented_ranges) {
-  const char* classes[] = {"may-yeu", "can-bang", "may-manh", ""};
+  const char* classes[] = {"sieu-yeu", "may-yeu", "can-bang", "may-manh", ""};
   const bool charging[] = {false, true};
   const int batteries[] = {-1, 5, 50, 100};
   const double temps[] = {-1.0, 20.0, 74.9, 76.0};
@@ -228,8 +228,8 @@ YUI_TEST(telemetry, live_read_is_plausible) {
   CHECK(r.battery_percent >= -1 && r.battery_percent <= 100);
   CHECK(r.threads >= 1);
   CHECK(!r.machine_class.empty());
-  CHECK(r.machine_class == "may-yeu" || r.machine_class == "can-bang" ||
-        r.machine_class == "may-manh");
+  CHECK(r.machine_class == "sieu-yeu" || r.machine_class == "may-yeu" ||
+        r.machine_class == "can-bang" || r.machine_class == "may-manh");
   if (!r.battery_present) CHECK_EQ(r.battery_percent, -1);
   if (r.cpu_c > 0) CHECK(r.cpu_c < 200.0);
   if (r.gpu_c > 0) CHECK(r.gpu_c < 200.0);

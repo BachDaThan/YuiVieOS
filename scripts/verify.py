@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
@@ -68,6 +69,7 @@ REQUIRED_FILES = [
     "include/yui/fsstore.hpp", "include/yui/linuxabi.hpp",
     "docs/ARCHITECTURE.md", "docs/PLAN.md", "docs/PROTOCOL.md",
     "docs/SECURITY.md", "docs/FORMAT-YUIP.md", "docs/BUILD.md",
+    "docs/THIRD-PARTY.md", "docs/HARDENING-P3.md",
     "tests/test_capi.c", "tests/test_ed25519.cpp", "tests/test_redteam.cpp",
     "include/yui/ime.hpp", "userspace-vi/ibus/engine.cpp",
     "userspace-vi/ibus/main.cpp", "userspace-vi/ibus/org.freedesktop.IBus.Yui.xml.in",
@@ -432,6 +434,31 @@ def check_kernel_dependencies() -> None:
             ok(f"{rel}: chỉ phụ thuộc yui-cap nội bộ")
 
 
+def check_third_party() -> None:
+    """Kiểm tra tài liệu giấy phép thành phần ngoài và rà soát vendor (P7.2)."""
+    header("thành phần bên thứ ba & rà soát giấy phép (P7.2)")
+    third_party_doc = ROOT / "docs/THIRD-PARTY.md"
+    if not third_party_doc.is_file():
+        bad("docs/THIRD-PARTY.md không tồn tại")
+        return
+
+    content = third_party_doc.read_text(encoding="utf-8")
+    required_components = [
+        "Wine", "VKD3D-Proton", "DXVK", "Waydroid", "Box64", "FEX-Emu", "MangoHud"
+    ]
+    missing = [c for c in required_components if c not in content]
+    if missing:
+        bad(f"docs/THIRD-PARTY.md thiếu mục cho các thành phần: {missing}")
+    else:
+        ok("docs/THIRD-PARTY.md bao phủ đủ 7 thành phần ngoài dự kiến")
+
+    vendor_dir = ROOT / "vendor"
+    if vendor_dir.exists():
+        bad("phát hiện thư mục 'vendor/' — mã nguồn ngoài chưa được phê duyệt")
+    else:
+        ok("không có thư mục 'vendor/' trái phép trong repo")
+
+
 # --------------------------------------------------------------------------- 4
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 
@@ -508,6 +535,20 @@ def check_line_endings() -> None:
         ok("không có CRLF")
 
 
+def check_secrets() -> None:
+    """Quét bí mật rò rỉ trong cây làm việc (P7.3)."""
+    header("quét bí mật trong cây làm việc (P7.3)")
+    scan_script = ROOT / "scripts/scan_secrets.py"
+    if not scan_script.is_file():
+        bad("scripts/scan_secrets.py không tồn tại")
+        return
+    res = subprocess.run([sys.executable, str(scan_script)], cwd=str(ROOT), capture_output=True, text=True)
+    if res.returncode != 0:
+        bad(f"phát hiện bí mật tiềm ẩn:\n{res.stdout.strip()}")
+    else:
+        ok("quét bí mật sạch (0 bí mật/khoá/token lộ)")
+
+
 def main() -> int:
     if not (ROOT / "docs/PLAN.md").exists():
         print("verify.py: chạy từ trong repo YuiVieOS Beta")
@@ -518,6 +559,8 @@ def main() -> int:
     check_rust()
     check_frame()
     check_kernel_dependencies()
+    check_third_party()
+    check_secrets()
     check_links()
     check_doc_paths()
     check_line_endings()

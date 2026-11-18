@@ -5,6 +5,7 @@
 #include "testutil.hpp"
 #include "yui/engine.hpp"
 #include "yui/graph.hpp"
+#include "yui/profile.hpp"
 #include "yui/vault.hpp"
 
 using namespace yui;
@@ -277,6 +278,47 @@ YUI_TEST(engine, elastic_autotune_profiles) {
   battery.on_battery = true;
   const auto rb = engine::auto_tune(battery);
   CHECK_MSG(rb.window < rs.window, "battery mode must shrink the window");
+}
+
+YUI_TEST(profile, tier_sieu_yeu_and_ram_boundary_checks) {
+  // Test ranh giới: 1.4 / 1.5 / 3.9 / 4.0 GB theo DoD P6.2
+  profile::HostProfile p14;
+  p14.ram_gb = 1.4;
+  p14.threads = 4;
+  CHECK_EQ(profile::classify(p14), std::string("sieu-yeu"));
+
+  profile::HostProfile p15;
+  p15.ram_gb = 1.5;
+  p15.threads = 4;
+  CHECK_EQ(profile::classify(p15), std::string("may-yeu"));
+
+  profile::HostProfile p39;
+  p39.ram_gb = 3.9;
+  p39.threads = 4;
+  CHECK_EQ(profile::classify(p39), std::string("may-yeu"));
+
+  profile::HostProfile p40;
+  p40.ram_gb = 4.0;
+  p40.threads = 4;
+  CHECK_EQ(profile::classify(p40), std::string("can-bang"));
+
+  // Kiểm tra autotune cho tier sieu-yeu (RAM < 1.5 GB): k=1, window=16, zero-AI fallback
+  engine::TuneInput ultra_weak;
+  ultra_weak.ram_gb = 1.4;
+  ultra_weak.cpu_threads = 2;
+  const auto r_uw = engine::auto_tune(ultra_weak);
+  CHECK_EQ(r_uw.profile, std::string("sieu-yeu"));
+  CHECK_EQ(r_uw.k, 1);
+  CHECK_EQ(r_uw.window, 16);
+  CHECK(r_uw.reason.find("Headless/TUI") != std::string::npos);
+  CHECK(r_uw.reason.find("zero-AI fallback") != std::string::npos);
+
+  // Kiểm tra summary_vi cho máy siêu yếu
+  p14.tier = "sieu-yeu";
+  p14.tune = r_uw;
+  const std::string s_vi = profile::summary_vi(p14);
+  CHECK(s_vi.find("siêu yếu") != std::string::npos);
+  CHECK(s_vi.find("Headless/TUI") != std::string::npos);
 }
 
 YUI_TEST_MAIN("test_core")

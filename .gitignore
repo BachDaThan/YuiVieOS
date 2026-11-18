@@ -23,3 +23,6 @@ Cargo.lock.bak
 *.yuib
 *.o
 tmp/
+__pycache__/
+*.pyc
+

@@ -2,6 +2,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -195,6 +196,93 @@ YUI_TEST(apppack, strips_elf_debug_sections_only) {
   CHECK_EQ(junk[0], uint8_t(0x55));
 }
 
+YUI_TEST(apppack, proposed_policy_generation_and_three_sources) {
+  // P3.15: Test domain extraction from binary/string data
+  std::string raw = "Contact https://api.sample.vn:8443/v1 and http://auth.service.com or update.cdn.internal:443";
+  apppack::Bytes raw_bytes(raw.begin(), raw.end());
+  auto extracted = apppack::extract_domains_from_data(raw_bytes);
+  CHECK_EQ(extracted.size(), size_t(3));
+  CHECK(std::find(extracted.begin(), extracted.end(), "api.sample.vn") != extracted.end());
+  CHECK(std::find(extracted.begin(), extracted.end(), "auth.service.com") != extracted.end());
+  CHECK(std::find(extracted.begin(), extracted.end(), "update.cdn.internal") != extracted.end());
+
+  // Manifest with net and fs entries
+  std::string manifest = R"({
+    "net_allow": ["api.vendor.com", "192.168.1.100"],
+    "fs_allow": ["/var/data"]
+  })";
+
+  // Package entries containing strings
+  std::vector<apppack::Entry> entries;
+  apppack::Entry e1;
+  e1.path = "bin/worker";
+  std::string s1 = "Sending telemetry to telemetry.stats.com and auth.service.com";
+  e1.data.assign(s1.begin(), s1.end());
+  entries.push_back(e1);
+
+  // Sandbox trial blocked targets
+  std::vector<std::string> trial_logs = {"dns:crash.report.io", "net:10.0.0.5:8080"};
+
+  auto prop = apppack::generate_proposed_policy("app:test_calc", manifest, entries, trial_logs);
+  CHECK_EQ(prop.app_id, "app:test_calc");
+  CHECK_EQ(prop.enabled, false);  // Mặc định TẮT, không tự bật
+  CHECK(prop.targets.size() >= 5);
+
+  // Verify three sources and confidence levels
+  bool found_manifest = false;
+  bool found_scanned = false;
+  bool found_trial = false;
+
+  for (const auto& t : prop.targets) {
+    if (t.target == "api.vendor.com") {
+      found_manifest = true;
+      CHECK_EQ(int(t.source), int(apppack::ProposedScopeSource::Manifest));
+      CHECK_EQ(t.confidence, "high");
+    }
+    if (t.target == "telemetry.stats.com") {
+      found_scanned = true;
+      CHECK_EQ(int(t.source), int(apppack::ProposedScopeSource::ScannedString));
+      CHECK_EQ(t.confidence, "low");
+    }
+    if (t.target == "crash.report.io") {
+      found_trial = true;
+      CHECK_EQ(int(t.source), int(apppack::ProposedScopeSource::SandboxTrial));
+      CHECK_EQ(t.confidence, "observed");
+    }
+  }
+  CHECK(found_manifest);
+  CHECK(found_scanned);
+  CHECK(found_trial);
+
+  // Serialization round-trip
+  std::string json_str = prop.to_json_string(true);
+  CHECK(json_str.find("app:test_calc") != std::string::npos);
+  CHECK(json_str.find("\"enabled\": false") != std::string::npos);
+  CHECK(json_str.find("crash.report.io") != std::string::npos);
+
+  auto parsed = apppack::ProposedPolicy::from_json(json::parse(json_str).value);
+  CHECK_EQ(parsed.app_id, "app:test_calc");
+  CHECK_EQ(parsed.enabled, false);
+  CHECK_EQ(parsed.targets.size(), prop.targets.size());
+
+  // Conversion to Sandbox Policy: without approval, nothing is allowed
+  auto empty_policy = parsed.to_sandbox_policy(false, {});
+  CHECK_EQ(empty_policy.scopes.size(), size_t(0));
+
+  // With approval of specific targets
+  auto approved_policy = parsed.to_sandbox_policy(false, {"api.vendor.com", "/var/data"});
+  CHECK_EQ(approved_policy.scopes.size(), size_t(2));
+  CHECK(std::find(approved_policy.scopes.begin(), approved_policy.scopes.end(), "api.vendor.com") != approved_policy.scopes.end());
+  CHECK(std::find(approved_policy.scopes.begin(), approved_policy.scopes.end(), "/var/data") != approved_policy.scopes.end());
+
+  // Enforce deny wins: verify Enforcer rejects targets not in approved policy
+  sandbox::Enforcer enf;
+  sandbox::Action allow_act{"net.connect", "api.vendor.com"};
+  sandbox::Action deny_act{"net.connect", "telemetry.stats.com"};
+  CHECK(enf.check(approved_policy, nullptr, allow_act, 0, nullptr).allowed);
+  CHECK(!enf.check(approved_policy, nullptr, deny_act, 0, nullptr).allowed);
+}
+
 YUI_TEST(ui, adaptive_layout) {
   ui::DisplayInfo laptop{1366, 768, 96};
   ui::HardwareForUi weak{2.0, false, false, "sse2"};
@@ -222,6 +310,14 @@ YUI_TEST(ui, adaptive_layout) {
   const	auto l4 = ui::plan({320, 240, 96}, weak);
   CHECK(l4.columns >= 40);
   CHECK(l4.rows >= 10);
+
+  // Máy siêu yếu (RAM < 1.5 GB): tự động chuyển sang Headless/TUI, tắt compositor
+  ui::HardwareForUi ultra_weak{1.4, false, false, "sse2"};
+  const auto l_uw = ui::plan(laptop, ultra_weak);
+  CHECK_EQ(int(l_uw.path), int(ui::RenderPath::HeadlessTui));
+  CHECK_EQ(l_uw.compositor_enabled, false);
+  CHECK_EQ(std::string(ui::path_name(l_uw.path)), std::string("headless-tui"));
+  CHECK(l_uw.reason.find("Headless/TUI") != std::string::npos);
 }
 
 YUI_TEST(shell, bilingual_commands) {
@@ -275,14 +371,14 @@ YUI_TEST(shell, bilingual_commands) {
   CHECK_EQ(sh2.run("   "), std::string(""));
 }
 
-YUI_TEST(shell, catalog_has_25_bilingual_commands) {
+YUI_TEST(shell, catalog_has_26_bilingual_commands) {
   service::Options opts;
   service::Daemon daemon(opts);
   ui::Layout layout;
   shell::Shell sh(daemon, layout);
 
   const auto& cmds = sh.commands();
-  CHECK_EQ(cmds.size(), size_t(25));
+  CHECK_EQ(cmds.size(), size_t(26));
 
   for (const auto& c : cmds) {
     CHECK(!c.name_vi.empty());
@@ -294,7 +390,7 @@ YUI_TEST(shell, catalog_has_25_bilingual_commands) {
   }
 }
 
-YUI_TEST(shell, all_25_commands_run_in_both_languages) {
+YUI_TEST(shell, all_26_commands_run_in_both_languages) {
   service::Options opts;
   opts.state_dir = "/tmp/yui-shell-test";
   opts.vault_password = "mat-khau-thu";
@@ -421,6 +517,15 @@ YUI_TEST(shell, all_25_commands_run_in_both_languages) {
   // 25. thờigian / uptime
   CHECK(sh.run("thờigian").find("Phiên làm việc YuiVieOS") != std::string::npos);
   CHECK(sh.run("uptime").find("Phiên làm việc YuiVieOS") != std::string::npos);
+
+  // 26. tươngthích / compat (P3.16)
+  CHECK(sh.run("tươngthích").find("Chế độ tương thích") != std::string::npos);
+  CHECK(sh.run("compat").find("Compatibility Mode") != std::string::npos);
+  CHECK(sh.run("tươngthích app:sample bật").find("bật") != std::string::npos);
+  CHECK(sh.run("compat app:sample on").find("bật") != std::string::npos);
+  CHECK(sh.run("tươngthích app:sample").find("ĐANG BẬT") != std::string::npos);
+  CHECK(sh.run("compat app:sample off").find("tắt") != std::string::npos);
+  CHECK(sh.run("tuongthich app:sample").find("TẮT") != std::string::npos);
 
   // Unaccented Vietnamese aliases
   CHECK(sh.run("thongtin").find("yuid") != std::string::npos);

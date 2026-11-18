@@ -84,6 +84,7 @@ int yui_graph_bfs(yui_graph* g, const char* start, int max_depth, char* out, siz
 /* Vietnamese input methods. */
 int yui_telex(const char* keys, char* out, size_t cap);
 int yui_vni(const char* keys, char* out, size_t cap);
+int yui_ime_convert(const char* method, const char* keys, char* out, size_t cap);
 
 /* Vault */
 int yui_vault_seal(const char* password, const void* plain, size_t len, int log2n, yui_buf* out);
