@@ -75,6 +75,48 @@ Hệ thống CI và script `scripts/verify.py::check_third_party` kiểm tra:
 
 ---
 
+## 7. Bộ nạp, firmware, ảnh khởi động, driver ngoài (đề xuất 2026-11-19; giấy phép CHƯA kiểm trừ khi ghi khác — P7.14)
+
+| Thành phần | Dùng ở | Giấy phép (theo hiểu biết, chưa đọc bản gốc hôm nay) | Cách phân phối | Việc cần làm trước khi dùng |
+|---|---|---|---|---|
+| Firmware/khối nhị phân của nhà sản xuất (Wi-Fi, GPU…) từ kho firmware của Linux | P3.26, P6.31 | **Mỗi khối một giấy phép; có khối chỉ cho phân phối dạng nhị phân** | **Không đóng gói trong ISO**; tải theo nhu cầu từ nguồn chính thức, kiểm băm | Đọc giấy phép từng khối, ghi ngày |
+| GRUB 2 | P4.20, P4.21 | GPL-3.0-or-later | Chỉ khi **đóng gói** trong ISO ⇒ nghĩa vụ cung cấp mã nguồn | Quyết định có đóng gói hay không; nếu có, kèm mã nguồn tương ứng |
+| Limine | P4.20, P4.21 | BSD-2-Clause | Đính kèm nếu dùng | Đọc LICENSE bản dùng |
+| shim | P6.8 | BSD-2-Clause (theo hiểu biết); bản có chữ ký Microsoft do bên phân phối Linux cấp | Chưa dùng; bậc 3 ở PLAN §14.3c là backlog | Đọc điều kiện shim-review/ký trước khi bàn tới |
+| xorriso | P4.21 | GPL-3.0-or-later | Công cụ dựng ISO, chạy ở bước build, không nằm trong ảnh | Không liên kết vào mã của dự án |
+| Ventoy, Rufus, balenaEtcher | P4.21 | Mỗi công cụ một giấy phép | **Chỉ nhắc như công cụ của người dùng**, không đóng gói, không trỏ liên kết tải trong ảnh | — |
+| Phông chữ lớn hơn cho tiếng Việt (ví dụ họ Noto, Be Vietnam Pro) | P2.16 | SIL OFL 1.1 (theo hiểu biết) | Chỉ khi bạn duyệt | Đọc giấy phép từng phông; OFL có điều kiện về tên khi sửa đổi |
+| Bản phân phối Linux nền cho YuiVieOS Lite | P1.13 | **Chưa chọn**; gồm nhiều giấy phép (GPL, LGPL, …) và **điều khoản nhãn hiệu của bản gốc** | Chưa có | Đọc chính sách làm bản phái sinh/nhãn hiệu của bản được chọn; kèm đề nghị cung cấp mã nguồn |
+
+## 8. Nguồn dữ liệu của Yui Store (đề xuất 2026-11-19 — P4.29, P7.17)
+
+Nguyên tắc: Store chỉ hiển thị **metadata** và chuyển luồng tải **trực tiếp từ máy chủ gốc**; **không lưu lại** tệp cài đặt của bên thứ ba; có bộ nhớ đệm cục bộ và tôn trọng giới hạn lượt gọi; **không cào** kho đóng (Google Play, App Store). Ngày đọc điều khoản chỉ ghi khi **đã đọc thật**.
+
+| Nguồn | Dùng ở | Điều khoản/giấy phép | Ngày đọc | Ghi chú |
+|---|---|---|---|---|
+| `catalog.json` do dự án ký (Ed25519) | P4.15, P4.29 (a) | Của dự án (MIT) | — | Chỉ chứa metadata + băm |
+| F-Droid `index-v2.json` | P4.29 (b) | **Chưa đọc** | chưa | Chỉ mục công khai; ảnh/biểu tượng có thể có bản quyền riêng |
+| Flathub (API/AppStream) | P4.29 (b) | **Chưa đọc** | chưa | Tôn trọng giới hạn lượt gọi |
+| Winget (manifest) | P4.29 (b) | **Chưa đọc** | chưa | Gói Windows ⇒ chỉ có nghĩa qua lớp Wine |
+| GitHub/GitLab Releases (API) | P4.29 (c) | **Chưa đọc** | chưa | Gọi không đăng nhập có giới hạn lượt thấp; có bộ nhớ đệm |
+| Ảnh chụp màn hình/biểu tượng của bên thứ ba | P4.29 | Mỗi nguồn một quyền | — | Chỉ hiển thị khi nguồn cho phép; lưu bộ nhớ đệm cục bộ; không phân phối lại |
+| Obtainium (tham chiếu ý tưởng) | P4.29 | Chưa kiểm | — | **Chỉ học ý tưởng UX**, không dùng mã |
+
+## 9. Thành phần ảo hoá đồ họa, hệ tệp, container, kết nối (đề xuất 2026-11-19; giấy phép CHƯA kiểm trừ khi ghi khác)
+
+| Thành phần | Dùng ở | Giấy phép (theo hiểu biết, chưa đọc bản gốc hôm nay) | Cách phân phối | Việc cần làm trước khi dùng |
+|---|---|---|---|---|
+| Mesa (Lavapipe/llvmpipe), LLVM | P3.29 | Mesa: chủ yếu MIT; LLVM: Apache-2.0 kèm ngoại lệ LLVM | Tải theo nhu cầu trong khách, không đóng gói | Đọc giấy phép từng phần |
+| virglrenderer (VirGL/Venus) | P3.29 | MIT (theo hiểu biết) | Chỉ ở Linux host/bản Lite | Đọc LICENSE |
+| virtiofsd / virtio-fs | P3.30 | Chưa kiểm (có bản Rust và bản C) | Daemon phía host: viết clean-room hoặc duyệt dependency (§6.1 mục 5) | Chọn và đọc giấy phép |
+| runc / crun (runtime OCI) | P3.28 | runc: Apache-2.0 (theo hiểu biết); crun: **chưa kiểm** | Chạy **trong khách Linux**, không liên kết | Đọc giấy phép trước khi chọn |
+| Wine 11 + NTSync (nhân Linux khách ≥ 6.14) | P3.27 | LGPL-2.1+ (Wine); GPL-2.0 (nhân Linux) | Như mục 2; nhân khách **không** nằm trong lõi YuiVieOS | Giữ ranh giới cách ly (mục 3) |
+| scrcpy (tham chiếu cho `yui-droid-link`) | P6.41 | Apache-2.0 (theo hiểu biết) | **Chỉ học cách làm** (clean-room: không chép mã) | — |
+| KDE Connect, Input Leap/Barrier/Synergy, WireGuard, OpenSSH | P6.40, P6.42, P6.45 | Bản cài đặt chủ yếu GPL/BSD; "Synergy", "WireGuard" là nhãn hiệu | **Chỉ tương thích giao thức**; không chép mã, không dùng tên làm tên sản phẩm | P7.18 |
+| Bộ giải mã H.264/H.265, AAC/aptX/LDAC, RAR | P6.41, P6.46, P6.47, P4.33 | **Bằng sáng chế/giấy phép riêng hoặc định dạng đóng** | **Không đóng gói**; dùng codec của nền tảng hoặc codec mở (AV1, VP9, Opus) | P7.18 |
+
+---
+
 ## 6. Công cụ tham chiếu — KHÔNG tích hợp, không đóng gói
 
 | Công cụ | Vai trò | Ghi chú |
@@ -84,3 +126,4 @@ Hệ thống CI và script `scripts/verify.py::check_third_party` kiểm tra:
 | lmbench / contextswitch | Đo vi mô (P6.26) | Giấy phép chưa kiểm |
 | Minecraft (Mojang/Microsoft) | Game thử trong P6.27 | Độc quyền; bạn tự có bản mua hợp pháp |
 | Bản vá Minecraft / MB Loader / shader | — | **Không bundle, không trỏ liên kết tải**; bạn tự chịu theo điều khoản của game |
+| ApkStart (tham chiếu UX) | Ý tưởng "nhấp đúp APK ⇒ lối tắt" cho P4.24 | Chưa kiểm giấy phép; **chỉ học ý tưởng**, không dùng mã; không so sánh hơn thua |
