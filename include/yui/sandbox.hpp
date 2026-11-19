@@ -482,6 +482,9 @@ class TrustedConfirmationHost {
   bool is_confirmed(const std::string& dialog_id) const;
   bool is_active(const std::string& dialog_id) const;
   bool is_cancelled(const std::string& dialog_id) const;
+  // Đích của hộp thoại (vd "store:org.example.app"); rỗng nếu không tồn tại.
+  // Bên dùng xác nhận phải so đích để một cú bấm không bị dùng cho việc khác.
+  std::string dialog_target(const std::string& dialog_id) const;
 
   size_t synthetic_attacks_blocked() const { return synthetic_attacks_blocked_; }
 

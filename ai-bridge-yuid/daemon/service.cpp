@@ -1,6 +1,7 @@
 // yuid dispatch table: one implementation, three transports.
 #include "yui/service.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <ctime>
 #include <sys/stat.h>
@@ -13,6 +14,7 @@
 #include "yui/engine.hpp"
 #include "yui/ime.hpp"
 #include "yui/profile.hpp"
+#include "yui/store.hpp"
 #include "yui/telemetry.hpp"
 #include "yui/text.hpp"
 
@@ -667,6 +669,144 @@ Value Daemon::method_os(const std::string& op) {
   return v;
 }
 
+// ------------------------------------------------------ Kho Ứng Dụng (P4.15) --
+Value Daemon::method_store(const std::string& op, const Value& p, RpcError& err) {
+  bundle::Keyring keys;
+  keys.load_dir(opts_.store_keyring_dir, nullptr);
+  store::Options so;
+  so.root = opts_.store_root.empty() ? opts_.state_dir + "/store" : opts_.store_root;
+  so.allow_file_urls = opts_.store_allow_file_urls;
+  store::Store st(so, keys);
+
+  auto outcome = [](const store::Result& r) {
+    Value v(json::Object{});
+    v.set("ok", r.ok);
+    v.set("code", r.code);
+    v.set("reason_vi", r.reason_vi);
+    if (!r.candidates.empty()) {
+      Value c(json::Array{});
+      for (const auto& id : r.candidates) c.push(id);
+      v.set("candidates", c);
+    }
+    return v;
+  };
+
+  if (op == "list") {
+    Value arr(json::Array{});
+    for (const auto& a : st.installed()) {
+      Value v(json::Object{});
+      v.set("id", a.id);
+      v.set("name", a.name);
+      v.set("version", a.version);
+      v.set("publisher", a.publisher);
+      v.set("signature", a.signature);
+      v.set("files", static_cast<long long>(a.files));
+      arr.push(v);
+    }
+    Value v(json::Object{});
+    v.set("root", so.root);
+    v.set("apps", arr);
+    return v;
+  }
+  if (op == "remove") {
+    const std::string app = param_string(p, "app");
+    if (app.empty()) {
+      err.code = kInvalidParams;
+      err.message = "thiếu tham số 'app'";
+      return Value(nullptr);
+    }
+    const auto r = st.remove(app);
+    audit_log("store", "store.remove", app, r.ok, r.reason_vi);
+    return outcome(r);
+  }
+
+  const auto loaded = st.load_catalog_files();
+  if (!loaded.ok) return outcome(loaded);
+
+  if (op == "search") {
+    Value arr(json::Array{});
+    for (const auto& a : st.search(param_string(p, "query"))) {
+      Value v(json::Object{});
+      v.set("id", a.id);
+      v.set("name", a.name);
+      v.set("version", a.version);
+      v.set("publisher", a.publisher);
+      v.set("license", a.license);
+      v.set("kind", a.kind);
+      v.set("installed", st.is_installed(a.id));
+      arr.push(v);
+    }
+    Value v = outcome(loaded);
+    v.set("apps", arr);
+    return v;
+  }
+
+  const std::string app = param_string(p, "app");
+  if (app.empty()) {
+    err.code = kInvalidParams;
+    err.message = "thiếu tham số 'app'";
+    return Value(nullptr);
+  }
+  store::InstallPlan plan;
+  const auto pr = st.plan(app, plan);
+  if (!pr.ok) return outcome(pr);
+
+  if (op == "plan") {
+    Value v = outcome(pr);
+    v.set("id", plan.entry.id);
+    v.set("source_url", plan.entry.source_url);
+    v.set("license", plan.entry.license);
+    v.set("tier", sandbox::tier_name(plan.enforced_policy.tier));
+    v.set("rights", sandbox::rights_to_string(plan.enforced_policy.granted));
+    v.set("plan_vi", plan.summary_vi());
+    return v;
+  }
+  if (op == "install") {
+    const std::string target = store::TrustedDialogConfirmation::target_for(plan.entry.id);
+    const std::string dialog_id = param_string(p, "dialog_id");
+    const bool reused = std::find(store_used_dialogs_.begin(), store_used_dialogs_.end(), dialog_id) !=
+                        store_used_dialogs_.end();
+    if (dialog_id.empty() || reused || trusted_confirmation_.dialog_target(dialog_id) != target) {
+      // Không có (hoặc sai) hộp thoại: mở hộp thoại tin cậy, KHÔNG tải gì.
+      const std::string id = trusted_confirmation_.show_dialog(target, "Cài ứng dụng", plan.summary_vi(), 0);
+      audit_log("store", "store.install", plan.entry.id, false, "chờ người dùng xác nhận qua hộp thoại tin cậy " + id);
+      Value v(json::Object{});
+      v.set("ok", false);
+      v.set("code", "needs_confirmation");
+      v.set("dialog_id", id);
+      v.set("plan_vi", plan.summary_vi());
+      v.set("reason_vi", "Cần xác nhận bằng bàn phím/chuột thật trên hộp thoại hệ thống " + id +
+                             " (đường tin cậy P4.13); chưa tải, chưa cài gì");
+      return v;
+    }
+    const bool https = store::url_scheme(plan.entry.source_url) == "https";
+    if (https && opts_.offline) {
+      store::Result r;
+      r.code = "offline";
+      r.reason_vi = "yuid đang ở chế độ ngoại tuyến: không tải từ mạng (dùng yui-store trên Linux host, hoặc bật mạng)";
+      audit_log("store", "store.install", plan.entry.id, false, r.reason_vi);
+      return outcome(r);
+    }
+    store::TrustedDialogConfirmation gate(trusted_confirmation_, dialog_id);
+    store::FileFetcher file_fetcher;
+    store::CurlFetcher curl_fetcher;
+    store::Fetcher& f = https ? static_cast<store::Fetcher&>(curl_fetcher) : static_cast<store::Fetcher&>(file_fetcher);
+    const auto r = st.install(app, f, gate);
+    if (r.code != "not_confirmed") store_used_dialogs_.push_back(dialog_id);
+    audit_log("store", "store.install", plan.entry.id, r.ok, r.reason_vi);
+    Value v = outcome(r);
+    if (r.ok) {
+      v.set("app_dir", r.app.app_dir);
+      v.set("policy_path", r.app.policy_path);
+      v.set("menu_path", r.app.menu_path);
+    }
+    return v;
+  }
+  err.code = kMethodNotFound;
+  err.message = "unknown store operation: " + op;
+  return Value(nullptr);
+}
+
 // -------------------------------------------------------------- dispatch --
 Value Daemon::handle(const std::string& method, const Value& params, RpcError& err) {
   err = RpcError{};
@@ -684,6 +824,7 @@ Value Daemon::handle(const std::string& method, const Value& params, RpcError& e
   if (method == "sandbox.check") return method_sandbox_check(params, err);
   if (text::starts_with(method, "guard.")) return method_guard(method.substr(6), params, err);
   if (text::starts_with(method, "compat.")) return method_compat(method.substr(7), params, err);
+  if (text::starts_with(method, "store.")) return method_store(method.substr(6), params, err);
   if (method == "ime.convert") return method_ime(params, err);
   if (method == "web.search") return method_web_search(params, err);
   if (method == "telemetry.read") return method_telemetry();

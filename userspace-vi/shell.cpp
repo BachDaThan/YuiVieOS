@@ -135,6 +135,10 @@ const std::map<std::string, std::string> kAliases = {
     {"uptime", "thờigian"},  {"thoigian", "thờigian"}, {"time", "thờigian"},
     // 26. tươngthích / compat (P3.16)
     {"compat", "tươngthích"}, {"tuongthich", "tươngthích"}, {"compatibility", "tươngthích"},
+    // 27–29. Kho Ứng Dụng (P4.15): tìmapp / cài / gỡ
+    {"searchapp", "tìmapp"}, {"timapp", "tìmapp"}, {"findapp", "tìmapp"},
+    {"install", "cài"},      {"cai", "cài"},
+    {"uninstall", "gỡ"},     {"gocai", "gỡ"},       {"gỡcài", "gỡ"},
 };
 
 }  // namespace
@@ -191,6 +195,15 @@ Shell::Shell(service::Daemon& daemon, const ui::Layout& layout) : daemon_(daemon
       {"tươngthích", "compat", "tươngthích [app] [bật|tắt]", "compat [app] [on|off]",
        "Bật/tắt chế độ tương thích hộp cát cho ứng dụng (mặc định tắt).",
        "Enable or disable sandbox compatibility mode for an app (default off)."},
+      {"tìmapp", "searchapp", "tìmapp [từ khoá]", "searchapp [query]",
+       "Tìm ứng dụng trong Kho (không dấu, danh mục ký Ed25519).",
+       "Search the signed app catalog (accent-insensitive)."},
+      {"cài", "install", "cài <tên|mã>", "install <name|id>",
+       "Xem nguồn tải, giấy phép, quyền rồi mở hộp thoại xác nhận tin cậy để cài.",
+       "Show source, license and rights, then open the trusted confirmation dialog."},
+      {"gỡ", "uninstall", "gỡ <mã>", "uninstall <id>",
+       "Gỡ sạch ứng dụng: tệp, chính sách hộp cát, biểu tượng, bộ nhớ đệm.",
+       "Remove an app completely: files, sandbox policy, menu entry, cache."},
   };
 }
 
@@ -646,6 +659,48 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
     p.set("app", target_app);
     p.set("enabled", enable);
     const auto r = daemon_.handle("compat.set", p, err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    return r["reason_vi"].as_string();
+  }
+
+  if (cmd == "tìmapp") {
+    service::RpcError err;
+    json::Value p(json::Object{});
+    p.set("query", join_args(args, 1));
+    const auto r = daemon_.handle("store.search", p, err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    if (!r["ok"].as_bool()) return r["reason_vi"].as_string();
+    const auto& apps = r["apps"].arr();
+    if (apps.empty()) return "Không tìm thấy ứng dụng nào trong Kho.";
+    std::ostringstream os;
+    os << "Kho Ứng Dụng — " << apps.size() << " kết quả:";
+    for (const auto& a : apps) {
+      os << "\n  · " << a["name"].as_string() << " " << a["version"].as_string() << " [" << a["id"].as_string()
+         << "] — " << a["publisher"].as_string() << " · " << a["license"].as_string()
+         << (a["installed"].as_bool() ? " · ĐÃ CÀI" : "");
+    }
+    return os.str();
+  }
+
+  if (cmd == "cài") {
+    if (args.size() < 2) return "Cách dùng: cài <tên|mã>";
+    service::RpcError err;
+    json::Value p(json::Object{});
+    p.set("app", join_args(args, 1));
+    const auto r = daemon_.handle("store.install", p, err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    std::string out;
+    if (r.has("plan_vi")) out = r["plan_vi"].as_string() + "\n";
+    out += r["reason_vi"].as_string();
+    return out;
+  }
+
+  if (cmd == "gỡ") {
+    if (args.size() < 2) return "Cách dùng: gỡ <mã>";
+    service::RpcError err;
+    json::Value p(json::Object{});
+    p.set("app", args[1]);
+    const auto r = daemon_.handle("store.remove", p, err);
     if (err.code != 0) return "Lỗi: " + err.message;
     return r["reason_vi"].as_string();
   }

@@ -9,7 +9,9 @@ Checks, in order:
      the files that touch hardware; all Rust sources have balanced brackets;
   4. internal documentation links resolve;
   5. every repository path quoted in the docs exists;
-  6. sources are LF-only.
+  6. sources are LF-only;
+  7. no secrets leak (P7.3) and the "no spoofing / no check evasion" boundary
+     holds (P7.10, scripts/check_boundaries.py).
 
 Exit code 0 only if everything passes.  Run through scripts/verify.sh.
 """
@@ -74,6 +76,9 @@ REQUIRED_FILES = [
     "include/yui/ime.hpp", "userspace-vi/ibus/engine.cpp",
     "userspace-vi/ibus/main.cpp", "userspace-vi/ibus/org.freedesktop.IBus.Yui.xml.in",
     "tests/test_ime.cpp",
+    "include/yui/store.hpp", "pkg-stripper/store.cpp", "tools/store/main.cpp",
+    "tests/test_store.cpp",
+    "scripts/check_boundaries.py", "scripts/test_check_boundaries.py",
 ]
 STALE = ["core", "crates", "sandbox", "ui"]  # old layout must not come back
 
@@ -549,6 +554,20 @@ def check_secrets() -> None:
         ok("quét bí mật sạch (0 bí mật/khoá/token lộ)")
 
 
+def check_boundaries() -> None:
+    """Ranh giới "không giả mạo, không né kiểm tra" có máy kiểm (P7.10)."""  # ranh-giới-ok: tên bước kiểm P7.10
+    header("ranh giới không giả mạo / không né kiểm tra (P7.10)")  # ranh-giới-ok: tên bước kiểm P7.10
+    script = ROOT / "scripts/check_boundaries.py"
+    if not script.is_file():
+        bad("scripts/check_boundaries.py không tồn tại")
+        return
+    res = subprocess.run([sys.executable, str(script)], cwd=str(ROOT), capture_output=True, text=True)
+    if res.returncode != 0:
+        bad(f"vi phạm ranh giới:\n{res.stdout.strip()}")
+    else:
+        ok(res.stdout.strip())
+
+
 def main() -> int:
     if not (ROOT / "docs/PLAN.md").exists():
         print("verify.py: chạy từ trong repo YuiVieOS Beta")
@@ -561,6 +580,7 @@ def main() -> int:
     check_kernel_dependencies()
     check_third_party()
     check_secrets()
+    check_boundaries()
     check_links()
     check_doc_paths()
     check_line_endings()
