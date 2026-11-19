@@ -41,7 +41,7 @@ cần thư viện ngoài, không cần Rust.
 
 ```bash
 make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell,yui-splash}
-make test         # 2842 kiểm thử (2781 C++17 + 61 C11 ABI)
+make test         # 11817 kiểm thử (11751 C++17 + 66 C11 ABI)
 make check        # test + 5 smoke run + kiểm tra tĩnh (scripts/verify.sh)
 ```
 
@@ -127,6 +127,13 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 5 | Kế hoạch giao diện thích ứng (Framebuffer ⇄ Vulkan/DRM) | ✅ logic + test | `userspace-vi/ui.cpp` |
 | 5 | IBus Telex/VNI engine | ✅ Người dùng xác minh Ubuntu 24.04: build sạch, `make check` 2831, D-Bus avg 7.16 ms; Firefox/LibreOffice để Desktop QA follow-up | `userspace-vi/ibus/`, P1.4 |
 | 5 | Compositor thật (DRM/Vulkan), App Yui build được | ❌ chưa có (đã có bộ vẽ pixel + màn hình chào) | P2.6, P4.1, P4.5 |
+
+### Phạm vi: những gì dự án không làm và không hứa
+
+- **Không giả mạo, không né kiểm tra.** Không giả IMEI/ID thiết bị/vị trí, không vượt Play Integrity, không né chống gian lận của game (task P7.10). Game kiểm nghiêm sẽ từ chối máy ảo/container; bạn tự tuân thủ điều khoản của ứng dụng/game (đa tài khoản, giả vùng, công cụ ngoài). Dự án không quảng bá việc "treo/cày nhiều tài khoản".
+- **Không đóng gói** Windows, Google Mobile Services, bộ dịch mã đóng nguồn hay bản vá game: tải theo nhu cầu từ nguồn chính thức, theo [`docs/THIRD-PARTY.md`](docs/THIRD-PARTY.md).
+- **Không hứa con số chưa đo** (FPS, độ trễ, RAM so với Windows/Linux). Chỉ ghi số có phép đo kèm máy và lệnh (P6.25–P6.26).
+- **Chưa có:** đồ họa 3D trên nhân riêng (chưa có đường GPU, P6.28), Android/Windows trong micro-VM (P3), Kho Ứng Dụng (P4.15), lọc quảng cáo (P4.18), server/NAS (backlog). Xem [`docs/PLAN.md`](docs/PLAN.md).
 
 **Chưa kiểm chứng được trong môi trường soạn thảo này**: biên dịch Rust (không có
 `cargo`), boot QEMU (không có `qemu-system-*`), build Flutter (không có SDK). Cả
