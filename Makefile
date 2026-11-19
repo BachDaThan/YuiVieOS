@@ -45,11 +45,14 @@ LIB_SRC := \
 	kernel-services/linuxabi.cpp \
 	vmm-sandbox/sandbox.cpp \
 	pkg-stripper/apppack.cpp \
+	pkg-stripper/store.cpp \
 	userspace-vi/text.cpp \
 	userspace-vi/ime.cpp \
 	userspace-vi/ui.cpp \
 	userspace-vi/fb.cpp \
 	userspace-vi/shell.cpp \
+	userspace-vi/trash.cpp \
+	userspace-vi/posix.cpp \
 	ai-bridge-yuid/reference/graph.cpp \
 	ai-bridge-yuid/reference/engine.cpp \
 	ai-bridge-yuid/reference/vault.cpp \
@@ -65,7 +68,7 @@ HEADERS := $(wildcard include/yui/*.hpp include/yui/*.h) \
 
 TESTS := test_crypto test_codec_json test_core test_sandbox test_ime test_daemon test_tools \
          test_telemetry test_fb test_ed25519 test_power test_fsstore test_linuxabi \
-         test_redteam
+         test_redteam test_store test_trash test_posix
 
 # `kernel` is declared before `all`, so pin the default goal explicitly.
 .DEFAULT_GOAL := all
@@ -98,7 +101,8 @@ qemu:
 	./scripts/qemu-smoke.sh $(ARCH) --build
 
 all: $(BIN)/yuid $(BIN)/libyui.a $(BIN)/libyui.so.1 $(BIN)/libyui.so $(BUILD)/yui.pc \
-     $(BIN)/yui-profiler $(BIN)/yui-trim $(BIN)/yui-shell $(BIN)/yui-splash $(BIN)/yui-update
+     $(BIN)/yui-profiler $(BIN)/yui-trim $(BIN)/yui-shell $(BIN)/yui-splash $(BIN)/yui-update $(BIN)/yui-store \
+     $(BIN)/yui-sandbox-exec
 
 $(OBJ)/%.o: %.cpp $(HEADERS)
 	@mkdir -p $(dir $@)
@@ -148,6 +152,15 @@ $(BIN)/yui-update: $(OBJ)/tools/update/main.o $(BIN)/libyui.a
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
+$(BIN)/yui-store: $(OBJ)/tools/store/main.o $(BIN)/libyui.a
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
+
+# Bệ phóng hộp cát (Landlock + no_new_privs) cho lệnh POSIX của yui-shell — không cần libyui.
+$(BIN)/yui-sandbox-exec: $(OBJ)/tools/sandbox-exec/main.o
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
 $(OBJ)/test/%: tests/%.cpp $(BIN)/libyui.a
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -DYUI_SOURCE_DIR='"$(CURDIR)"' -o $@ $< $(BIN)/libyui.a $(LDLIBS)
@@ -173,12 +186,26 @@ check: all test verify
 	@./$(BIN)/yui-profiler | head -4
 	@echo "── smoke: shell script"
 	@printf 'thôngtin\nthoát\n' | ./$(BIN)/yui-shell > /dev/null
+	@echo "── smoke: thùng rác (xoá → khôi phục, băm khớp)"
+	@rm -rf /tmp/smoke-trash && mkdir -p /tmp/smoke-trash/state && echo "dữ liệu" > /tmp/smoke-trash/tệp.txt && sha256sum /tmp/smoke-trash/tệp.txt > /tmp/smoke-trash.sum
+	@printf 'xoá /tmp/smoke-trash/tệp.txt\nkhôiphục tệp.txt\nthoát\n' | YUI_STATE_DIR=/tmp/smoke-trash/state ./$(BIN)/yui-shell > /dev/null
+	@sha256sum -c --quiet /tmp/smoke-trash.sum
+	@echo "── yui-shell: chế độ POSIX (ống dẫn + chuyển hướng trong hộp cát) + dòng lạ không tự chạy"
+	@rm -rf /tmp/smoke-posix && mkdir -p /tmp/smoke-posix/state
+	@ALLOW=$$(./$(BIN)/yui-sandbox-exec --probe >/dev/null 2>&1 || echo 1); \
+	 printf '!echo xin chao | tr a-z A-Z > /tmp/smoke-posix/out.txt\ntouch /tmp/smoke-posix/khong-duoc\nthoát\n' | \
+	 YUI_STATE_DIR=/tmp/smoke-posix/state YUI_POSIX_ALLOW_UNSANDBOXED=$$ALLOW ./$(BIN)/yui-shell > /dev/null
+	@grep -qx 'XIN CHAO' /tmp/smoke-posix/out.txt && test ! -e /tmp/smoke-posix/khong-duoc
+	@grep -q 'shell.exec' /tmp/smoke-posix/state/audit.log
 	@echo "── smoke: splash → PPM"
 	@./$(BIN)/yui-splash --width 320 --height 200 --out /tmp/yui-splash.ppm > /dev/null
 	@test -s /tmp/yui-splash.ppm
 	@echo "── smoke: yui-update"
 	@./$(BIN)/yui-update --trogiup > /dev/null
 	@./$(BIN)/yui-update status --state-dir /tmp/smoke-update > /dev/null
+	@echo "── smoke: yui-store"
+	@./$(BIN)/yui-store --trogiup > /dev/null
+	@./$(BIN)/yui-store list --root /tmp/smoke-store > /dev/null
 	@echo "── smoke: pkg-config + C demo"
 	@PKG_CONFIG_PATH=$(CURDIR)/build $(CC) examples/c/demo.c $$(PKG_CONFIG_PATH=$(CURDIR)/build pkg-config --cflags --libs yui) -o $(BUILD)/demo_c
 	@LD_LIBRARY_PATH=$(BIN):$$LD_LIBRARY_PATH $(BUILD)/demo_c > /dev/null
@@ -186,6 +213,8 @@ check: all test verify
 	@python3 examples/python/demo.py > /dev/null
 	@echo "── smoke: mcp integration client"
 	@python3 tools/mcp_client.py --server ./$(BIN)/yuid > /dev/null
+	@echo "── boundary checker (P7.10)"
+	@python3 scripts/test_check_boundaries.py > /dev/null
 	@echo "all checks passed"
 
 install: all
@@ -195,6 +224,8 @@ install: all
 	install -Dm755 $(BIN)/yui-shell $(DESTDIR)$(PREFIX)/bin/yui-shell
 	install -Dm755 $(BIN)/yui-splash $(DESTDIR)$(PREFIX)/bin/yui-splash
 	install -Dm755 $(BIN)/yui-update $(DESTDIR)$(PREFIX)/bin/yui-update
+	install -Dm755 $(BIN)/yui-store $(DESTDIR)$(PREFIX)/bin/yui-store
+	install -Dm755 $(BIN)/yui-sandbox-exec $(DESTDIR)$(PREFIX)/bin/yui-sandbox-exec
 	install -Dm644 $(BIN)/libyui.a $(DESTDIR)$(PREFIX)/lib/libyui.a
 	install -Dm755 $(BIN)/libyui.so.1 $(DESTDIR)$(PREFIX)/lib/libyui.so.1
 	ln -sf libyui.so.1 $(DESTDIR)$(PREFIX)/lib/libyui.so

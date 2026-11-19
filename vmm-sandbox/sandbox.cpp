@@ -1231,6 +1231,11 @@ bool TrustedConfirmationHost::is_cancelled(const std::string& dialog_id) const {
   return it != dialogs_.end() && it->second.cancelled;
 }
 
+std::string TrustedConfirmationHost::dialog_target(const std::string& dialog_id) const {
+  auto it = dialogs_.find(dialog_id);
+  return it == dialogs_.end() ? std::string() : it->second.target_app;
+}
+
 // ------------------------------ App Compatibility & Sinkhole (P3.16) --
 DnsResolutionResult DnsSinkhole::resolve_or_sinkhole(
     const std::string& domain,

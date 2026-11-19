@@ -29,6 +29,17 @@ struct Options {
   size_t audit_max_bytes = 1024 * 1024;  // 1 MB default
   int audit_retention_days = 30;         // 30 days retention
   bool audit_hash_domains = false;       // optional domain anonymization
+  // Kho Ứng Dụng (P4.15). store_root rỗng ⇒ <state_dir>/store.
+  std::string store_root;
+  std::string store_keyring_dir = "/etc/yui/trusted-keys";
+  bool store_allow_file_urls = false;    // file:// chỉ cho thử nghiệm / bản tự tải
+  // Thùng rác + dọn rác (P4.17). trash_root rỗng ⇒ <state_dir>/trash.
+  std::string trash_root;
+  uint64_t trash_capacity_bytes = 2ull * 1024 * 1024 * 1024;
+  // Chế độ POSIX của shell (P4.12): nhánh đọc/ghi cho hộp cát của lệnh con.
+  std::vector<std::string> posix_rw_dirs;               // rỗng ⇒ {$HOME, /tmp}
+  std::vector<std::string> posix_ro_dirs = {"/"};
+  std::vector<std::string> posix_deny;                  // rỗng ⇒ {~/.ssh, ~/.gnupg, /etc/shadow, /etc/sudoers, state_dir}
 };
 
 // JSON-RPC 2.0 error codes (subset).
@@ -108,6 +119,17 @@ class Daemon {
   // Guard chống bất thường nền: guard.observe / guard.alerts / guard.decide.
   json::Value method_guard(const std::string& op, const json::Value& params, RpcError& err);
   json::Value method_compat(const std::string& op, const json::Value& params, RpcError& err);
+  // Kho Ứng Dụng (P4.15): store.search / store.plan / store.install / store.remove / store.list.
+  json::Value method_store(const std::string& op, const json::Value& params, RpcError& err);
+  // Thùng rác (P4.17): trash.list / put / restore / purge / empty / clean_plan / clean.
+  json::Value method_trash(const std::string& op, const json::Value& params, RpcError& err);
+  // Shell POSIX (P4.12): shell.posix_check / shell.posix_policy.
+  json::Value method_shell(const std::string& op, const json::Value& params, RpcError& err);
+  sandbox::Policy posix_policy() const;
+  // Đường tin cậy P4.13 cho việc không đảo ngược được: true nếu dialog_id đúng
+  // đích, chưa dùng; nếu không, mở hộp thoại mới và điền `out` (needs_confirmation).
+  bool trusted_dialog_ready(const std::string& target, const std::string& title_vi, const std::string& summary_vi,
+                            const std::string& dialog_id, const std::string& audit_kind, json::Value& out);
 
   Options opts_;
   graph::Graph graph_;
@@ -123,6 +145,8 @@ class Daemon {
   int charge_limit_ = 100;
   std::string sched_profile_ = "interactive";
   int sched_slice_us_ = 5000;
+  // Hộp thoại xác nhận cài đã dùng một lần thì không dùng lại được (chống phát lại).
+  std::vector<std::string> used_dialogs_;
 };
 
 // Version string shared by yuid, libyui and the MCP server info block.

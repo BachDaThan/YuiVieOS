@@ -40,9 +40,9 @@ Yêu cầu: `g++` ≥ 10 (C++17), `make`, `python3`, POSIX. **Không** cần m�
 cần thư viện ngoài, không cần Rust.
 
 ```bash
-make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell,yui-splash}
-make test         # 11817 kiểm thử (11751 C++17 + 66 C11 ABI)
-make check        # test + 5 smoke run + kiểm tra tĩnh (scripts/verify.sh)
+make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell,yui-splash,yui-update,yui-store,yui-sandbox-exec}
+make test         # 12569 kiểm thử (12503 C++17 + 66 C11 ABI)
+make check        # test + smoke run + kiểm tra tĩnh (scripts/verify.sh, gồm máy kiểm ranh giới P7.10)
 ```
 
 ```console
@@ -63,6 +63,31 @@ Tiếng Việt
 · os:yui — YuiVieOS — hệ điều hành Việt [concept]
 › thoát
 Tạm biệt — hẹn gặp lại ở YuiVieOS. / Goodbye.
+```
+
+**Chế độ POSIX của `yui-shell` (P4.12):** chỉ chạy lệnh hệ thống khi bạn nói rõ —
+dòng bắt đầu bằng `!` hoặc lệnh `chạy`. Dòng không nhận ra **không bao giờ** tự chạy.
+
+```
+yui› !ls *.txt | sort > ds.txt        # ống dẫn + chuyển hướng, chạy trong hộp cát Landlock
+yui› chạy sleep 60 &                  # [1] 1234
+yui› !jobs                            # [1] Đang chạy  sleep 60 &
+yui› !kill %1                         # chỉ việc do shell này tạo
+yui› !echo x > /etc/hosts             # Từ chối (hộp cát) … — không tiến trình nào được tạo
+```
+
+**Kho Ứng Dụng — lõi (P4.15):** `yui-store` đọc danh mục ký Ed25519, tải **từ nguồn
+chính thức** (chỉ https, host phải nằm trong danh sách của danh mục), kiểm sha256,
+gọt cục bộ bằng `yui-trim`, đặt app vào hộp cát theo policy và tạo biểu tượng. Danh mục
+chưa ký/sai chữ ký/băm lệch ⇒ từ chối; app không có chữ ký nhà phát hành ⇒ hộp cát hạn
+chế, không mạng (P3.12). `cài` luôn hỏi xác nhận trên TTY (CLI) hoặc hộp thoại tin cậy
+(RPC/shell), không có `--yes`. Chưa có danh mục thật; mới nhận gói `.tar` thường.
+
+```console
+$ yui-store nhập catalog.json catalog.sig --keyring khoa/   # nạp danh mục đã ký
+$ yui-store tìm chao                                        # tìm không dấu vẫn ra "Xin Chào"
+$ yui-store cài org.example.hello                           # hiện kế hoạch, hỏi gõ lại mã app
+$ yui-store gỡ org.example.hello                            # xoá tệp, policy, biểu tượng, cache
 ```
 
 ---
@@ -119,21 +144,24 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 4 | C-ABI `libyui.so/.a` + header C, kiểm từ **C11** | ✅ chạy | `include/yui/yui.h`, `tests/test_capi.c` (61 check) |
 | 4 | MCP `2024-11-05`, 8 công cụ dữ liệu | ✅ chạy | `ai-bridge-yuid/daemon/server.cpp` |
 | 4 | Telemetry Hook: `telemetry.read` + `yui_telemetry()` đọc pin/nhiệt/RAM thật, tự chỉnh k/W | ✅ chạy | `kernel-services/telemetry.cpp` (471 check), `tests/test_capi.c` |
-| 4 | 5 công cụ OS MCP `sys_power`/`sys_scheduler`/`sys_app_stripper`/`sys_proc`/`sys_search_vault` + xác nhận | ❌ chưa có (mới có `system_telemetry`) | P4.3 |
+| 4 | 5 công cụ OS MCP `sys_power`/`sys_scheduler`/`sys_app_stripper`/`sys_proc`/`sys_search_vault` + xác nhận | ✅ chạy (P4.3 `[x]`) | `ai-bridge-yuid/daemon/`, P4.3 |
 | 4 | Cài đặt tham chiếu graph/vault/engine (**sẽ thay ở P5**) | 🟡 tạm | `ai-bridge-yuid/reference/` |
 | 5 | Smart App Stripper: strip ELF, khử trùng lặp, lọc locale, chống zip-slip | ✅ chạy | `pkg-stripper/apppack.cpp`, `tools/trim` (61 check) |
 | 5 | Bộ gõ Telex **và** VNI, đặt dấu đúng chính tả | ✅ 246 test | `userspace-vi/ime.cpp` |
-| 5 | Shell song ngữ Việt–Anh, 15 lệnh | ✅ chạy | `userspace-vi/shell.cpp` |
+| 5 | Shell song ngữ Việt–Anh, 36 lệnh (gồm `tìmapp`/`cài`/`gỡ` của Kho, `xoá`/`khôiphục`/`dọnrác` của thùng rác) | ✅ chạy | `userspace-vi/shell.cpp` |
+| 5 | Chế độ POSIX trong `yui-shell` (`!lệnh` hoặc `chạy …`): ống dẫn, `>` `>>` `<` `2>&1`, `&`/`jobs`/`kill`/`wait`, biến, trích dẫn; `yuid` kiểm + audit từng lệnh, Landlock + no_new_privs qua `yui-sandbox-exec`; dòng lạ không tự chạy | ✅ chạy trên Linux host (Landlock); nhân riêng chờ P2.7 | `userspace-vi/posix.cpp`, `tools/sandbox-exec/`, `tests/test_posix.cpp` (141 check), P4.12 |
+| 5 | Thùng rác (khôi phục kiểm băm, thùng đầy thì cảnh báo, không tự xoá) + dọn rác chỉ trong danh sách có tên, xoá vĩnh viễn cần xác nhận tin cậy | ✅ chạy trên Linux host; chưa nối snapshot nhân | `userspace-vi/trash.cpp`, `tests/test_trash.cpp` (203 check), P4.17 |
+| 5 | Kho Ứng Dụng — lõi: danh mục ký Ed25519, tải https từ nguồn chính thức, kiểm sha256, gọt cục bộ, hộp cát, biểu tượng; CLI `yui-store` + RPC `store.*` | ✅ chạy, chưa có danh mục thật, chỉ gói `.tar` | `pkg-stripper/store.cpp`, `tests/test_store.cpp` (201 check), P4.15 |
 | 5 | Kế hoạch giao diện thích ứng (Framebuffer ⇄ Vulkan/DRM) | ✅ logic + test | `userspace-vi/ui.cpp` |
 | 5 | IBus Telex/VNI engine | ✅ Người dùng xác minh Ubuntu 24.04: build sạch, `make check` 2831, D-Bus avg 7.16 ms; Firefox/LibreOffice để Desktop QA follow-up | `userspace-vi/ibus/`, P1.4 |
 | 5 | Compositor thật (DRM/Vulkan), App Yui build được | ❌ chưa có (đã có bộ vẽ pixel + màn hình chào) | P2.6, P4.1, P4.5 |
 
 ### Phạm vi: những gì dự án không làm và không hứa
 
-- **Không giả mạo, không né kiểm tra.** Không giả IMEI/ID thiết bị/vị trí, không vượt Play Integrity, không né chống gian lận của game (task P7.10). Game kiểm nghiêm sẽ từ chối máy ảo/container; bạn tự tuân thủ điều khoản của ứng dụng/game (đa tài khoản, giả vùng, công cụ ngoài). Dự án không quảng bá việc "treo/cày nhiều tài khoản".
+- **Không giả mạo, không né kiểm tra.** Không giả IMEI/ID thiết bị/vị trí, không vượt Play Integrity, không né chống gian lận của game (task P7.10). Game kiểm nghiêm sẽ từ chối máy ảo/container; bạn tự tuân thủ điều khoản của ứng dụng/game (đa tài khoản, giả vùng, công cụ ngoài). Dự án không quảng bá việc "treo/cày nhiều tài khoản". <!-- ranh-giới-ok: phạm vi: tuyên bố dự án KHÔNG làm các việc này -->
 - **Không đóng gói** Windows, Google Mobile Services, bộ dịch mã đóng nguồn hay bản vá game: tải theo nhu cầu từ nguồn chính thức, theo [`docs/THIRD-PARTY.md`](docs/THIRD-PARTY.md).
 - **Không hứa con số chưa đo** (FPS, độ trễ, RAM so với Windows/Linux). Chỉ ghi số có phép đo kèm máy và lệnh (P6.25–P6.26).
-- **Chưa có:** đồ họa 3D trên nhân riêng (chưa có đường GPU, P6.28), Android/Windows trong micro-VM (P3), Kho Ứng Dụng (P4.15), lọc quảng cáo (P4.18), server/NAS (backlog). Xem [`docs/PLAN.md`](docs/PLAN.md).
+- **Chưa có:** đồ họa 3D trên nhân riêng (chưa có đường GPU, P6.28), Android/Windows trong micro-VM (P3), giao diện Kho Ứng Dụng (P4.16; mới có lõi CLI/RPC P4.15, chưa có danh mục thật, chưa nhận `.tar.gz`/`.zip`/`.apk`), lọc quảng cáo (P4.18), server/NAS (backlog). Xem [`docs/PLAN.md`](docs/PLAN.md).
 
 **Chưa kiểm chứng được trong môi trường soạn thảo này**: biên dịch Rust (không có
 `cargo`), boot QEMU (không có `qemu-system-*`), build Flutter (không có SDK). Cả

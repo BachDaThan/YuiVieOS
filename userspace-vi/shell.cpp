@@ -3,6 +3,7 @@
 #include "yui/shell.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <sstream>
 
 #include "yui/apppack.hpp"
@@ -135,6 +136,17 @@ const std::map<std::string, std::string> kAliases = {
     {"uptime", "thờigian"},  {"thoigian", "thờigian"}, {"time", "thờigian"},
     // 26. tươngthích / compat (P3.16)
     {"compat", "tươngthích"}, {"tuongthich", "tươngthích"}, {"compatibility", "tươngthích"},
+    // 27–29. Kho Ứng Dụng (P4.15): tìmapp / cài / gỡ
+    {"searchapp", "tìmapp"}, {"timapp", "tìmapp"}, {"findapp", "tìmapp"},
+    {"install", "cài"},      {"cai", "cài"},
+    {"uninstall", "gỡ"},     {"gocai", "gỡ"},       {"gỡcài", "gỡ"},
+    {"delete", "xoá"},       {"del", "xoá"},        {"trash", "xoá"},      {"xoa", "xoá"},   {"xóa", "xoá"},
+    {"trashlist", "thùngrác"}, {"thungrac", "thùngrác"}, {"lsrac", "thùngrác"},
+    {"restore", "khôiphục"}, {"khoiphuc", "khôiphục"}, {"undelete", "khôiphục"},
+    {"purge", "xoávĩnhviễn"}, {"xoavinhvien", "xoávĩnhviễn"}, {"xóavĩnhviễn", "xoávĩnhviễn"},
+    {"emptytrash", "đổrác"}, {"dorac", "đổrác"},
+    {"cleanup", "dọnrác"},   {"donrac", "dọnrác"},  {"clean", "dọnrác"},
+    {"run", "chạy"},         {"chay", "chạy"},      {"posix", "chạy"},
 };
 
 }  // namespace
@@ -191,6 +203,33 @@ Shell::Shell(service::Daemon& daemon, const ui::Layout& layout) : daemon_(daemon
       {"tươngthích", "compat", "tươngthích [app] [bật|tắt]", "compat [app] [on|off]",
        "Bật/tắt chế độ tương thích hộp cát cho ứng dụng (mặc định tắt).",
        "Enable or disable sandbox compatibility mode for an app (default off)."},
+      {"tìmapp", "searchapp", "tìmapp [từ khoá]", "searchapp [query]",
+       "Tìm ứng dụng trong Kho (không dấu, danh mục ký Ed25519).",
+       "Search the signed app catalog (accent-insensitive)."},
+      {"cài", "install", "cài <tên|mã>", "install <name|id>",
+       "Xem nguồn tải, giấy phép, quyền rồi mở hộp thoại xác nhận tin cậy để cài.",
+       "Show source, license and rights, then open the trusted confirmation dialog."},
+      {"gỡ", "uninstall", "gỡ <mã>", "uninstall <id>",
+       "Gỡ sạch ứng dụng: tệp, chính sách hộp cát, biểu tượng, bộ nhớ đệm.",
+       "Remove an app completely: files, sandbox policy, menu entry, cache."},
+      {"xoá", "delete", "xoá <đường_dẫn>", "delete <path>",
+       "Chuyển tệp/thư mục vào thùng rác (khôi phục được, kiểm băm).",
+       "Move a file/folder to the trash (restorable, hash-checked)."},
+      {"thùngrác", "trashlist", "thùngrác", "trashlist", "Xem các món trong thùng rác và dung lượng.",
+       "List trash items and usage."},
+      {"khôiphục", "restore", "khôiphục <mã> [đường_dẫn_mới]", "restore <id> [new_path]",
+       "Trả món về chỗ cũ (không ghi đè tệp đang có).", "Restore an item (never overwrites)."},
+      {"xoávĩnhviễn", "purge", "xoávĩnhviễn <mã>", "purge <id>",
+       "Xoá hẳn một món trong thùng rác (cần xác nhận tin cậy).",
+       "Permanently delete one trash item (trusted confirmation)."},
+      {"đổrác", "emptytrash", "đổrác", "emptytrash", "Đổ cả thùng rác (cần xác nhận tin cậy).",
+       "Empty the whole trash (trusted confirmation)."},
+      {"dọnrác", "cleanup", "dọnrác", "cleanup",
+       "Dọn bộ nhớ đệm/tệp tạm trong danh sách có tên; hiện dung lượng rồi xin xác nhận.",
+       "Clean named caches/temp files only; shows the size, then asks for confirmation."},
+      {"chạy", "run", "chạy <dòng lệnh POSIX>  (hoặc !<dòng lệnh>)", "run <POSIX command line>  (or !<line>)",
+       "Chạy lệnh hệ thống trong hộp cát (Landlock): | > >> < 2>&1 & jobs kill wait cd export.",
+       "Run a system command in the sandbox (Landlock): | > >> < 2>&1 & jobs kill wait cd export."},
   };
 }
 
@@ -272,9 +311,21 @@ std::string Shell::suggest(const std::string& input) const {
   return "";
 }
 
+posix::Runner& Shell::posix_runner() {
+  if (!posix_) posix_ = std::make_unique<posix::Runner>(daemon_, posix_opts_);
+  return *posix_;
+}
+
 std::string Shell::run(const std::string& line) {
   const std::string trimmed = text::trim(line);
   if (trimmed.empty()) return "";
+  // Chỉ chạy lệnh hệ thống khi bạn nói rõ: "!…" hoặc "chạy …" (P4.12).
+  if (trimmed[0] == '!') {
+    ++history_;
+    const std::string rest = text::trim(trimmed.substr(1));
+    if (rest.empty()) return "Cách dùng: !<dòng lệnh POSIX>, ví dụ: !ls -la | grep txt > ds.txt";
+    return posix_runner().run(rest);
+  }
   const auto tokens = tokenize(trimmed);
   if (tokens.empty()) return "";
   const std::string cmd = text::fold(tokens[0]);
@@ -282,6 +333,14 @@ std::string Shell::run(const std::string& line) {
   std::string canon = cmd;
   auto it = kAliases.find(cmd);
   if (it != kAliases.end()) canon = it->second;
+
+  if (canon == "chạy") {
+    ++history_;
+    const size_t sp = trimmed.find_first_of(" \t");
+    const std::string rest = sp == std::string::npos ? "" : text::trim(trimmed.substr(sp));
+    if (rest.empty()) return "Cách dùng: chạy <dòng lệnh POSIX>  (hoặc !<dòng lệnh>)";
+    return posix_runner().run(rest);
+  }
 
   return dispatch(canon, tokens);
 }
@@ -650,11 +709,136 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
     return r["reason_vi"].as_string();
   }
 
+  if (cmd == "tìmapp") {
+    service::RpcError err;
+    json::Value p(json::Object{});
+    p.set("query", join_args(args, 1));
+    const auto r = daemon_.handle("store.search", p, err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    if (!r["ok"].as_bool()) return r["reason_vi"].as_string();
+    const auto& apps = r["apps"].arr();
+    if (apps.empty()) return "Không tìm thấy ứng dụng nào trong Kho.";
+    std::ostringstream os;
+    os << "Kho Ứng Dụng — " << apps.size() << " kết quả:";
+    for (const auto& a : apps) {
+      os << "\n  · " << a["name"].as_string() << " " << a["version"].as_string() << " [" << a["id"].as_string()
+         << "] — " << a["publisher"].as_string() << " · " << a["license"].as_string()
+         << (a["installed"].as_bool() ? " · ĐÃ CÀI" : "");
+    }
+    return os.str();
+  }
+
+  if (cmd == "cài") {
+    if (args.size() < 2) return "Cách dùng: cài <tên|mã>";
+    service::RpcError err;
+    json::Value p(json::Object{});
+    p.set("app", join_args(args, 1));
+    const auto r = daemon_.handle("store.install", p, err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    std::string out;
+    if (r.has("plan_vi")) out = r["plan_vi"].as_string() + "\n";
+    out += r["reason_vi"].as_string();
+    return out;
+  }
+
+  if (cmd == "gỡ") {
+    if (args.size() < 2) return "Cách dùng: gỡ <mã>";
+    service::RpcError err;
+    json::Value p(json::Object{});
+    p.set("app", args[1]);
+    const auto r = daemon_.handle("store.remove", p, err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    return r["reason_vi"].as_string();
+  }
+
+  if (cmd == "xoá") {
+    if (args.size() < 2) return "Cách dùng: xoá <đường_dẫn>  (vào thùng rác, khôi phục được)";
+    service::RpcError err;
+    json::Value p(json::Object{});
+    p.set("path", join_args(args, 1));
+    const auto r = daemon_.handle("trash.put", p, err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    std::string out = r["reason_vi"].as_string();
+    if (r.has("warning_vi")) out += "\n⚠ " + r["warning_vi"].as_string();
+    return out;
+  }
+
+  if (cmd == "thùngrác") {
+    service::RpcError err;
+    const auto r = daemon_.handle("trash.list", json::Value(json::Object{}), err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    const auto& items = r["items"].arr();
+    std::ostringstream os;
+    os << "Thùng rác — " << items.size() << " món · " << r["usage_vi"].as_string();
+    for (const auto& it : items) {
+      os << "\n  · [" << it["id"].as_string() << "] " << it["original_path"].as_string()
+         << (it["is_dir"].as_bool() ? "/" : "") << " — " << it["deleted_at"].as_string()
+         << (it["verified"].as_bool() ? "" : " · không có băm");
+    }
+    if (items.empty()) os << "\n  (trống)";
+    return os.str();
+  }
+
+  // Mã món có thể chứa khoảng trắng ("báo cáo.txt"): lấy tiền tố dài nhất khớp
+  // một mã đang có trong thùng; phần còn lại (nếu có) là đường dẫn đích.
+  auto trash_id = [&](std::string& rest) -> std::string {
+    service::RpcError lerr;
+    const auto lst = daemon_.handle("trash.list", json::Value(json::Object{}), lerr);
+    for (size_t k = args.size(); k > 1; --k) {
+      std::vector<std::string> head(args.begin(), args.begin() + long(k));
+      const std::string cand = join_args(head, 1);
+      for (const auto& it : lst["items"].arr()) {
+        if (it["id"].as_string() == cand) {
+          rest = join_args(args, k);
+          return cand;
+        }
+      }
+    }
+    rest = join_args(args, 2);
+    return args[1];
+  };
+
+  if (cmd == "khôiphục") {
+    if (args.size() < 2) return "Cách dùng: khôiphục <mã> [đường_dẫn_mới]";
+    service::RpcError err;
+    json::Value p(json::Object{});
+    std::string dest;
+    p.set("id", trash_id(dest));
+    if (!dest.empty()) p.set("to", dest);
+    const auto r = daemon_.handle("trash.restore", p, err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    return r["reason_vi"].as_string();
+  }
+
+  if (cmd == "xoávĩnhviễn" || cmd == "đổrác" || cmd == "dọnrác") {
+    if (cmd == "xoávĩnhviễn" && args.size() < 2) return "Cách dùng: xoávĩnhviễn <mã>";
+    service::RpcError err;
+    json::Value p(json::Object{});
+    if (cmd == "xoávĩnhviễn") {
+      std::string ignored;
+      p.set("id", trash_id(ignored));
+    }
+    const char* method = cmd == "xoávĩnhviễn" ? "trash.purge" : cmd == "đổrác" ? "trash.empty" : "trash.clean";
+    // Shell chỉ mở hộp thoại tin cậy; không tự xoá vĩnh viễn gì.
+    const auto r = daemon_.handle(method, p, err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    std::string out;
+    if (r.has("plan_vi")) out = r["plan_vi"].as_string() + "\n";
+    out += r["reason_vi"].as_string();
+    return out;
+  }
+
   const std::string sug = suggest(cmd);
   std::string msg = "Không hiểu lệnh \"" + cmd + "\". Gõ \"giúp\" để xem danh sách lệnh.";
   if (!sug.empty()) {
     msg += " Có phải bạn muốn dùng \"" + sug + "\"?";
   }
+  // Dòng không nhận ra KHÔNG tự chạy như lệnh hệ thống — chỉ gợi ý cách chạy rõ ràng.
+  const char* path_env = std::getenv("PATH");
+  const std::string prog = posix::find_program(args.empty() ? cmd : args[0], path_env ? path_env : "", "/");
+  if (!prog.empty() && (args.empty() || args[0].find('/') == std::string::npos))
+    msg += "\n\"" + (args.empty() ? cmd : args[0]) + "\" là chương trình hệ thống (" + prog +
+           "). Shell không tự chạy; muốn chạy trong hộp cát: !" + (args.empty() ? cmd : args[0]) + " …";
   return msg;
 }
 
