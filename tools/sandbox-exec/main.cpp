@@ -34,6 +34,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -43,6 +44,21 @@
 namespace {
 
 constexpr int kSetupFailed = 125;
+
+// glibc cũ (Ubuntu 22.04) có thể thiếu tên SYS_landlock_*; số hiệu giống nhau
+// trên mọi kiến trúc dùng bảng syscall chung (x86_64, aarch64, riscv64).
+#ifndef SYS_landlock_create_ruleset
+#define SYS_landlock_create_ruleset 444
+#endif
+#ifndef SYS_landlock_add_rule
+#define SYS_landlock_add_rule 445
+#endif
+#ifndef SYS_landlock_restrict_self
+#define SYS_landlock_restrict_self 446
+#endif
+#ifndef LANDLOCK_CREATE_RULESET_VERSION
+#define LANDLOCK_CREATE_RULESET_VERSION (1U << 0)
+#endif
 
 long ll_create(const landlock_ruleset_attr* attr, size_t size, uint32_t flags) {
   return syscall(SYS_landlock_create_ruleset, attr, size, flags);

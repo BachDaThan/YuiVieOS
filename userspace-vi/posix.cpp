@@ -13,9 +13,14 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "yui/json.hpp"
 #include "yui/service.hpp"
