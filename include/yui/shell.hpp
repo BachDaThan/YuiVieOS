@@ -6,9 +6,11 @@
 #ifndef YUI_SHELL_HPP
 #define YUI_SHELL_HPP
 
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "yui/posix.hpp"
 #include "yui/service.hpp"
 #include "yui/ui.hpp"
 
@@ -36,6 +38,13 @@ class Shell {
   bool wants_exit() const { return exit_; }
   std::string suggest(const std::string& input) const;
 
+  // Chế độ POSIX (P4.12): dòng `!…` hoặc `chạy …`. Runner tạo khi cần.
+  void set_posix_options(const posix::Options& o) {
+    posix_opts_ = o;
+    posix_.reset();
+  }
+  posix::Runner& posix_runner();
+
  private:
   std::string dispatch(const std::string& cmd, const std::vector<std::string>& args);
   service::Daemon& daemon_;
@@ -43,6 +52,8 @@ class Shell {
   std::vector<Command> commands_;
   bool exit_ = false;
   int history_ = 0;
+  posix::Options posix_opts_;
+  std::unique_ptr<posix::Runner> posix_;
 };
 
 }  // namespace yui::shell

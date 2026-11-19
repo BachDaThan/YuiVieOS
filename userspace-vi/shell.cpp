@@ -3,6 +3,7 @@
 #include "yui/shell.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <sstream>
 
 #include "yui/apppack.hpp"
@@ -145,6 +146,7 @@ const std::map<std::string, std::string> kAliases = {
     {"purge", "xoávĩnhviễn"}, {"xoavinhvien", "xoávĩnhviễn"}, {"xóavĩnhviễn", "xoávĩnhviễn"},
     {"emptytrash", "đổrác"}, {"dorac", "đổrác"},
     {"cleanup", "dọnrác"},   {"donrac", "dọnrác"},  {"clean", "dọnrác"},
+    {"run", "chạy"},         {"chay", "chạy"},      {"posix", "chạy"},
 };
 
 }  // namespace
@@ -225,6 +227,9 @@ Shell::Shell(service::Daemon& daemon, const ui::Layout& layout) : daemon_(daemon
       {"dọnrác", "cleanup", "dọnrác", "cleanup",
        "Dọn bộ nhớ đệm/tệp tạm trong danh sách có tên; hiện dung lượng rồi xin xác nhận.",
        "Clean named caches/temp files only; shows the size, then asks for confirmation."},
+      {"chạy", "run", "chạy <dòng lệnh POSIX>  (hoặc !<dòng lệnh>)", "run <POSIX command line>  (or !<line>)",
+       "Chạy lệnh hệ thống trong hộp cát (Landlock): | > >> < 2>&1 & jobs kill wait cd export.",
+       "Run a system command in the sandbox (Landlock): | > >> < 2>&1 & jobs kill wait cd export."},
   };
 }
 
@@ -306,9 +311,21 @@ std::string Shell::suggest(const std::string& input) const {
   return "";
 }
 
+posix::Runner& Shell::posix_runner() {
+  if (!posix_) posix_ = std::make_unique<posix::Runner>(daemon_, posix_opts_);
+  return *posix_;
+}
+
 std::string Shell::run(const std::string& line) {
   const std::string trimmed = text::trim(line);
   if (trimmed.empty()) return "";
+  // Chỉ chạy lệnh hệ thống khi bạn nói rõ: "!…" hoặc "chạy …" (P4.12).
+  if (trimmed[0] == '!') {
+    ++history_;
+    const std::string rest = text::trim(trimmed.substr(1));
+    if (rest.empty()) return "Cách dùng: !<dòng lệnh POSIX>, ví dụ: !ls -la | grep txt > ds.txt";
+    return posix_runner().run(rest);
+  }
   const auto tokens = tokenize(trimmed);
   if (tokens.empty()) return "";
   const std::string cmd = text::fold(tokens[0]);
@@ -316,6 +333,14 @@ std::string Shell::run(const std::string& line) {
   std::string canon = cmd;
   auto it = kAliases.find(cmd);
   if (it != kAliases.end()) canon = it->second;
+
+  if (canon == "chạy") {
+    ++history_;
+    const size_t sp = trimmed.find_first_of(" \t");
+    const std::string rest = sp == std::string::npos ? "" : text::trim(trimmed.substr(sp));
+    if (rest.empty()) return "Cách dùng: chạy <dòng lệnh POSIX>  (hoặc !<dòng lệnh>)";
+    return posix_runner().run(rest);
+  }
 
   return dispatch(canon, tokens);
 }
@@ -808,6 +833,12 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
   if (!sug.empty()) {
     msg += " Có phải bạn muốn dùng \"" + sug + "\"?";
   }
+  // Dòng không nhận ra KHÔNG tự chạy như lệnh hệ thống — chỉ gợi ý cách chạy rõ ràng.
+  const char* path_env = std::getenv("PATH");
+  const std::string prog = posix::find_program(args.empty() ? cmd : args[0], path_env ? path_env : "", "/");
+  if (!prog.empty() && (args.empty() || args[0].find('/') == std::string::npos))
+    msg += "\n\"" + (args.empty() ? cmd : args[0]) + "\" là chương trình hệ thống (" + prog +
+           "). Shell không tự chạy; muốn chạy trong hộp cát: !" + (args.empty() ? cmd : args[0]) + " …";
   return msg;
 }
 

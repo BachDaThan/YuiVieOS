@@ -5,6 +5,9 @@
 //   echo "giúp" | yui-shell       đọc lệnh từ stdin
 //   --width/--height/--dpi/--ram/--gpu/--low-power  mô tả màn hình & máy
 //   YUI_STATE_DIR=...             thư mục trạng thái (mặc định /var/lib/yui)
+#include <unistd.h>
+
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -69,11 +72,25 @@ int main(int argc, char** argv) {
   daemon.set_host_snapshot(yui::profile::to_json(yui::profile::probe()));
 
   yui::shell::Shell shell(daemon, layout);
+  // Chế độ POSIX (P4.12): có TTY ⇒ shell giữ terminal, trao cho việc tiền cảnh.
+  yui::posix::Options popts;
+  popts.interactive = script.empty() && isatty(STDIN_FILENO) && tcgetpgrp(STDIN_FILENO) == getpgrp();
+  if (const char* env = std::getenv("YUI_POSIX_ALLOW_UNSANDBOXED")) popts.allow_unsandboxed = std::string(env) == "1";
+  if (popts.interactive) {
+    // Như sh tương tác: Ctrl-C/Ctrl-Z dành cho việc tiền cảnh, không giết shell.
+    std::signal(SIGINT, SIG_IGN);
+    std::signal(SIGQUIT, SIG_IGN);
+    std::signal(SIGTSTP, SIG_IGN);
+    std::signal(SIGTTIN, SIG_IGN);
+    std::signal(SIGTTOU, SIG_IGN);
+  }
+  shell.set_posix_options(popts);
   std::printf("%s\n\n", shell.banner().c_str());
 
   auto handle = [&](const std::string& line) {
     if (line.empty()) return true;
     std::printf("› %s\n", line.c_str());
+    std::fflush(stdout);  // lệnh POSIX ghi thẳng ra fd 1 — giữ đúng thứ tự
     const std::string out = shell.run(line);
     if (!out.empty()) std::printf("%s\n", out.c_str());
     std::printf("\n");

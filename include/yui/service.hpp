@@ -36,6 +36,10 @@ struct Options {
   // Thùng rác + dọn rác (P4.17). trash_root rỗng ⇒ <state_dir>/trash.
   std::string trash_root;
   uint64_t trash_capacity_bytes = 2ull * 1024 * 1024 * 1024;
+  // Chế độ POSIX của shell (P4.12): nhánh đọc/ghi cho hộp cát của lệnh con.
+  std::vector<std::string> posix_rw_dirs;               // rỗng ⇒ {$HOME, /tmp}
+  std::vector<std::string> posix_ro_dirs = {"/"};
+  std::vector<std::string> posix_deny;                  // rỗng ⇒ {~/.ssh, ~/.gnupg, /etc/shadow, /etc/sudoers, state_dir}
 };
 
 // JSON-RPC 2.0 error codes (subset).
@@ -119,6 +123,9 @@ class Daemon {
   json::Value method_store(const std::string& op, const json::Value& params, RpcError& err);
   // Thùng rác (P4.17): trash.list / put / restore / purge / empty / clean_plan / clean.
   json::Value method_trash(const std::string& op, const json::Value& params, RpcError& err);
+  // Shell POSIX (P4.12): shell.posix_check / shell.posix_policy.
+  json::Value method_shell(const std::string& op, const json::Value& params, RpcError& err);
+  sandbox::Policy posix_policy() const;
   // Đường tin cậy P4.13 cho việc không đảo ngược được: true nếu dialog_id đúng
   // đích, chưa dùng; nếu không, mở hộp thoại mới và điền `out` (needs_confirmation).
   bool trusted_dialog_ready(const std::string& target, const std::string& title_vi, const std::string& summary_vi,

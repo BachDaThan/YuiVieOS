@@ -40,8 +40,8 @@ Yêu cầu: `g++` ≥ 10 (C++17), `make`, `python3`, POSIX. **Không** cần m�
 cần thư viện ngoài, không cần Rust.
 
 ```bash
-make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell,yui-splash,yui-update,yui-store}
-make test         # 12422 kiểm thử (12356 C++17 + 66 C11 ABI)
+make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell,yui-splash,yui-update,yui-store,yui-sandbox-exec}
+make test         # 12569 kiểm thử (12503 C++17 + 66 C11 ABI)
 make check        # test + smoke run + kiểm tra tĩnh (scripts/verify.sh, gồm máy kiểm ranh giới P7.10)
 ```
 
@@ -63,6 +63,17 @@ Tiếng Việt
 · os:yui — YuiVieOS — hệ điều hành Việt [concept]
 › thoát
 Tạm biệt — hẹn gặp lại ở YuiVieOS. / Goodbye.
+```
+
+**Chế độ POSIX của `yui-shell` (P4.12):** chỉ chạy lệnh hệ thống khi bạn nói rõ —
+dòng bắt đầu bằng `!` hoặc lệnh `chạy`. Dòng không nhận ra **không bao giờ** tự chạy.
+
+```
+yui› !ls *.txt | sort > ds.txt        # ống dẫn + chuyển hướng, chạy trong hộp cát Landlock
+yui› chạy sleep 60 &                  # [1] 1234
+yui› !jobs                            # [1] Đang chạy  sleep 60 &
+yui› !kill %1                         # chỉ việc do shell này tạo
+yui› !echo x > /etc/hosts             # Từ chối (hộp cát) … — không tiến trình nào được tạo
 ```
 
 **Kho Ứng Dụng — lõi (P4.15):** `yui-store` đọc danh mục ký Ed25519, tải **từ nguồn
@@ -137,7 +148,8 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 4 | Cài đặt tham chiếu graph/vault/engine (**sẽ thay ở P5**) | 🟡 tạm | `ai-bridge-yuid/reference/` |
 | 5 | Smart App Stripper: strip ELF, khử trùng lặp, lọc locale, chống zip-slip | ✅ chạy | `pkg-stripper/apppack.cpp`, `tools/trim` (61 check) |
 | 5 | Bộ gõ Telex **và** VNI, đặt dấu đúng chính tả | ✅ 246 test | `userspace-vi/ime.cpp` |
-| 5 | Shell song ngữ Việt–Anh, 35 lệnh (gồm `tìmapp`/`cài`/`gỡ` của Kho, `xoá`/`khôiphục`/`dọnrác` của thùng rác) | ✅ chạy | `userspace-vi/shell.cpp` |
+| 5 | Shell song ngữ Việt–Anh, 36 lệnh (gồm `tìmapp`/`cài`/`gỡ` của Kho, `xoá`/`khôiphục`/`dọnrác` của thùng rác) | ✅ chạy | `userspace-vi/shell.cpp` |
+| 5 | Chế độ POSIX trong `yui-shell` (`!lệnh` hoặc `chạy …`): ống dẫn, `>` `>>` `<` `2>&1`, `&`/`jobs`/`kill`/`wait`, biến, trích dẫn; `yuid` kiểm + audit từng lệnh, Landlock + no_new_privs qua `yui-sandbox-exec`; dòng lạ không tự chạy | ✅ chạy trên Linux host (Landlock); nhân riêng chờ P2.7 | `userspace-vi/posix.cpp`, `tools/sandbox-exec/`, `tests/test_posix.cpp` (141 check), P4.12 |
 | 5 | Thùng rác (khôi phục kiểm băm, thùng đầy thì cảnh báo, không tự xoá) + dọn rác chỉ trong danh sách có tên, xoá vĩnh viễn cần xác nhận tin cậy | ✅ chạy trên Linux host; chưa nối snapshot nhân | `userspace-vi/trash.cpp`, `tests/test_trash.cpp` (203 check), P4.17 |
 | 5 | Kho Ứng Dụng — lõi: danh mục ký Ed25519, tải https từ nguồn chính thức, kiểm sha256, gọt cục bộ, hộp cát, biểu tượng; CLI `yui-store` + RPC `store.*` | ✅ chạy, chưa có danh mục thật, chỉ gói `.tar` | `pkg-stripper/store.cpp`, `tests/test_store.cpp` (201 check), P4.15 |
 | 5 | Kế hoạch giao diện thích ứng (Framebuffer ⇄ Vulkan/DRM) | ✅ logic + test | `userspace-vi/ui.cpp` |

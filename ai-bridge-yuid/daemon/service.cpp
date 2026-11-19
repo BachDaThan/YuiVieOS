@@ -808,6 +808,86 @@ Value Daemon::method_store(const std::string& op, const Value& p, RpcError& err)
   return Value(nullptr);
 }
 
+// ------------------------------------------------------------- shell.* --
+sandbox::Policy Daemon::posix_policy() const {
+  const char* h = std::getenv("HOME");
+  const std::string home = h ? h : "";
+  sandbox::Policy pol;
+  pol.app_id = "app:yui-shell-posix";
+  pol.tier = sandbox::Tier::Isolated;
+  pol.granted = sandbox::kRightSpawn | sandbox::kRightFsRead | sandbox::kRightFsWrite;
+  pol.allow_child_processes = true;
+  std::vector<std::string> rw = opts_.posix_rw_dirs;
+  if (rw.empty()) {
+    if (!home.empty()) rw.push_back(home);
+    rw.push_back("/tmp");
+  }
+  for (const auto& d : rw) pol.scopes.push_back(d + ":rw");
+  for (const auto& d : opts_.posix_ro_dirs) pol.scopes.push_back(d + ":ro");
+  pol.deny = opts_.posix_deny;
+  if (pol.deny.empty()) {
+    if (!home.empty()) {
+      pol.deny.push_back(home + "/.ssh");
+      pol.deny.push_back(home + "/.gnupg");
+    }
+    pol.deny.push_back("/etc/shadow");
+    pol.deny.push_back("/etc/sudoers");
+    if (!opts_.state_dir.empty()) pol.deny.push_back(opts_.state_dir);
+  }
+  return pol;
+}
+
+Value Daemon::method_shell(const std::string& op, const Value& p, RpcError& err) {
+  const sandbox::Policy pol = posix_policy();
+  auto dirs = [&](const char* suffix) {
+    Value a(json::Array{});
+    for (const auto& sc : pol.scopes)
+      if (text::ends_with(sc, suffix)) a.push(sc.substr(0, sc.size() - 3));
+    return a;
+  };
+  if (op == "posix_policy") {
+    Value v = pol.to_json();
+    v.set("rw", dirs(":rw"));
+    v.set("ro", dirs(":ro"));
+    return v;
+  }
+  if (op != "posix_check") {
+    err.code = kMethodNotFound;
+    err.message = "unknown shell operation: " + op;
+    return Value(nullptr);
+  }
+  const std::string program = param_string(p, "program");
+  if (program.empty() || program[0] != '/') {
+    err.code = kInvalidParams;
+    err.message = "'program' phải là đường dẫn tuyệt đối đã phân giải";
+    return Value(nullptr);
+  }
+  const int64_t now = static_cast<int64_t>(std::time(nullptr));
+  std::vector<sandbox::Action> actions = {{"spawn", program}};
+  for (const auto& r : p["reads"].arr()) actions.push_back({"fs.read", r.as_string()});
+  for (const auto& w : p["writes"].arr()) actions.push_back({"fs.write", w.as_string()});
+  bool ok = true;
+  std::string reason = "được phép theo chính sách " + pol.app_id;
+  for (const auto& a : actions) {
+    const auto d = enforcer_.check(pol, nullptr, a, now);
+    if (!d.allowed) {
+      ok = false;
+      reason = a.kind + " " + a.target + ": " + d.reason;
+      break;
+    }
+  }
+  // Không ghi nguyên tham số vào audit (có thể chứa mật khẩu/đường dẫn riêng tư).
+  const std::string target = program + " (" + std::to_string(p["argc"].as_int(1)) + " từ" +
+                             (p["background"].as_bool() ? ", chạy nền" : "") + ")";
+  audit_log("shell", "shell.exec", target, ok, reason);
+  Value v(json::Object{});
+  v.set("ok", ok);
+  v.set("reason_vi", reason);
+  v.set("rw", dirs(":rw"));
+  v.set("ro", dirs(":ro"));
+  return v;
+}
+
 // ------------------------------------------------------------- trash.* --
 bool Daemon::trusted_dialog_ready(const std::string& target, const std::string& title_vi,
                                   const std::string& summary_vi, const std::string& dialog_id,
@@ -995,6 +1075,7 @@ Value Daemon::handle(const std::string& method, const Value& params, RpcError& e
   if (text::starts_with(method, "compat.")) return method_compat(method.substr(7), params, err);
   if (text::starts_with(method, "store.")) return method_store(method.substr(6), params, err);
   if (text::starts_with(method, "trash.")) return method_trash(method.substr(6), params, err);
+  if (text::starts_with(method, "shell.")) return method_shell(method.substr(6), params, err);
   if (method == "ime.convert") return method_ime(params, err);
   if (method == "web.search") return method_web_search(params, err);
   if (method == "telemetry.read") return method_telemetry();
