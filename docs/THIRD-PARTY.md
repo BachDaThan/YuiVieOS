@@ -5,7 +5,7 @@ hoặc tích hợp trong hệ sinh thái YuiVieOS Beta, phục vụ việc rà s
 truy xuất nguồn gốc thành phần (P4.11 SBOM) và đảm bảo tuân thủ đầy đủ các giấy phép
 nguồn mở.
 
-Ngày rà soát gần nhất: **2026-11-18**.
+Ngày rà soát gần nhất: **2026-11-18**. Danh mục bổ sung (§5–§6) thêm **2026-11-19**: dòng ghi *chưa kiểm* nghĩa là mình **chưa đọc giấy phép gốc** và chưa được đưa vào bản build nào.
 
 ---
 
@@ -19,7 +19,7 @@ Hiện tại (tại thời điểm commit này, 2026-11-18):
 
 Quy tắc bất biến: **`scripts/verify.py::check_kernel_dependencies` và `check_third_party` tự động kiểm tra và báo đỏ (FAIL) nếu phát hiện bất kỳ thư mục `vendor/*` hoặc dependency không-path nào chưa được khai báo.**
 
-YuiVieOS Beta **tuyệt đối không đóng gói hay phân phối lại** các tệp nhị phân đóng nguồn độc quyền của Microsoft Windows (DLLs/runtime) hay các dịch vụ đóng nguồn của Google (Google Mobile Services - GMS).
+YuiVieOS Beta **tuyệt đối không đóng gói hay phân phối lại** các tệp nhị phân đóng nguồn độc quyền của Microsoft Windows (DLLs/runtime) hay các dịch vụ đóng nguồn của Google (Google Mobile Services - GMS), **bộ dịch mã đóng nguồn** (ví dụ libhoudini của Intel) và **bản vá/crack của game**.
 
 ---
 
@@ -45,6 +45,7 @@ các thành phần sau sẽ được nạp trong hộp cát micro-VM cô lập h
 
 1. **Không lây nhiễm Copyleft:** Các thành phần mang giấy phép GPLv3 (như Waydroid) chỉ được thực thi như một khách micro-VM độc lập hoặc tiến trình cô lập phía trên ranh giới mạng/IPC tiêu chuẩn. Nhân YuiVieOS, thư viện C-ABI `libyui`, và daemon `yuid` **không liên kết tĩnh hay nhúng mã GPL** vào mã nguồn phân phối chung.
 2. **Tuân thủ LGPL v2.1:** Các thành phần Wine và VKD3D-Proton nếu có sửa đổi phải được công bố mã nguồn phần sửa đổi theo đúng quy định của LGPL v2.1.
+4. **Không bao giờ nằm trong ISO hay manifest mặc định:** bộ dịch mã đóng nguồn, Google Mobile Services, bản vá game. Chỉ có cơ chế nạp; người dùng tự tải từ nguồn chính thức và tự theo giấy phép của họ (P3.20, P7.10).
 3. **Chống Zip-Slip và kiểm tra chữ ký:** Mọi gói thành phần bên thứ ba tải về phải được thẩm định chữ ký số Ed25519 hoặc mã băm SHA-256 đối chiếu với kho khoá chủ quyền (`bundle::Keyring` của P2.4 / P3.12).
 
 ---
@@ -55,3 +56,31 @@ Hệ thống CI và script `scripts/verify.py::check_third_party` kiểm tra:
 1. Tệp `docs/THIRD-PARTY.md` tồn tại và đầy đủ thông tin các thành phần dự kiến.
 2. Thư mục `vendor/` không tồn tại trong kho (trừ khi có sự phê duyệt rõ ràng và được ghi nhận trong bảng trên).
 3. Các file Cargo.toml Tầng 1–2 giữ vững nguyên tắc 0 dependency ngoài.
+
+---
+
+## 5. Thành phần dự kiến thêm (đề xuất 2026-11-19; giấy phép CHƯA kiểm trừ khi ghi khác)
+
+| Thành phần | Dùng ở | Giấy phép (theo hiểu biết, chưa đọc bản gốc) | Cách phân phối | Việc cần làm trước khi dùng |
+|---|---|---|---|---|
+| Ảnh hệ thống Android của Waydroid | P3.4, P3.17 | Hỗn hợp (phần lớn mã nguồn mở; nhân Linux GPL-2.0) | Waydroid tải từ nguồn của nó khi bạn cài; không đóng gói | Đọc giấy phép ảnh, ghi ngày |
+| libhoudini (Intel) | P3.20 | **Độc quyền, đóng nguồn** | **Không đóng gói**; bạn tự tải | Đọc điều khoản; không phân phối lại |
+| libndk_translation | P3.20 | **Chưa kiểm** (Gemini xếp "đóng nguồn", mình chưa xác minh) | Như trên | Đọc giấy phép trước khi viết dòng nào |
+| Google Mobile Services | — | **Độc quyền** | **Không đóng gói** | Không làm trong dự án |
+| SDL_GameControllerDB | P3.22 | zlib (chưa kiểm) | Chỉ khi bạn duyệt | Đọc LICENSE của kho đó |
+| WireGuard (module nhân Linux khách) | P3.18 bước 2 | GPL-2.0 | Chạy trong khách Linux, không liên kết | Duyệt dependency theo PLAN §6.1 mục 5 |
+| Danh sách chặn tên miền (StevenBlack/hosts, OISD, …) | P4.18 | StevenBlack: MIT (chưa kiểm hôm nay); danh sách khác: chưa biết | Tải khi **bạn bật**; không đóng gói | Đọc từng danh sách (P7.11) |
+| Ứng dụng trong Kho Ứng Dụng (trình duyệt, Zalo, …) | P4.15 | Mỗi ứng dụng một giấy phép/nhãn hiệu | Tải trực tiếp từ nguồn chính thức; **không mirror** | Ghi nguồn + giấy phép + ngày đọc vào manifest (P7.11) |
+| Samba | Backlog NAS | GPL-3.0 | Tải theo nhu cầu trong micro-VM; không đóng gói | Đọc giấy phép khi lập task |
+
+---
+
+## 6. Công cụ tham chiếu — KHÔNG tích hợp, không đóng gói
+
+| Công cụ | Vai trò | Ghi chú |
+|---|---|---|
+| mcpelauncher (minecraft-linux) | Mốc so sánh trên Linux host cho P6.27 | Giấy phép chưa kiểm; cách nó lấy APK qua đăng nhập Google Play chưa đọc điều khoản; **không** tích hợp vào OS |
+| Phoronix Test Suite | Bộ đo so sánh (P6.26) | GPL-3.0; chạy như chương trình riêng, không đóng gói |
+| lmbench / contextswitch | Đo vi mô (P6.26) | Giấy phép chưa kiểm |
+| Minecraft (Mojang/Microsoft) | Game thử trong P6.27 | Độc quyền; bạn tự có bản mua hợp pháp |
+| Bản vá Minecraft / MB Loader / shader | — | **Không bundle, không trỏ liên kết tải**; bạn tự chịu theo điều khoản của game |
