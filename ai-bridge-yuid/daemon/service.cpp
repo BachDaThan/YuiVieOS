@@ -17,6 +17,7 @@
 #include "yui/store.hpp"
 #include "yui/telemetry.hpp"
 #include "yui/text.hpp"
+#include "yui/trash.hpp"
 
 namespace yui::service {
 namespace {
@@ -764,8 +765,8 @@ Value Daemon::method_store(const std::string& op, const Value& p, RpcError& err)
   if (op == "install") {
     const std::string target = store::TrustedDialogConfirmation::target_for(plan.entry.id);
     const std::string dialog_id = param_string(p, "dialog_id");
-    const bool reused = std::find(store_used_dialogs_.begin(), store_used_dialogs_.end(), dialog_id) !=
-                        store_used_dialogs_.end();
+    const bool reused = std::find(used_dialogs_.begin(), used_dialogs_.end(), dialog_id) !=
+                        used_dialogs_.end();
     if (dialog_id.empty() || reused || trusted_confirmation_.dialog_target(dialog_id) != target) {
       // Không có (hoặc sai) hộp thoại: mở hộp thoại tin cậy, KHÔNG tải gì.
       const std::string id = trusted_confirmation_.show_dialog(target, "Cài ứng dụng", plan.summary_vi(), 0);
@@ -792,7 +793,7 @@ Value Daemon::method_store(const std::string& op, const Value& p, RpcError& err)
     store::CurlFetcher curl_fetcher;
     store::Fetcher& f = https ? static_cast<store::Fetcher&>(curl_fetcher) : static_cast<store::Fetcher&>(file_fetcher);
     const auto r = st.install(app, f, gate);
-    if (r.code != "not_confirmed") store_used_dialogs_.push_back(dialog_id);
+    if (r.code != "not_confirmed") used_dialogs_.push_back(dialog_id);
     audit_log("store", "store.install", plan.entry.id, r.ok, r.reason_vi);
     Value v = outcome(r);
     if (r.ok) {
@@ -804,6 +805,174 @@ Value Daemon::method_store(const std::string& op, const Value& p, RpcError& err)
   }
   err.code = kMethodNotFound;
   err.message = "unknown store operation: " + op;
+  return Value(nullptr);
+}
+
+// ------------------------------------------------------------- trash.* --
+bool Daemon::trusted_dialog_ready(const std::string& target, const std::string& title_vi,
+                                  const std::string& summary_vi, const std::string& dialog_id,
+                                  const std::string& audit_kind, Value& out) {
+  const bool reused = std::find(used_dialogs_.begin(), used_dialogs_.end(), dialog_id) != used_dialogs_.end();
+  if (!dialog_id.empty() && !reused && trusted_confirmation_.dialog_target(dialog_id) == target) return true;
+  const std::string id = trusted_confirmation_.show_dialog(target, title_vi, summary_vi, 0);
+  audit_log("trash", audit_kind, target, false, "chờ người dùng xác nhận qua hộp thoại tin cậy " + id);
+  out = Value(json::Object{});
+  out.set("ok", false);
+  out.set("code", "needs_confirmation");
+  out.set("dialog_id", id);
+  out.set("plan_vi", summary_vi);
+  out.set("reason_vi", "Cần xác nhận bằng bàn phím/chuột thật trên hộp thoại hệ thống " + id +
+                           " (đường tin cậy P4.13); chưa xoá gì");
+  return false;
+}
+
+Value Daemon::method_trash(const std::string& op, const Value& p, RpcError& err) {
+  trash::Options to;
+  to.root = opts_.trash_root.empty() ? opts_.state_dir + "/trash" : opts_.trash_root;
+  to.capacity_bytes = opts_.trash_capacity_bytes;
+  if (const char* home = std::getenv("HOME")) to.protected_exact.push_back(home);
+  to.protected_exact.push_back(opts_.state_dir);
+  trash::Trash tr(to);
+  const std::string store_root = opts_.store_root.empty() ? opts_.state_dir + "/store" : opts_.store_root;
+
+  auto outcome = [](const trash::Result& r) {
+    Value v(json::Object{});
+    v.set("ok", r.ok);
+    v.set("code", r.code);
+    v.set("reason_vi", r.reason_vi);
+    if (!r.warning_vi.empty()) v.set("warning_vi", r.warning_vi);
+    if (!r.item.id.empty()) {
+      v.set("id", r.item.id);
+      v.set("original_path", r.item.original_path);
+      v.set("sha256", r.item.sha256);
+      v.set("size", static_cast<long long>(r.item.size));
+    }
+    if (r.removed) v.set("removed", static_cast<long long>(r.removed));
+    if (r.freed_bytes) v.set("freed_bytes", static_cast<long long>(r.freed_bytes));
+    return v;
+  };
+  auto need = [&](const char* key) -> std::string {
+    const std::string v = param_string(p, key);
+    if (v.empty()) {
+      err.code = kInvalidParams;
+      err.message = std::string("thiếu tham số '") + key + "'";
+    }
+    return v;
+  };
+
+  if (op == "list") {
+    Value arr(json::Array{});
+    for (const auto& it : tr.list()) {
+      Value v(json::Object{});
+      v.set("id", it.id);
+      v.set("original_path", it.original_path);
+      v.set("deleted_at", it.deleted_at);
+      v.set("size", static_cast<long long>(it.size));
+      v.set("is_dir", it.is_dir);
+      v.set("verified", !it.sha256.empty());
+      arr.push(v);
+    }
+    Value v(json::Object{});
+    v.set("root", to.root);
+    v.set("items", arr);
+    v.set("used_bytes", static_cast<long long>(tr.used_bytes()));
+    v.set("capacity_bytes", static_cast<long long>(to.capacity_bytes));
+    v.set("usage_vi", tr.usage_vi());
+    return v;
+  }
+  if (op == "put") {
+    const std::string path = need("path");
+    if (path.empty()) return Value(nullptr);
+    const auto r = tr.put(path);
+    audit_log("trash", "trash.put", path, r.ok, r.reason_vi);
+    return outcome(r);
+  }
+  if (op == "restore") {
+    const std::string id = need("id");
+    if (id.empty()) return Value(nullptr);
+    const auto r = tr.restore(id, param_string(p, "to"));
+    audit_log("trash", "trash.restore", id, r.ok, r.reason_vi);
+    return outcome(r);
+  }
+  const std::string dialog_id = param_string(p, "dialog_id");
+  if (op == "purge") {
+    const std::string id = need("id");
+    if (id.empty()) return Value(nullptr);
+    trash::Item it;
+    bool found = false;
+    for (const auto& x : tr.list())
+      if (x.id == id) {
+        it = x;
+        found = true;
+      }
+    if (!found) {
+      trash::Result r;
+      r.code = "not_found";
+      r.reason_vi = "Không có món '" + id + "' trong thùng rác";
+      return outcome(r);
+    }
+    const std::string summary = "Xoá VĨNH VIỄN '" + id + "' (" + it.original_path + ", " +
+                                trash::human_bytes(it.size) + "). Không khôi phục được nữa.";
+    Value out;
+    if (!trusted_dialog_ready(trash::Trash::purge_target(id), "Xoá vĩnh viễn", summary, dialog_id, "trash.purge", out))
+      return out;
+    trash::TrustedDialogGate gate(trusted_confirmation_, dialog_id);
+    const auto r = tr.purge(id, gate);
+    if (r.code != "not_confirmed") used_dialogs_.push_back(dialog_id);
+    audit_log("trash", "trash.purge", id, r.ok, r.reason_vi);
+    return outcome(r);
+  }
+  if (op == "empty") {
+    if (tr.list().empty()) {
+      trash::Result r;
+      r.ok = true;
+      r.code = "ok";
+      r.reason_vi = "Thùng rác đang trống";
+      return outcome(r);
+    }
+    Value out;
+    if (!trusted_dialog_ready(tr.empty_target(), "Đổ thùng rác", tr.empty_summary_vi(), dialog_id, "trash.empty", out))
+      return out;
+    trash::TrustedDialogGate gate(trusted_confirmation_, dialog_id);
+    const auto r = tr.empty(gate);
+    if (r.code != "not_confirmed") used_dialogs_.push_back(dialog_id);
+    audit_log("trash", "trash.empty", to.root, r.ok, r.reason_vi);
+    return outcome(r);
+  }
+  if (op == "clean_plan" || op == "clean") {
+    const auto targets = trash::default_targets(store_root, opts_.state_dir);
+    const auto plan = trash::plan_cleanup(targets, static_cast<int64_t>(std::time(nullptr)));
+    if (op == "clean_plan" || plan.entries.empty()) {
+      Value v(json::Object{});
+      v.set("ok", true);
+      v.set("code", "ok");
+      v.set("plan_vi", plan.summary_vi());
+      v.set("total_bytes", static_cast<long long>(plan.total_bytes));
+      Value arr(json::Array{});
+      for (const auto& e : plan.entries) {
+        Value x(json::Object{});
+        x.set("path", e.path);
+        x.set("label_vi", e.label_vi);
+        x.set("bytes", static_cast<long long>(e.bytes));
+        arr.push(x);
+      }
+      v.set("entries", arr);
+      Value tg(json::Array{});
+      for (const auto& t : targets) tg.push(t.label_vi + ": " + t.dir);
+      v.set("targets", tg);
+      if (op == "clean") v.set("reason_vi", "Không có gì để dọn");
+      return v;
+    }
+    Value out;
+    if (!trusted_dialog_ready(plan.target(), "Dọn rác", plan.summary_vi(), dialog_id, "trash.clean", out)) return out;
+    trash::TrustedDialogGate gate(trusted_confirmation_, dialog_id);
+    const auto r = trash::apply_cleanup(plan, targets, gate);
+    if (r.code != "not_confirmed") used_dialogs_.push_back(dialog_id);
+    audit_log("trash", "trash.clean", std::to_string(plan.entries.size()) + " mục", r.ok, r.reason_vi);
+    return outcome(r);
+  }
+  err.code = kMethodNotFound;
+  err.message = "unknown trash operation: " + op;
   return Value(nullptr);
 }
 
@@ -825,6 +994,7 @@ Value Daemon::handle(const std::string& method, const Value& params, RpcError& e
   if (text::starts_with(method, "guard.")) return method_guard(method.substr(6), params, err);
   if (text::starts_with(method, "compat.")) return method_compat(method.substr(7), params, err);
   if (text::starts_with(method, "store.")) return method_store(method.substr(6), params, err);
+  if (text::starts_with(method, "trash.")) return method_trash(method.substr(6), params, err);
   if (method == "ime.convert") return method_ime(params, err);
   if (method == "web.search") return method_web_search(params, err);
   if (method == "telemetry.read") return method_telemetry();

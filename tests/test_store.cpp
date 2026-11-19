@@ -380,7 +380,7 @@ YUI_TEST(store, install_happy_path_signed_publisher) {
   CHECK(desk.find("X-Yui-App-Id=org.example.hello") != std::string::npos);
   CHECK(desk.find("X-Yui-Policy=") != std::string::npos);
   CHECK(s.is_installed("org.example.hello"));
-  CHECK_EQ(s.installed()[0].signature, std::string("valid"));
+  CHECK_EQ(std::string(s.installed()[0].signature), std::string("valid"));  // bản sao: tránh tham chiếu treo vào vector tạm
 
   // Cài lại cùng bản: không hỏi, không tải.
   const auto again = s.install("org.example.hello", fx.fetcher, gate);
@@ -405,7 +405,7 @@ YUI_TEST(store, unsigned_app_gets_p312_sandbox) {
   const std::string pol = slurp(fx.root + "/policies/org.example.hello.policy.json");
   CHECK(pol.find("net.connect") == std::string::npos);
   CHECK(pol.find("net:*") != std::string::npos);  // deny rõ ràng
-  CHECK_EQ(s.installed()[0].signature, std::string("unsigned"));
+  CHECK_EQ(std::string(s.installed()[0].signature), std::string("unsigned"));  // bản sao: tránh tham chiếu treo vào vector tạm
 
   // Chữ ký nhà phát hành SAI ⇒ từ chối hẳn (không hạ xuống "không chữ ký").
   auto forged = entry_for("org.example.forged", fx.pkg, kUrl);
@@ -649,7 +649,7 @@ YUI_TEST(store, size_limit_takeover_and_upgrade) {
   CHECK(!exists(dir + "/share/hello/data.txt"));  // tệp của bản cũ không còn
   CHECK(!exists(dir + ".old") && !exists(dir + ".new"));
   CHECK_EQ(s.installed().size(), size_t(1));
-  CHECK_EQ(s.installed()[0].version, std::string("2.0.0"));
+  CHECK_EQ(std::string(s.installed()[0].version), std::string("2.0.0"));  // bản sao: tránh tham chiếu treo vào vector tạm
 }
 
 // --------------------------- không gọt app có DRM, tệp đơn, thiếu tệp chạy --

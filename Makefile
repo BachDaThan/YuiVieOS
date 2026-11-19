@@ -51,6 +51,7 @@ LIB_SRC := \
 	userspace-vi/ui.cpp \
 	userspace-vi/fb.cpp \
 	userspace-vi/shell.cpp \
+	userspace-vi/trash.cpp \
 	ai-bridge-yuid/reference/graph.cpp \
 	ai-bridge-yuid/reference/engine.cpp \
 	ai-bridge-yuid/reference/vault.cpp \
@@ -66,7 +67,7 @@ HEADERS := $(wildcard include/yui/*.hpp include/yui/*.h) \
 
 TESTS := test_crypto test_codec_json test_core test_sandbox test_ime test_daemon test_tools \
          test_telemetry test_fb test_ed25519 test_power test_fsstore test_linuxabi \
-         test_redteam test_store
+         test_redteam test_store test_trash
 
 # `kernel` is declared before `all`, so pin the default goal explicitly.
 .DEFAULT_GOAL := all
@@ -178,6 +179,10 @@ check: all test verify
 	@./$(BIN)/yui-profiler | head -4
 	@echo "── smoke: shell script"
 	@printf 'thôngtin\nthoát\n' | ./$(BIN)/yui-shell > /dev/null
+	@echo "── smoke: thùng rác (xoá → khôi phục, băm khớp)"
+	@rm -rf /tmp/smoke-trash && mkdir -p /tmp/smoke-trash/state && echo "dữ liệu" > /tmp/smoke-trash/tệp.txt && sha256sum /tmp/smoke-trash/tệp.txt > /tmp/smoke-trash.sum
+	@printf 'xoá /tmp/smoke-trash/tệp.txt\nkhôiphục tệp.txt\nthoát\n' | YUI_STATE_DIR=/tmp/smoke-trash/state ./$(BIN)/yui-shell > /dev/null
+	@sha256sum -c --quiet /tmp/smoke-trash.sum
 	@echo "── smoke: splash → PPM"
 	@./$(BIN)/yui-splash --width 320 --height 200 --out /tmp/yui-splash.ppm > /dev/null
 	@test -s /tmp/yui-splash.ppm

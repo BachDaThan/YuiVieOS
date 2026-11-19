@@ -139,6 +139,12 @@ const std::map<std::string, std::string> kAliases = {
     {"searchapp", "tìmapp"}, {"timapp", "tìmapp"}, {"findapp", "tìmapp"},
     {"install", "cài"},      {"cai", "cài"},
     {"uninstall", "gỡ"},     {"gocai", "gỡ"},       {"gỡcài", "gỡ"},
+    {"delete", "xoá"},       {"del", "xoá"},        {"trash", "xoá"},      {"xoa", "xoá"},   {"xóa", "xoá"},
+    {"trashlist", "thùngrác"}, {"thungrac", "thùngrác"}, {"lsrac", "thùngrác"},
+    {"restore", "khôiphục"}, {"khoiphuc", "khôiphục"}, {"undelete", "khôiphục"},
+    {"purge", "xoávĩnhviễn"}, {"xoavinhvien", "xoávĩnhviễn"}, {"xóavĩnhviễn", "xoávĩnhviễn"},
+    {"emptytrash", "đổrác"}, {"dorac", "đổrác"},
+    {"cleanup", "dọnrác"},   {"donrac", "dọnrác"},  {"clean", "dọnrác"},
 };
 
 }  // namespace
@@ -204,6 +210,21 @@ Shell::Shell(service::Daemon& daemon, const ui::Layout& layout) : daemon_(daemon
       {"gỡ", "uninstall", "gỡ <mã>", "uninstall <id>",
        "Gỡ sạch ứng dụng: tệp, chính sách hộp cát, biểu tượng, bộ nhớ đệm.",
        "Remove an app completely: files, sandbox policy, menu entry, cache."},
+      {"xoá", "delete", "xoá <đường_dẫn>", "delete <path>",
+       "Chuyển tệp/thư mục vào thùng rác (khôi phục được, kiểm băm).",
+       "Move a file/folder to the trash (restorable, hash-checked)."},
+      {"thùngrác", "trashlist", "thùngrác", "trashlist", "Xem các món trong thùng rác và dung lượng.",
+       "List trash items and usage."},
+      {"khôiphục", "restore", "khôiphục <mã> [đường_dẫn_mới]", "restore <id> [new_path]",
+       "Trả món về chỗ cũ (không ghi đè tệp đang có).", "Restore an item (never overwrites)."},
+      {"xoávĩnhviễn", "purge", "xoávĩnhviễn <mã>", "purge <id>",
+       "Xoá hẳn một món trong thùng rác (cần xác nhận tin cậy).",
+       "Permanently delete one trash item (trusted confirmation)."},
+      {"đổrác", "emptytrash", "đổrác", "emptytrash", "Đổ cả thùng rác (cần xác nhận tin cậy).",
+       "Empty the whole trash (trusted confirmation)."},
+      {"dọnrác", "cleanup", "dọnrác", "cleanup",
+       "Dọn bộ nhớ đệm/tệp tạm trong danh sách có tên; hiện dung lượng rồi xin xác nhận.",
+       "Clean named caches/temp files only; shows the size, then asks for confirmation."},
   };
 }
 
@@ -703,6 +724,83 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
     const auto r = daemon_.handle("store.remove", p, err);
     if (err.code != 0) return "Lỗi: " + err.message;
     return r["reason_vi"].as_string();
+  }
+
+  if (cmd == "xoá") {
+    if (args.size() < 2) return "Cách dùng: xoá <đường_dẫn>  (vào thùng rác, khôi phục được)";
+    service::RpcError err;
+    json::Value p(json::Object{});
+    p.set("path", join_args(args, 1));
+    const auto r = daemon_.handle("trash.put", p, err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    std::string out = r["reason_vi"].as_string();
+    if (r.has("warning_vi")) out += "\n⚠ " + r["warning_vi"].as_string();
+    return out;
+  }
+
+  if (cmd == "thùngrác") {
+    service::RpcError err;
+    const auto r = daemon_.handle("trash.list", json::Value(json::Object{}), err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    const auto& items = r["items"].arr();
+    std::ostringstream os;
+    os << "Thùng rác — " << items.size() << " món · " << r["usage_vi"].as_string();
+    for (const auto& it : items) {
+      os << "\n  · [" << it["id"].as_string() << "] " << it["original_path"].as_string()
+         << (it["is_dir"].as_bool() ? "/" : "") << " — " << it["deleted_at"].as_string()
+         << (it["verified"].as_bool() ? "" : " · không có băm");
+    }
+    if (items.empty()) os << "\n  (trống)";
+    return os.str();
+  }
+
+  // Mã món có thể chứa khoảng trắng ("báo cáo.txt"): lấy tiền tố dài nhất khớp
+  // một mã đang có trong thùng; phần còn lại (nếu có) là đường dẫn đích.
+  auto trash_id = [&](std::string& rest) -> std::string {
+    service::RpcError lerr;
+    const auto lst = daemon_.handle("trash.list", json::Value(json::Object{}), lerr);
+    for (size_t k = args.size(); k > 1; --k) {
+      std::vector<std::string> head(args.begin(), args.begin() + long(k));
+      const std::string cand = join_args(head, 1);
+      for (const auto& it : lst["items"].arr()) {
+        if (it["id"].as_string() == cand) {
+          rest = join_args(args, k);
+          return cand;
+        }
+      }
+    }
+    rest = join_args(args, 2);
+    return args[1];
+  };
+
+  if (cmd == "khôiphục") {
+    if (args.size() < 2) return "Cách dùng: khôiphục <mã> [đường_dẫn_mới]";
+    service::RpcError err;
+    json::Value p(json::Object{});
+    std::string dest;
+    p.set("id", trash_id(dest));
+    if (!dest.empty()) p.set("to", dest);
+    const auto r = daemon_.handle("trash.restore", p, err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    return r["reason_vi"].as_string();
+  }
+
+  if (cmd == "xoávĩnhviễn" || cmd == "đổrác" || cmd == "dọnrác") {
+    if (cmd == "xoávĩnhviễn" && args.size() < 2) return "Cách dùng: xoávĩnhviễn <mã>";
+    service::RpcError err;
+    json::Value p(json::Object{});
+    if (cmd == "xoávĩnhviễn") {
+      std::string ignored;
+      p.set("id", trash_id(ignored));
+    }
+    const char* method = cmd == "xoávĩnhviễn" ? "trash.purge" : cmd == "đổrác" ? "trash.empty" : "trash.clean";
+    // Shell chỉ mở hộp thoại tin cậy; không tự xoá vĩnh viễn gì.
+    const auto r = daemon_.handle(method, p, err);
+    if (err.code != 0) return "Lỗi: " + err.message;
+    std::string out;
+    if (r.has("plan_vi")) out = r["plan_vi"].as_string() + "\n";
+    out += r["reason_vi"].as_string();
+    return out;
   }
 
   const std::string sug = suggest(cmd);

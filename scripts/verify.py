@@ -78,6 +78,7 @@ REQUIRED_FILES = [
     "tests/test_ime.cpp",
     "include/yui/store.hpp", "pkg-stripper/store.cpp", "tools/store/main.cpp",
     "tests/test_store.cpp",
+    "include/yui/trash.hpp", "userspace-vi/trash.cpp", "tests/test_trash.cpp",
     "scripts/check_boundaries.py", "scripts/test_check_boundaries.py",
 ]
 STALE = ["core", "crates", "sandbox", "ui"]  # old layout must not come back

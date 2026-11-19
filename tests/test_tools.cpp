@@ -371,14 +371,14 @@ YUI_TEST(shell, bilingual_commands) {
   CHECK_EQ(sh2.run("   "), std::string(""));
 }
 
-YUI_TEST(shell, catalog_has_29_bilingual_commands) {
+YUI_TEST(shell, catalog_has_35_bilingual_commands) {
   service::Options opts;
   service::Daemon daemon(opts);
   ui::Layout layout;
   shell::Shell sh(daemon, layout);
 
   const auto& cmds = sh.commands();
-  CHECK_EQ(cmds.size(), size_t(29));  // +3 lệnh Kho (P4.15): tìmapp, cài, gỡ
+  CHECK_EQ(cmds.size(), size_t(35));  // +3 lệnh Kho (P4.15), +6 lệnh thùng rác (P4.17)
 
   for (const auto& c : cmds) {
     CHECK(!c.name_vi.empty());

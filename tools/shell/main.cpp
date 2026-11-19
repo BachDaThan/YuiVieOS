@@ -4,6 +4,7 @@
 //   yui-shell --script FILE       chạy một loạt lệnh rồi thoát
 //   echo "giúp" | yui-shell       đọc lệnh từ stdin
 //   --width/--height/--dpi/--ram/--gpu/--low-power  mô tả màn hình & máy
+//   YUI_STATE_DIR=...             thư mục trạng thái (mặc định /var/lib/yui)
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -61,6 +62,8 @@ int main(int argc, char** argv) {
 
   yui::service::Options opts;
   opts.state_dir = "/var/lib/yui";
+  // Thư mục trạng thái (Kho, thùng rác…) — đổi được để chạy thử không cần quyền root.
+  if (const char* env = std::getenv("YUI_STATE_DIR")) opts.state_dir = env;
   if (const char* env = std::getenv("YUI_VAULT_KEY")) opts.vault_password = env;
   yui::service::Daemon daemon(opts);
   daemon.set_host_snapshot(yui::profile::to_json(yui::profile::probe()));
