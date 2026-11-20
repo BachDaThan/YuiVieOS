@@ -81,6 +81,8 @@ REQUIRED_FILES = [
     "include/yui/trash.hpp", "userspace-vi/trash.cpp", "tests/test_trash.cpp",
     "include/yui/posix.hpp", "userspace-vi/posix.cpp", "tests/test_posix.cpp",
     "tools/sandbox-exec/main.cpp",
+    "include/yui/archive.hpp", "pkg-stripper/archive.cpp", "tests/test_archive.cpp",
+    "tests/archive_fixtures.hpp", "scripts/gen_archive_fixtures.py",
     "scripts/check_boundaries.py", "scripts/test_check_boundaries.py",
 ]
 STALE = ["core", "crates", "sandbox", "ui"]  # old layout must not come back

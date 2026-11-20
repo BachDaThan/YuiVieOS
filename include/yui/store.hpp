@@ -33,8 +33,9 @@
 // https, chỉ chuyển hướng sang https; yuid ở chế độ offline không dùng nó.
 //
 // Giới hạn đã biết (ghi thẳng, không tô hồng):
-//   * chưa có bộ giải nén DEFLATE: chưa nhận `.tar.gz`/`.zip`/`.deb`; tệp đơn
-//     (AppImage, `.exe`, `.apk`) được lưu nguyên vẹn, chạy chúng là việc của P3;
+//   * `.tar.gz`/`.zip` đi qua bộ giải nén an toàn `yui/archive.hpp` (P4.33,
+//     DEFLATE tự viết); chưa nhận `.deb`/zstd/7z; tệp đơn (AppImage, `.exe`,
+//     `.apk`) được lưu nguyên vẹn, chạy chúng là việc của P3;
 //   * xác nhận ở terminal (`TtyConfirmation`) là đường tạm trên Linux host — kẻ
 //     chiếm được terminal của bạn vẫn gõ thay được; đường tin cậy thật là hộp
 //     thoại của compositor (P4.1 + P4.13).
@@ -60,7 +61,7 @@ struct AppEntry {
   std::string version;
   std::string publisher;
   std::string kind = "native";   // "native" | "wine" | "apk"
-  std::string format = "tar";    // "tar" | "yuip" | "file"
+  std::string format = "tar";    // "tar" | "yuip" | "file" | "tar.gz" | "zip" (P4.33)
   std::string source_url;        // URL nguồn chính thức (không mirror)
   std::string sha256;            // 64 hex thường
   uint64_t size = 0;             // byte, khớp chính xác

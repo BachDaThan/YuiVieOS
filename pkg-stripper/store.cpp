@@ -17,6 +17,7 @@
 #include <memory>
 #include <sstream>
 
+#include "yui/archive.hpp"
 #include "yui/crypto.hpp"
 #include "yui/json.hpp"
 #include "yui/text.hpp"
@@ -484,7 +485,8 @@ bool parse_catalog(const std::string& json_text, Catalog& out, std::string* err)
         has_control_chars(e.license) || has_control_chars(e.low_ram_args) || has_control_chars(e.exec))
       return fail("trường chứa ký tự điều khiển" + where);
     if (!one_of(e.kind, {"native", "wine", "apk"})) return fail("kind không hỗ trợ: " + e.kind + where);
-    if (!one_of(e.format, {"tar", "yuip", "file"})) return fail("format không hỗ trợ: " + e.format + where);
+    if (!one_of(e.format, {"tar", "yuip", "file", "tar.gz", "zip"}))
+      return fail("format không hỗ trợ: " + e.format + where);
     if (!is_lower_hex(e.sha256, 64)) return fail("sha256 phải là 64 hex thường" + where);
     const std::string scheme = url_scheme(e.source_url);
     if (scheme == "https") {
@@ -1047,6 +1049,21 @@ Result Store::install(const std::string& name_or_id, Fetcher& fetcher, Confirmat
     std::string terr;
     if (!read_file(part, data) || !parse_tar(data, entries, &terr)) return make(false, "unsafe_path", "Gói bị từ chối: " + terr);
     if (!apppack::extract(entries, staging.path, &terr)) return make(false, "io_error", "Bung gói lỗi: " + terr);
+  } else if (e.format == "tar.gz" || e.format == "zip") {
+    // P4.33: bộ giải DEFLATE tự viết + giải nén an toàn (zip-slip, liên kết,
+    // bom nén, CRC; lỗi ⇒ không để lại tệp). Định dạng nhận theo chữ ký đầu
+    // tệp và phải khớp danh mục (không để `.zip` khai báo lại là thứ khác).
+    const auto ar = archive::extract_file(part, staging.path, archive::Limits{},
+                                          "Kho Ứng Dụng: " + e.id + " " + e.version + " — " + e.publisher);
+    if (!ar.ok) {
+      const std::string code = ar.code == "unsafe_path" || ar.code == "link" ? "unsafe_path"
+                               : ar.code == "bomb"                           ? "archive_bomb"
+                                                                             : "archive_rejected";
+      return make(false, code, "Gói bị từ chối: " + ar.reason_vi);
+    }
+    if (ar.format != e.format)
+      return make(false, "archive_rejected",
+                  "Gói là '" + ar.format + "' nhưng danh mục khai báo '" + e.format + "': từ chối");
   } else if (e.format == "yuip") {
     Bytes data;
     std::string uerr;
