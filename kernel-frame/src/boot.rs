@@ -44,30 +44,36 @@ fn checked_fb(
     source: &'static str,
 ) -> Option<Framebuffer> {
     if fb_type != 1 {
-        println!("    - framebuffer {}: type {} (khong phai RGB truc tiep), bo qua", source, fb_type);
+        fb_skip(source);
+        println!("type {} (khong phai RGB truc tiep), bo qua", fb_type);
         return None;
     }
     if addr == 0 || width == 0 || height == 0 || width > 16384 || height > 16384 {
-        println!("    - framebuffer {}: kich thuoc vo ly {}x{}, bo qua", source, width, height);
+        fb_skip(source);
+        println!("kich thuoc vo ly {}x{}, bo qua", width, height);
         return None;
     }
     if bpp != 24 && bpp != 32 {
-        println!("    - framebuffer {}: {} bit/pixel chua ho tro, bo qua", source, bpp);
+        fb_skip(source);
+        println!("{} bit/pixel chua ho tro, bo qua", bpp);
         return None;
     }
     let min_pitch = width as u64 * (bpp as u64 / 8);
     if (pitch as u64) < min_pitch {
-        println!("    - framebuffer {}: pitch {} < {}, bo qua", source, pitch, min_pitch);
+        fb_skip(source);
+        println!("pitch {} < {}, bo qua", pitch, min_pitch);
         return None;
     }
     if bpp == 32 && (addr % 4 != 0 || pitch % 4 != 0) {
-        println!("    - framebuffer {}: dia chi/pitch khong can 4 byte, bo qua", source);
+        fb_skip(source);
+        println!("dia chi/pitch khong can 4 byte, bo qua");
         return None;
     }
     let limit: u64 = if cfg!(target_arch = "x86_64") { 4u64 << 30 } else { 1u64 << 48 };
     let end = addr.checked_add(pitch as u64 * height as u64);
     if end.map_or(true, |e| e > limit) {
-        println!("    - framebuffer {}: nam ngoai vung nhan cham duoc ({:#x}), bo qua", source, limit);
+        fb_skip(source);
+        println!("nam ngoai vung nhan cham duoc ({:#x}), bo qua", limit);
         return None;
     }
     let (r, g, b) = shifts;
@@ -88,6 +94,15 @@ fn checked_fb(
         blue_shift: b,
         source,
     })
+}
+
+/// Tiền tố "    - framebuffer <nguồn>: " in thẳng, KHÔNG qua `core::fmt`: trên
+/// aarch64, định dạng một biến `&str` bằng `{}` làm nhân dừng giữa dòng (xem
+/// console.rs — `print_str_no_newline`).
+fn fb_skip(source: &str) {
+    print!("    - framebuffer ");
+    crate::console::print_str_no_newline(source);
+    print!(": ");
 }
 
 /// Thông tin khởi động thô: hoặc multiboot info (x86_64) hoặc DTB (ARM/RISC-V).
@@ -488,26 +503,22 @@ fn fdt_framebuffer(info: &mut BootInfo, blob: &[u8]) {
     use yui_cap::fdt::{parse_fdt_framebuffer, FdtReason};
     let r = parse_fdt_framebuffer(blob);
     if r.reason != FdtReason::Ok {
-        println!(
-            "    - device tree: khong co framebuffer dung duoc ({}, {} nut simple-framebuffer)",
-            r.reason.code(),
-            r.candidates
-        );
+        print!("    - device tree: khong co framebuffer dung duoc (");
+        crate::console::print_str_no_newline(r.reason.code());
+        println!(", {} nut simple-framebuffer)", r.candidates);
         return;
     }
-    println!(
-        "    - device tree: simple-framebuffer {}x{} {} stride {} @ {:#x} (+{:#x})",
-        r.width, r.height, r.format, r.stride, r.addr, r.size
-    );
+    print!("    - device tree: simple-framebuffer {}x{} ", r.width, r.height);
+    crate::console::print_str_no_newline(r.format);
+    println!(" stride {} @ {:#x} (+{:#x})", r.stride, r.addr, r.size);
     let fb_end = r.addr.saturating_add(r.size);
     let dtb = (blob.as_ptr() as u64, blob.as_ptr() as u64 + blob.len() as u64);
     let image = kernel_image();
     for (what, (lo, hi)) in [("anh nhan", image), ("device tree", dtb)] {
         if lo < hi && r.addr < hi && lo < fb_end {
-            println!(
-                "    - framebuffer devicetree: de len {} [{:#x}, {:#x}), bo qua",
-                what, lo, hi
-            );
+            print!("    - framebuffer devicetree: de len ");
+            crate::console::print_str_no_newline(what);
+            println!(" [{:#x}, {:#x}), bo qua", lo, hi);
             return;
         }
     }

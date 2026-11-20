@@ -147,7 +147,7 @@ for _ in range(50):
     except OSError:
         time.sleep(0.2)
 else:
-    sys.exit("không nối được monitor QEMU")
+    sys.exit("   monitor: không nối được (QEMU đã thoát?)")
 
 def until_prompt(limit=30):
     buf = b""
@@ -164,11 +164,14 @@ def until_prompt(limit=30):
 
 until_prompt()
 s.sendall(("pmemsave %d %d %s\n" % (addr, size, os.path.abspath(raw))).encode())
-until_prompt(60)
+reply = until_prompt(60)
 for _ in range(300):
     if os.path.exists(raw) and os.path.getsize(raw) >= size:
         break
     time.sleep(0.1)
+got = os.path.getsize(raw) if os.path.exists(raw) else -1
+if got < size:
+    print("   monitor: pmemsave chỉ ra %d/%d byte; trả lời: %r" % (got, size, reply[-300:]), file=sys.stderr)
 s.sendall(b"quit\n")
 end = time.time() + 10
 while time.time() < end:
@@ -210,6 +213,11 @@ PY
             if ! grep -q "Man hinh : ve xong" "$LOG" 2>/dev/null; then
                 echo "✗ $TAG: nhân không báo vẽ xong màn hình chào" >&2
                 sed 's/^/   | /' "$LOG" 2>/dev/null | tail -25 >&2 || true
+                sed 's/^/   q /' "$OUT/$TAG.qemu.log" 2>/dev/null | tail -5 >&2 || true
+                FAILED=1
+            elif [ ! -s "$RAW" ]; then
+                echo "✗ $TAG: không chép được vùng nhớ khung hình (pmemsave)" >&2
+                sed 's/^/   | /' "$LOG" 2>/dev/null | tail -8 >&2 || true
                 sed 's/^/   q /' "$OUT/$TAG.qemu.log" 2>/dev/null | tail -5 >&2 || true
                 FAILED=1
             elif python3 scripts/check_splash_ppm.py "$RAW" "$W" "$H" "$LOG" "$BPP" \

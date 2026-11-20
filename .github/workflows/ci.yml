@@ -307,6 +307,14 @@ jobs:
             [ -n "$body" ] || body="<log rong: $f>"
             echo "::error title=$(basename "$f")-${{ matrix.arch }}::$body"
           done
+          # Log device tree: nhiều ca ⇒ bỏ dòng tiến trình, giữ dòng ✓/✗/|, chia
+          # nhiều annotation (giữ UTF-8, không cat -v để không phình gấp ba).
+          if [ -f /tmp/qemu-splash-dt.log ]; then
+            grep -v '^── ' /tmp/qemu-splash-dt.log | sed 's/\x1b\[[0-9;]*m//g; s/%/%25/g; s/\r//g' \
+              | tr '\n' ' ' | sed 's/  */ /g' | fold -w 900 | head -6 | nl -ba | while read -r n chunk; do
+                echo "::error title=splash-dt-${{ matrix.arch }}-$n::$chunk"
+              done
+          fi
 
   # ------------------------------------------------------------- tài liệu ----
   docs:
