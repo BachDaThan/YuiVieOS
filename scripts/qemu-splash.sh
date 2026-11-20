@@ -74,12 +74,14 @@ menuentry "YuiVieOS ${RES}" {
     boot
 }
 EOF
-    if ! grub-mkrescue -d /usr/lib/grub/i386-pc -o "$ISO" "$ISO_DIR" >"$OUT/mkrescue-$RES.log" 2>&1; then
+    echo "── $RES: dựng ISO (GRUB multiboot2, gfxpayload=${RES}x32)"
+    if ! timeout 180 grub-mkrescue -d /usr/lib/grub/i386-pc -o "$ISO" "$ISO_DIR" >"$OUT/mkrescue-$RES.log" 2>&1; then
         echo "✗ grub-mkrescue thất bại ($RES):" >&2
         tail -20 "$OUT/mkrescue-$RES.log" >&2
         exit 1
     fi
 
+    echo "── $RES: boot trong QEMU (-vga std)"
     qemu-system-x86_64 -m 1024 -vga std -display none -no-reboot \
         -serial "file:$LOG" -monitor "unix:$SOCK,server=on,wait=off" \
         -cdrom "$ISO" -boot d >"$OUT/qemu-$RES.log" 2>&1 &
@@ -104,27 +106,58 @@ EOF
     fi
     grep "framebuffer\|Man hinh" "$LOG" | sed 's/^/   | /'
 
-    # Chụp màn hình qua monitor, đợi tệp PPM đủ byte rồi tắt QEMU.
-    python3 - "$SOCK" "$PPM" "$W" "$H" <<'PY'
+    # Chụp màn hình qua monitor HMP: đọc lời chào, gửi screendump, ĐỢI dấu
+    # nhắc trả về (đóng socket sớm thì QEMU có thể bỏ lệnh còn trong bộ đệm),
+    # đợi tệp PPM đủ byte, rồi `quit`. Mọi bước đều có hạn giờ.
+    echo "── $RES: chụp màn hình"
+    timeout 60 python3 - "$SOCK" "$PPM" "$W" "$H" <<'PY' || echo "   (chụp màn hình: python báo lỗi, xem kiểm tra ảnh bên dưới)"
 import os, socket, sys, time
 sock, ppm, w, h = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
 s = socket.socket(socket.AF_UNIX)
+s.settimeout(10)
 for _ in range(50):
     try:
         s.connect(sock)
         break
     except OSError:
         time.sleep(0.2)
+else:
+    sys.exit("không nối được monitor QEMU")
+
+def until_prompt():
+    buf = b""
+    end = time.time() + 15
+    while b"(qemu)" not in buf and time.time() < end:
+        try:
+            chunk = s.recv(4096)
+        except socket.timeout:
+            break
+        if not chunk:
+            break
+        buf += chunk
+    return buf
+
+until_prompt()
 time.sleep(0.5)  # để QEMU cập nhật bề mặt hiển thị sau lần ghi cuối
 s.sendall(("screendump %s\n" % os.path.abspath(ppm)).encode())
+until_prompt()
 want = len("P6\n%d %d\n255\n" % (w, h)) + w * h * 3
 for _ in range(100):
     if os.path.exists(ppm) and os.path.getsize(ppm) >= want:
         break
     time.sleep(0.1)
 s.sendall(b"quit\n")
+end = time.time() + 10
+while time.time() < end:
+    try:
+        if not s.recv(4096):
+            break
+    except OSError:
+        break
 s.close()
 PY
+    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
+    kill -9 "$PID" 2>/dev/null || true
     wait "$PID" 2>/dev/null || true
 
     if python3 scripts/check_splash_ppm.py "$PPM" "$W" "$H" "$LOG"; then

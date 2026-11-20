@@ -6,6 +6,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Lần đẩy mới huỷ lần chạy cũ còn dở trên cùng nhánh/PR (một bước treo không
+# giữ runner tới hạn 6 giờ mặc định).
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ---------------------------------------------------------------- Tầng 4/5 --
   cpp:
@@ -215,6 +221,7 @@ jobs:
     name: QEMU boot (${{ matrix.arch }})
     needs: kernel
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     # Cả ba kiến trúc là cổng bắt buộc: x86_64 boot được vì build-kernel.sh
     # đóng gói ELF64 thành container ELF32 (objcopy -O elf32-i386) cho multiboot 1
     # của QEMU; header multiboot 2 nằm sẵn cho GRUB2. Xem docs/PLAN.md P2.2.
@@ -248,9 +255,10 @@ jobs:
         # VBE theo gfxpayload, nhân đọc thẻ framebuffer type 8 và vẽ; ảnh chụp
         # qua monitor QEMU được kiểm từng điểm ảnh (scripts/check_splash_ppm.py).
         if: matrix.arch == 'x86_64'
+        timeout-minutes: 15
         run: |
           set -o pipefail
-          sudo apt-get install -y -qq grub-common grub-pc-bin xorriso mtools
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq grub-common grub-pc-bin xorriso mtools
           ./scripts/qemu-splash.sh --strict 2>&1 | tee /tmp/qemu-splash.log
       - name: Ảnh chụp màn hình chào (artifact)
         if: always() && matrix.arch == 'x86_64'
