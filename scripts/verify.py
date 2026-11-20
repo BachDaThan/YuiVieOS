@@ -84,6 +84,9 @@ REQUIRED_FILES = [
     "include/yui/archive.hpp", "pkg-stripper/archive.cpp", "pkg-stripper/zstd.cpp", "tests/test_archive.cpp",
     "tests/archive_fixtures.hpp", "scripts/gen_archive_fixtures.py",
     "scripts/check_boundaries.py", "scripts/test_check_boundaries.py",
+    "include/yui/display.hpp", "userspace-vi/display.cpp", "tests/test_display.cpp",
+    "kernel-cap/src/display.rs", "tests/data/display_vectors.txt", "scripts/gen_display_vectors.py",
+    "scripts/qemu-splash.sh", "scripts/check_splash_ppm.py",
 ]
 STALE = ["core", "crates", "sandbox", "ui"]  # old layout must not come back
 
@@ -333,6 +336,7 @@ def parse_enum_rust(src: str, name: str) -> list[tuple[str, int]] | None:
 MIRRORED_ENUMS = [
     ("include/yui/sandbox.hpp", "kernel-cap/src/input.rs", "InputSourceKind"),
     ("include/yui/sandbox.hpp", "kernel-cap/src/input.rs", "InputPrivilege"),
+    ("include/yui/display.hpp", "kernel-cap/src/display.rs", "PickReason"),
 ]
 
 
@@ -617,6 +621,17 @@ def check_secrets() -> None:
         ok("quét bí mật sạch (0 bí mật/khoá/token lộ)")
 
 
+def check_display_vectors() -> None:
+    """P2.16: tệp vector dùng chung C++/Rust phải khớp bản tham chiếu Python."""
+    header("vector chế độ hiển thị (P2.16)")
+    gen = ROOT / "scripts" / "gen_display_vectors.py"
+    res = subprocess.run([sys.executable, str(gen), "--check"], capture_output=True, text=True)
+    if res.returncode == 0:
+        ok(res.stdout.strip() or "display_vectors.txt khớp")
+    else:
+        bad((res.stderr or res.stdout).strip() or "display_vectors.txt lỗi thời")
+
+
 def check_boundaries() -> None:
     """Ranh giới "không giả mạo, không né kiểm tra" có máy kiểm (P7.10)."""  # ranh-giới-ok: tên bước kiểm P7.10
     header("ranh giới không giả mạo / không né kiểm tra (P7.10)")  # ranh-giới-ok: tên bước kiểm P7.10
@@ -640,6 +655,7 @@ def main() -> int:
     check_ibus_component()
     check_rust()
     check_mirrored_enums()
+    check_display_vectors()
     check_frame()
     check_kernel_dependencies()
     check_third_party()

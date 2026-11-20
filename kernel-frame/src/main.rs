@@ -101,7 +101,10 @@ pub fn kmain(raw_boot: boot::RawBoot) -> ! {
 
     if let Some(fb) = info.framebuffer {
         match splash::render(&fb, &info) {
-            Some(px) => println!("  Man hinh : ve xong {} pixel ({}x{})", px, fb.width, fb.height),
+            Some(d) => println!(
+                "  Man hinh : ve xong {} pixel ({}x{}x{}, k={}, nguon {})",
+                d.pixels, fb.width, fb.height, fb.bpp, d.k, fb.source
+            ),
             None => println!("  Man hinh : framebuffer khong dung duoc, bo qua"),
         }
     } else {

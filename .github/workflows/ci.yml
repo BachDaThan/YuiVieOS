@@ -243,13 +243,31 @@ jobs:
         run: |
           set -o pipefail
           YUI_QEMU_LOG=/tmp/qemu-serial.log ./scripts/qemu-smoke.sh ${{ matrix.arch }} --strict 2>&1 | tee /tmp/qemu.log
+      - name: "Splash đúng ở ≥ 3 độ phân giải (P2.16: GRUB multiboot2 + VBE, chụp màn hình)"
+        # 800x600 (4:3), 1280x1024 (5:4), 1920x1080 (16:9): GRUB dựng chế độ
+        # VBE theo gfxpayload, nhân đọc thẻ framebuffer type 8 và vẽ; ảnh chụp
+        # qua monitor QEMU được kiểm từng điểm ảnh (scripts/check_splash_ppm.py).
+        if: matrix.arch == 'x86_64'
+        run: |
+          set -o pipefail
+          sudo apt-get install -y -qq grub-common grub-pc-bin xorriso mtools
+          ./scripts/qemu-splash.sh --strict 2>&1 | tee /tmp/qemu-splash.log
+      - name: Ảnh chụp màn hình chào (artifact)
+        if: always() && matrix.arch == 'x86_64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: splash-screenshots
+          path: |
+            build/splash/*.ppm
+            build/splash/*.log
+          if-no-files-found: warn
       - name: "Lỗi CI: log serial + log smoke (${{ matrix.arch }})"
         if: failure()
         run: |
           # Hai dòng annotation: (1) log serial của QEMU, (2) đầu ra của
           # qemu-smoke.sh (chứa thông báo "BỎ QUA"/lỗi cục bộ). Không bao giờ
           # để body rỗng — annotation rỗng bị GitHub vứt đi.
-          for f in /tmp/qemu-serial.log /tmp/qemu.log; do
+          for f in /tmp/qemu-serial.log /tmp/qemu.log /tmp/qemu-splash.log; do
             if [ -f "$f" ]; then
               body="$(cat -v "$f" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/%/%25/g; s/\r//g' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-1200)"
             else

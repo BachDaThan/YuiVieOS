@@ -51,10 +51,17 @@ void draw_text(const Surface& s, int x, int y, const std::string& text, uint32_t
 
 /// Renders the boot splash: product name, machine class, and the tuned k/W.
 /// Returns the number of pixels drawn (0 if the surface is invalid/too small).
-long render_splash(const Surface& s, const profile::HostProfile& host);
+/// `scale_k` = hệ số HiDPI nguyên 1–4; 0 = tự chọn theo độ phân giải (P2.16).
+long render_splash(const Surface& s, const profile::HostProfile& host, int scale_k = 0);
 
 /// Encodes the surface as a binary PPM (P6), handy for screenshots in CI.
 std::string to_ppm(const Surface& s);
+
+// Đưa một mặt vẽ logic `src` lên màn hình thật `dst` bằng hệ số NGUYÊN lớn
+// nhất vừa khung (mỗi điểm ảnh nguồn thành đúng một khối k×k — không nội suy,
+// không kéo giãn sang tỉ lệ khác), căn giữa, phần thừa tô đen (P2.16).
+// Trả về k; 0 nếu `src` lớn hơn `dst` (khi đó không vẽ gì).
+int present_scaled(const Surface& dst, const Surface& src);
 
 /// ASCII-only uppercase copy of a Vietnamese string (the 5x7 font has no
 /// diacritics; documents and the shell use the real thing).

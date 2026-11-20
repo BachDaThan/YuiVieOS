@@ -35,6 +35,16 @@ mb2_start:
     .long 0x00000000          /* architecture: i386 */
     .long mb2_end - mb2_start /* header_length */
     .long -(0xE85250D6 + 0x00000000 + (mb2_end - mb2_start))
+    /* Thẻ yêu cầu framebuffer (type 5, cờ 1 = tuỳ chọn): GRUB dựng chế độ
+     * đồ hoạ tuyến tính và trả thẻ framebuffer (type 8) — P2.16. Độ phân
+     * giải ở đây chỉ là gợi ý; `set gfxpayload=WxHxD` trong grub.cfg thắng. */
+    .word 5
+    .word 1
+    .long 20
+    .long 1024
+    .long 768
+    .long 32
+    .long 0                   /* đệm: thẻ kế tiếp phải tròn 8 byte (16+20+4 = 40) */
     .word 0                   /* end tag: type = 0 */
     .word 0
     .long 8
@@ -49,7 +59,10 @@ _start:
     movl %ebx, %edi           /* multiboot info (physical) */
     movl $stack32_top, %esp
 
-    /* PML4[0] -> PDP[0] -> PD (identity map, 2 MiB pages) */
+    /* PML4[0] -> PDPT[0..3] -> PD0..PD3: ánh xạ đồng nhất 4 GiB đầu bằng
+     * trang 2 MiB (P2.16). 1 GiB là đủ cho RAM khi boot, nhưng framebuffer
+     * tuyến tính của VBE/GOP nằm ở lỗ PCI dưới 4 GiB (QEMU stdvga:
+     * 0xFD000000) — thiếu ánh xạ thì vẽ màn hình chào là page fault. */
     xorl %ecx, %ecx
     leal pd, %eax
 1:
@@ -57,15 +70,22 @@ _start:
     shll $21, %edx
     orl  $0x83, %edx
     movl %edx, (%eax,%ecx,8)
+    movl $0, 4(%eax,%ecx,8)
     incl %ecx
-    cmpl $512, %ecx
+    cmpl $2048, %ecx
     jne 1b
 
     leal pdpt, %eax
     leal pd, %edx
     orl  $3, %edx
-    movl %edx, (%eax)
-    movl $0, 4(%eax)
+    xorl %ecx, %ecx
+3:
+    movl %edx, (%eax,%ecx,8)
+    movl $0, 4(%eax,%ecx,8)
+    addl $4096, %edx
+    incl %ecx
+    cmpl $4, %ecx
+    jne 3b
 
     leal pml4, %eax
     leal pdpt, %edx
@@ -133,7 +153,7 @@ pml4:
 pdpt:
     .skip 4096
 pd:
-    .skip 4096
+    .skip 16384               /* 4 bảng PD liên tiếp: 4 × 512 × 2 MiB = 4 GiB */
 "#,
     options(att_syntax)
 );

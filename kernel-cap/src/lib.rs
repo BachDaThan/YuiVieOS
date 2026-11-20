@@ -22,6 +22,7 @@ pub mod ed25519;
 pub mod keyring;
 pub mod bundle;
 pub mod input;
+pub mod display;
 
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};

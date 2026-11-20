@@ -52,6 +52,7 @@ LIB_SRC := \
 	userspace-vi/ime.cpp \
 	userspace-vi/ui.cpp \
 	userspace-vi/fb.cpp \
+	userspace-vi/display.cpp \
 	userspace-vi/shell.cpp \
 	userspace-vi/trash.cpp \
 	userspace-vi/posix.cpp \
@@ -70,7 +71,7 @@ HEADERS := $(wildcard include/yui/*.hpp include/yui/*.h) \
 
 TESTS := test_crypto test_codec_json test_core test_sandbox test_ime test_daemon test_tools \
          test_telemetry test_fb test_ed25519 test_power test_fsstore test_linuxabi \
-         test_redteam test_store test_trash test_posix test_archive
+         test_redteam test_store test_trash test_posix test_archive test_display
 
 # `kernel` is declared before `all`, so pin the default goal explicitly.
 .DEFAULT_GOAL := all
