@@ -3,6 +3,7 @@
 // scripts/gen_display_vectors.py, một bản tham chiếu Python độc lập) cũng được
 // bản Rust trong kernel-cap/src/display.rs chạy — ba bản phải khớp.
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -359,6 +360,142 @@ YUI_TEST(display, ui_plan_uses_same_rule) {
   CHECK_EQ(yui::ui::plan(yui::ui::DisplayInfo{3840, 2160, 283}, hw).scale_px, 3);
   // 1366×768 ở 300 dpi (vô lý) vẫn bị giới hạn để còn ≥ 80 cột × 25 dòng.
   CHECK_EQ(yui::ui::plan(yui::ui::DisplayInfo{1366, 768, 300}, hw).scale_px, 2);
+}
+
+// ------------------------------------------- Device Tree simple-framebuffer --
+
+namespace {
+
+struct FdtCase {
+  std::string name;
+  std::vector<uint8_t> blob;
+  std::vector<std::string> want;  // reason|count|addr|size|w|h|stride|bpp|shifts|format
+};
+
+std::vector<FdtCase> load_fdt_cases() {
+  std::vector<FdtCase> out;
+  std::ifstream f("tests/data/fdt_fb_vectors.txt");
+  std::string line;
+  while (std::getline(f, line)) {
+    if (line.empty() || line[0] == '#') continue;
+    const auto c = split(line, '|');
+    if (c.size() != 12) continue;
+    FdtCase fc;
+    fc.name = c[0];
+    fc.blob = unhex(c[1]);
+    fc.want.assign(c.begin() + 2, c.end());
+    out.push_back(fc);
+  }
+  return out;
+}
+
+std::string hex64(uint64_t v) {
+  char b[24];
+  std::snprintf(b, sizeof b, "%llx", static_cast<unsigned long long>(v));
+  return std::string(b);
+}
+
+std::vector<std::string> fdt_fields(const d::FdtFramebuffer& r) {
+  std::vector<std::string> v{d::fdt_reason_code(r.reason), std::to_string(r.candidates)};
+  if (r.reason != d::FdtReason::Ok) {
+    for (int i = 0; i < 8; ++i) v.push_back("-");
+    return v;
+  }
+  v.push_back(hex64(r.addr));
+  v.push_back(hex64(r.size));
+  v.push_back(std::to_string(r.width));
+  v.push_back(std::to_string(r.height));
+  v.push_back(std::to_string(r.stride));
+  v.push_back(std::to_string(int(r.bpp)));
+  v.push_back(std::to_string(int(r.red_shift)) + "," + std::to_string(int(r.green_shift)) + "," +
+              std::to_string(int(r.blue_shift)));
+  v.push_back(r.format);
+  return v;
+}
+
+// Bất biến của mọi kết quả, kể cả với đầu vào rác.
+bool fdt_sane(const d::FdtFramebuffer& r) {
+  if (r.reason != d::FdtReason::Ok) return r.addr == 0 && r.width == 0 && r.format.empty();
+  const uint32_t bytes = r.bpp / 8u;
+  return (r.bpp == 24 || r.bpp == 32) && r.addr != 0 && r.width >= 1 && r.width <= 16384 &&
+         r.height >= 1 && r.height <= 16384 && uint64_t(r.stride) >= uint64_t(r.width) * bytes &&
+         r.size >= uint64_t(r.stride) * r.height && r.size <= UINT64_MAX - r.addr && r.candidates >= 1;
+}
+
+}  // namespace
+
+YUI_TEST(display, fdt_shared_vectors) {
+  const auto cases = load_fdt_cases();
+  CHECK_MSG(cases.size() >= 12, "fdt_fb_vectors.txt: cần ≥ 12 ca (chạy từ gốc repo)");
+  int ok = 0, bad_blob = 0;
+  for (const auto& c : cases) {
+    const auto r = d::parse_fdt_framebuffer(c.blob.data(), c.blob.size());
+    const auto got = fdt_fields(r);
+    CHECK_EQ(got.size(), c.want.size());
+    for (size_t i = 0; i < got.size() && i < c.want.size(); ++i)
+      CHECK_MSG(got[i] == c.want[i], c.name + " trường " + std::to_string(i) + ": " + got[i] + " ≠ " + c.want[i]);
+    CHECK_MSG(fdt_sane(r), c.name + ": kết quả vi phạm bất biến");
+    ok += r.reason == d::FdtReason::Ok;
+    bad_blob += r.reason == d::FdtReason::BadBlob;
+  }
+  CHECK(ok >= 10);
+  CHECK(bad_blob >= 10);
+  CHECK_EQ(std::string(d::fdt_reason_code(d::FdtReason::BadGeometry)), std::string("bad_geometry"));
+}
+
+YUI_TEST(display, fdt_every_truncation_is_bad_blob) {
+  const auto cases = load_fdt_cases();
+  for (const auto& c : cases) {
+    if (c.want[0] != "ok") continue;
+    const uint32_t total = (uint32_t(c.blob[4]) << 24) | (uint32_t(c.blob[5]) << 16) |
+                           (uint32_t(c.blob[6]) << 8) | c.blob[7];
+    for (size_t n = 0; n < total; ++n) {
+      const auto r = d::parse_fdt_framebuffer(c.blob.data(), n);
+      if (r.reason != d::FdtReason::BadBlob) {
+        CHECK_MSG(false, c.name + ": cắt còn " + std::to_string(n) + " byte mà không bị từ chối");
+        break;
+      }
+    }
+    CHECK(d::parse_fdt_framebuffer(nullptr, c.blob.size()).reason == d::FdtReason::BadBlob);
+  }
+}
+
+YUI_TEST(display, fdt_bit_flips_and_random_bytes_never_break_invariants) {
+  const auto cases = load_fdt_cases();
+  const FdtCase* base = nullptr;
+  for (const auto& c : cases)
+    if (c.name == "qemu_virt_800x600_argb") base = &c;
+  CHECK(base != nullptr);
+  if (base == nullptr) return;
+  long sane = 0, total = 0, still_ok = 0;
+  std::vector<uint8_t> x;
+  for (size_t i = 0; i < base->blob.size(); ++i) {
+    for (int bit = 0; bit < 8; ++bit) {
+      x = base->blob;
+      x[i] ^= uint8_t(1u << bit);
+      const auto r = d::parse_fdt_framebuffer(x.data(), x.size());
+      sane += fdt_sane(r);
+      still_ok += r.reason == d::FdtReason::Ok;
+      ++total;
+    }
+  }
+  CHECK_EQ(sane, total);
+  CHECK(still_ok < total);  // phần lớn bit lật phải bị nhận ra
+  // Rác giả ngẫu nhiên (LCG cố định ⇒ tái lập): giữ header hợp lệ, xáo khối cấu trúc.
+  uint32_t seed = 0x5EEDu;
+  long rsane = 0;
+  const int rounds = 4000;
+  for (int k = 0; k < rounds; ++k) {
+    x = base->blob;
+    for (int m = 0; m < 1 + k % 6; ++m) {
+      seed = seed * 1664525u + 1013904223u;
+      const size_t at = 56 + (seed >> 8) % (x.size() - 56);
+      seed = seed * 1664525u + 1013904223u;
+      x[at] = uint8_t(seed >> 24);
+    }
+    rsane += fdt_sane(d::parse_fdt_framebuffer(x.data(), x.size()));
+  }
+  CHECK_EQ(rsane, long(rounds));
 }
 
 YUI_TEST_MAIN("test_display")

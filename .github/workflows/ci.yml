@@ -261,6 +261,28 @@ jobs:
           set -o pipefail
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq grub-common grub-pc-bin xorriso mtools
           ./scripts/qemu-splash.sh --strict 2>&1 | tee /tmp/qemu-splash.log
+      - name: "Splash qua framebuffer device tree (P2.16 đường c: simple-framebuffer, pmemsave)"
+        # DTB thật của máy ảo + một nút simple-framebuffer (dtc) trỏ vào RAM
+        # trống; nhân đọc nút, vẽ; monitor `pmemsave` chép vùng nhớ và
+        # check_splash_ppm.py --raw kiểm từng điểm ảnh. Có ca 4K (k = 2), ca
+        # thứ tự kênh BGR, ca 24 bit, ca disabled và ca đè ảnh nhân.
+        if: matrix.arch != 'x86_64'
+        timeout-minutes: 15
+        run: |
+          set -o pipefail
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq device-tree-compiler
+          python3 scripts/gen_fdt_vectors.py --check --dtc
+          ./scripts/qemu-splash-dt.sh ${{ matrix.arch }} --strict 2>&1 | tee /tmp/qemu-splash-dt.log
+      - name: Ảnh màn hình chào device tree (artifact)
+        if: always() && matrix.arch != 'x86_64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: splash-dt-${{ matrix.arch }}
+          path: |
+            build/splash-dt/*.ppm
+            build/splash-dt/*.log
+            build/splash-dt/*.dts
+          if-no-files-found: warn
       - name: Ảnh chụp màn hình chào (artifact)
         if: always() && matrix.arch == 'x86_64'
         uses: actions/upload-artifact@v4
@@ -276,7 +298,7 @@ jobs:
           # Hai dòng annotation: (1) log serial của QEMU, (2) đầu ra của
           # qemu-smoke.sh (chứa thông báo "BỎ QUA"/lỗi cục bộ). Không bao giờ
           # để body rỗng — annotation rỗng bị GitHub vứt đi.
-          for f in /tmp/qemu-serial.log /tmp/qemu.log /tmp/qemu-splash.log; do
+          for f in /tmp/qemu-serial.log /tmp/qemu.log /tmp/qemu-splash.log /tmp/qemu-splash-dt.log; do
             if [ -f "$f" ]; then
               body="$(cat -v "$f" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/%/%25/g; s/\r//g' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-1200)"
             else

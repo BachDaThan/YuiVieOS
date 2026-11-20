@@ -2,10 +2,16 @@
 """Kiểm ảnh chụp màn hình chào của nhân (P2.16) — dùng bởi scripts/qemu-splash.sh.
 
     python3 scripts/check_splash_ppm.py splash.ppm W H serial.log [BPP]
+        [--source=multiboot2|devicetree] [--raw=FORMAT:STRIDE] [--save-ppm=out.ppm]
+
+--raw: tệp ảnh là bản sao THÔ vùng nhớ khung hình (QEMU `pmemsave`, đường
+device tree của aarch64/riscv64) theo định dạng simple-framebuffer
+(a8r8g8b8, x8r8g8b8, a8b8g8r8, x8b8g8r8, r8g8b8) và số byte mỗi hàng; được đổi
+sang RGB trước khi kiểm (và lưu thành PPM nếu có --save-ppm).
 
 Không so với một "ảnh vàng" (bảng thông số đổi theo máy), mà kiểm các bất biến
 của bố cục trong kernel-frame/src/splash.rs:
-  * đúng kích thước W×H; nhân báo đúng WxHxBPP (mặc định 32), nguồn multiboot2, và k đúng
+  * đúng kích thước W×H; nhân báo đúng WxHxBPP (mặc định 32), đúng nguồn, và k đúng
     như quy tắc của yui_cap::display::choose_scale (DPI đoán theo độ phân giải);
   * dải đỏ trên cùng cao đúng h/30 + 2, nền đúng màu;
   * tiêu đề "YUIVIEOS BETA" TRÙNG TỪNG ĐIỂM ẢNH với bản dựng lại từ font 5×7
@@ -55,6 +61,28 @@ def read_ppm(path):
     return w, h, data[pos + 1:pos + 1 + w * h * 3]
 
 
+RAW_ORDER = {  # vị trí byte R, G, B trong một điểm ảnh (little-endian), số byte/điểm
+    "a8r8g8b8": (2, 1, 0, 4), "x8r8g8b8": (2, 1, 0, 4),
+    "a8b8g8r8": (0, 1, 2, 4), "x8b8g8r8": (0, 1, 2, 4),
+    "r8g8b8": (2, 1, 0, 3),
+}
+
+
+def read_raw(path, w, h, fmt, stride):
+    ri, gi, bi, bpp = RAW_ORDER[fmt]
+    data = pathlib.Path(path).read_bytes()
+    if len(data) < stride * (h - 1) + w * bpp:
+        raise ValueError("bản sao thô chỉ %d byte" % len(data))
+    px = bytearray(w * h * 3)
+    for y in range(h):
+        row = data[y * stride:y * stride + w * bpp]
+        o = y * w * 3
+        px[o + 0:o + w * 3:3] = row[ri::bpp]
+        px[o + 1:o + w * 3:3] = row[gi::bpp]
+        px[o + 2:o + w * 3:3] = row[bi::bpp]
+    return w, h, bytes(px)
+
+
 def expected_k(w, h):
     dpi_x10 = 1920 if h >= 2160 else 960  # không có EDID ⇒ đoán
     k_dpi = max(1, min(4, (dpi_x10 + 480) // 960))
@@ -67,11 +95,14 @@ def text_width(text, scale):
 
 
 def main():
-    if len(sys.argv) not in (5, 6):
+    opts = dict(a.split("=", 1) for a in sys.argv[1:] if a.startswith("--") and "=" in a)
+    pos = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if len(pos) not in (4, 5) or set(opts) - {"--source", "--raw", "--save-ppm"}:
         print(__doc__)
         return 2
-    path, W, H, log_path = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
-    bpp = int(sys.argv[5]) if len(sys.argv) == 6 else 32
+    path, W, H, log_path = pos[0], int(pos[1]), int(pos[2]), pos[3]
+    bpp = int(pos[4]) if len(pos) == 5 else 32
+    source = opts.get("--source", "multiboot2")
     errors = []
     tag = "%dx%dx%d" % (W, H, bpp)
 
@@ -79,8 +110,14 @@ def main():
         errors.append(msg)
 
     try:
-        w, h, px = read_ppm(path)
-    except (OSError, ValueError, IndexError) as e:
+        if "--raw" in opts:
+            fmt, stride = opts["--raw"].split(":")
+            w, h, px = read_raw(path, W, H, fmt, int(stride))
+            if "--save-ppm" in opts:
+                pathlib.Path(opts["--save-ppm"]).write_bytes(b"P6\n%d %d\n255\n" % (w, h) + px)
+        else:
+            w, h, px = read_ppm(path)
+    except (OSError, ValueError, IndexError, KeyError) as e:
         print("✗ %s: không đọc được ảnh chụp %s: %s" % (tag, path, e), file=sys.stderr)
         return 1
     if (w, h) != (W, H) or len(px) != w * h * 3:
@@ -99,8 +136,8 @@ def main():
         bad("log serial thiếu dòng 'Man hinh : ve xong … k=…'")
     else:
         got = (int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5)), m.group(6))
-        if got != (w, h, bpp, k, "multiboot2"):
-            bad("nhân báo %s, mong đợi %dx%dx%d k=%d nguồn multiboot2" % (got, w, h, bpp, k))
+        if got != (w, h, bpp, k, source):
+            bad("nhân báo %s, mong đợi %dx%dx%d k=%d nguồn %s" % (got, w, h, bpp, k, source))
 
     # Dải đỏ + nền.
     band = h // 30 + 2

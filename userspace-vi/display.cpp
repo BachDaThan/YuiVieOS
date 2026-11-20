@@ -4,7 +4,10 @@
 // (kernel-cap/src/display.rs, no_std) cho ra từng bit giống hệt.
 #include "yui/display.hpp"
 
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <vector>
 
 namespace yui::display {
 namespace {
@@ -361,6 +364,232 @@ Plan plan(const std::vector<Mode>& modes, const uint8_t* edid, size_t edid_len, 
   std::snprintf(buf, sizeof buf, " · khung %.1f MiB%s", double(out.budget.frame_bytes) / 1048576.0,
                 out.budget.dirty_rects ? " (vẽ theo vùng bẩn)" : "");
   out.summary_vi = out.pick.reason_vi + " · phóng " + out.scale.reason_vi + buf;
+  return out;
+}
+
+}  // namespace yui::display
+
+// ------------------------------------------------- Device Tree (đường c) --
+namespace yui::display {
+namespace {
+
+constexpr uint32_t kFdtMagic = 0xD00DFEEDu;
+constexpr uint32_t kTokBegin = 1, kTokEndNode = 2, kTokProp = 3, kTokNop = 4, kTokEnd = 9;
+constexpr size_t kFdtMaxDepth = 32;
+constexpr uint32_t kFbMaxStride = 262144;
+
+uint32_t rd_be32(const uint8_t* p) {
+  return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | uint32_t(p[3]);
+}
+
+struct Span {
+  const uint8_t* p = nullptr;
+  size_t n = 0;
+  bool present = false;
+};
+
+// Chuỗi DT: các byte tới NUL đầu tiên (hoặc cả giá trị nếu không có NUL).
+bool cstr_is(const Span& v, const char* lit) {
+  size_t len = 0;
+  while (len < v.n && v.p[len] != 0) ++len;
+  const size_t want = std::strlen(lit);
+  return len == want && std::memcmp(v.p, lit, len) == 0;
+}
+
+// stringlist: tách theo NUL, so khớp đúng từng mục.
+bool list_has(const Span& v, const char* lit) {
+  const size_t want = std::strlen(lit);
+  size_t start = 0;
+  for (size_t i = 0; i <= v.n; ++i) {
+    if (i == v.n || v.p[i] == 0) {
+      if (i - start == want && std::memcmp(v.p + start, lit, want) == 0) return true;
+      start = i + 1;
+    }
+  }
+  return false;
+}
+
+struct NodeProps {
+  Span compatible, status, format, width, height, stride, reg, address_cells, size_cells;
+  bool had_child = false;
+};
+
+struct FbFormat {
+  const char* name;
+  uint8_t bpp, r, g, b;
+};
+constexpr FbFormat kFbFormats[] = {
+    {"a8r8g8b8", 32, 16, 8, 0}, {"x8r8g8b8", 32, 16, 8, 0}, {"a8b8g8r8", 32, 0, 8, 16},
+    {"x8b8g8r8", 32, 0, 8, 16}, {"r8g8b8", 24, 16, 8, 0},
+};
+
+uint32_t cell_count(const Span& v, uint32_t dflt) {
+  if (!v.present) return dflt;
+  return v.n == 4 ? rd_be32(v.p) : 0;
+}
+
+uint64_t read_cells(const uint8_t* p, uint32_t cells) {
+  uint64_t v = 0;
+  for (uint32_t i = 0; i < cells; ++i) v = (v << 32) | rd_be32(p + 4 * i);
+  return v;
+}
+
+FdtReason judge(const NodeProps& me, const NodeProps* parent, FdtFramebuffer& out) {
+  if (me.status.present && !cstr_is(me.status, "okay") && !cstr_is(me.status, "ok"))
+    return FdtReason::Disabled;
+  const FbFormat* fmt = nullptr;
+  if (me.format.present)
+    for (const FbFormat& f : kFbFormats)
+      if (cstr_is(me.format, f.name)) fmt = &f;
+  if (fmt == nullptr) return FdtReason::BadFormat;
+  const Span* dims[3] = {&me.width, &me.height, &me.stride};
+  uint32_t v[3] = {0, 0, 0};
+  for (int i = 0; i < 3; ++i) {
+    if (!dims[i]->present || dims[i]->n != 4) return FdtReason::BadGeometry;
+    v[i] = rd_be32(dims[i]->p);
+  }
+  const uint32_t w = v[0], h = v[1], stride = v[2];
+  if (w < 1 || w > kMaxDim || h < 1 || h > kMaxDim || uint64_t(stride) < uint64_t(w) * (fmt->bpp / 8) ||
+      stride > kFbMaxStride)
+    return FdtReason::BadGeometry;
+  const Span none;
+  const uint32_t ac = cell_count(parent ? parent->address_cells : none, 2);
+  const uint32_t sc = cell_count(parent ? parent->size_cells : none, 1);
+  if ((ac != 1 && ac != 2) || (sc != 1 && sc != 2) || !me.reg.present) return FdtReason::BadReg;
+  const size_t entry = 4 * size_t(ac + sc);
+  if (me.reg.n == 0 || me.reg.n % entry != 0) return FdtReason::BadReg;
+  const uint64_t addr = read_cells(me.reg.p, ac);
+  const uint64_t size = read_cells(me.reg.p + 4 * ac, sc);
+  if (addr == 0 || size < uint64_t(stride) * h || size > UINT64_MAX - addr) return FdtReason::BadReg;
+  out.addr = addr;
+  out.size = size;
+  out.width = w;
+  out.height = h;
+  out.stride = stride;
+  out.bpp = fmt->bpp;
+  out.red_shift = fmt->r;
+  out.green_shift = fmt->g;
+  out.blue_shift = fmt->b;
+  out.format = fmt->name;
+  return FdtReason::Ok;
+}
+
+}  // namespace
+
+const char* fdt_reason_code(FdtReason r) {
+  switch (r) {
+    case FdtReason::Ok: return "ok";
+    case FdtReason::NoNode: return "no_node";
+    case FdtReason::Disabled: return "disabled";
+    case FdtReason::BadFormat: return "bad_format";
+    case FdtReason::BadGeometry: return "bad_geometry";
+    case FdtReason::BadReg: return "bad_reg";
+    case FdtReason::BadBlob: return "bad_blob";
+  }
+  return "?";
+}
+
+FdtFramebuffer parse_fdt_framebuffer(const uint8_t* data, size_t n) {
+  FdtFramebuffer bad;
+  bad.reason = FdtReason::BadBlob;
+  if (data == nullptr || n < 40) return bad;
+  uint32_t h[10];
+  for (int i = 0; i < 10; ++i) h[i] = rd_be32(data + 4 * i);
+  const uint64_t total = h[1], off_st = h[2], off_str = h[3], ver = h[5], last = h[6];
+  const uint64_t sz_str = h[8], sz_st = h[9];
+  if (h[0] != kFdtMagic || total < 40 || total > n || ver < 17 || last > 17) return bad;
+  if (off_st % 4 != 0 || sz_st % 4 != 0 || off_st < 40 || off_st + sz_st > total || off_str + sz_str > total)
+    return bad;
+  const uint8_t* st = data + off_st;
+  const size_t L = size_t(sz_st);
+  const uint8_t* strs = data + off_str;
+  const size_t SL = size_t(sz_str);
+
+  std::vector<NodeProps> stack;
+  stack.reserve(kFdtMaxDepth);
+  FdtFramebuffer first_ok;
+  bool have_ok = false;
+  FdtReason first_bad = FdtReason::NoNode;
+  bool have_bad = false;
+  uint32_t count = 0;
+  size_t pos = 0;
+  auto token = [&](uint32_t& t) {
+    if (pos > L || L - pos < 4) return false;
+    t = rd_be32(st + pos);
+    pos += 4;
+    return true;
+  };
+  uint32_t t = 0;
+  if (!token(t) || t != kTokBegin) return bad;
+  pos = 0;
+  for (;;) {
+    if (!token(t)) return bad;
+    if (t == kTokBegin) {
+      const void* z = pos < L ? std::memchr(st + pos, 0, L - pos) : nullptr;
+      if (z == nullptr) return bad;
+      const size_t j = size_t(static_cast<const uint8_t*>(z) - st);
+      if (!stack.empty()) stack.back().had_child = true;
+      if (stack.size() >= kFdtMaxDepth) return bad;
+      stack.emplace_back();
+      pos = (j + 1 + 3) & ~size_t(3);
+    } else if (t == kTokEndNode) {
+      if (stack.empty()) return bad;
+      const NodeProps me = stack.back();
+      stack.pop_back();
+      if (me.compatible.present && list_has(me.compatible, "simple-framebuffer")) {
+        ++count;
+        FdtFramebuffer fb;
+        const FdtReason r = judge(me, stack.empty() ? nullptr : &stack.back(), fb);
+        if (r == FdtReason::Ok && !have_ok) {
+          first_ok = fb;
+          have_ok = true;
+        } else if (r != FdtReason::Ok && !have_bad) {
+          first_bad = r;
+          have_bad = true;
+        }
+      }
+      if (stack.empty()) {
+        for (;;) {  // sau nút gốc chỉ được có NOP rồi END
+          if (!token(t)) return bad;
+          if (t == kTokNop) continue;
+          if (t != kTokEnd) return bad;
+          break;
+        }
+        break;
+      }
+    } else if (t == kTokProp) {
+      if (stack.empty() || stack.back().had_child) return bad;
+      uint32_t len = 0, nameoff = 0;
+      if (!token(len) || !token(nameoff)) return bad;
+      if (len > L - pos) return bad;
+      if (nameoff >= SL) return bad;
+      const void* z = std::memchr(strs + nameoff, 0, SL - nameoff);
+      if (z == nullptr) return bad;
+      const char* name = reinterpret_cast<const char*>(strs + nameoff);
+      const Span v{st + pos, len, true};
+      NodeProps& np = stack.back();
+      if (std::strcmp(name, "compatible") == 0) np.compatible = v;
+      else if (std::strcmp(name, "status") == 0) np.status = v;
+      else if (std::strcmp(name, "format") == 0) np.format = v;
+      else if (std::strcmp(name, "width") == 0) np.width = v;
+      else if (std::strcmp(name, "height") == 0) np.height = v;
+      else if (std::strcmp(name, "stride") == 0) np.stride = v;
+      else if (std::strcmp(name, "reg") == 0) np.reg = v;
+      else if (std::strcmp(name, "#address-cells") == 0) np.address_cells = v;
+      else if (std::strcmp(name, "#size-cells") == 0) np.size_cells = v;
+      pos = (pos + len + 3) & ~size_t(3);
+    } else if (t != kTokNop) {
+      return bad;
+    }
+  }
+  if (have_ok) {
+    first_ok.reason = FdtReason::Ok;
+    first_ok.candidates = count;
+    return first_ok;
+  }
+  FdtFramebuffer out;
+  out.reason = have_bad ? first_bad : FdtReason::NoNode;
+  out.candidates = count;
   return out;
 }
 
