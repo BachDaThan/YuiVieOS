@@ -219,6 +219,21 @@ std::optional<IdleAlert> IdleGuard::observe(const IdleActivitySample& s) {
     return std::nullopt;
   }
 
+  // Thẻ giữ tỉnh (P2.20): chỉ đúng tiến trình + hộp cát + tài nguyên đã khai,
+  // còn hạn, VÀ đèn báo của host đang hiện. Thiếu một điều ⇒ quy tắc cũ.
+  if (const InhibitCard* card = active_inhibit(s.pid, s.sandbox_id, s.resource, s.now_ns)) {
+    const bool lit = indicator_ && indicator_(s.resource, true);
+    if (lit) {
+      lit_mask_ |= resource_bit(s.resource);
+      return std::nullopt;
+    }
+    lit_mask_ &= ~resource_bit(s.resource);
+    audit(card->sandbox_id, "session.inhibit.indicator_missing", resource_mask_text(resource_bit(s.resource)),
+          false,
+          "đèn báo của host không hiện ⇒ thẻ giữ tỉnh không có hiệu lực cho tài nguyên này (đèn là điều kiện)",
+          s.now_ns);
+  }
+
   // Thu hồi thẻ badge với độ phức tạp O(1)
   if (s.token_badge != 0) {
     revoked_badges_.insert(s.token_badge);
@@ -253,6 +268,179 @@ std::optional<IdleAlert> IdleGuard::observe(const IdleActivitySample& s) {
 
   alerts_.push_back(a);
   return a;
+}
+
+// ---------------------------------------------- thẻ giữ tỉnh (P2.20) --
+uint32_t resource_bit(SensitiveResource r) { return 1u << static_cast<unsigned>(r); }
+
+std::string resource_mask_text(uint32_t mask) {
+  static const struct {
+    SensitiveResource r;
+    const char* n;
+  } kNames[] = {{SensitiveResource::Camera, "camera"},
+                {SensitiveResource::Contacts, "contacts"},
+                {SensitiveResource::Microphone, "mic"},
+                {SensitiveResource::Network, "net"}};
+  std::string out;
+  for (const auto& e : kNames) {
+    if (!(mask & resource_bit(e.r))) continue;
+    if (!out.empty()) out += ",";
+    out += e.n;
+  }
+  return out;
+}
+
+namespace {
+constexpr uint32_t kAllResources = (1u << 4) - 1;
+
+int64_t effective_duration(const InhibitRequest& req, const IdleConfig& cfg) {
+  return req.duration_ns == 0 ? cfg.inhibit_default_ns : req.duration_ns;
+}
+}  // namespace
+
+std::string inhibit_dialog_target(const InhibitRequest& req, const IdleConfig& cfg) {
+  return "inhibit:" + req.sandbox_id + ":pid=" + std::to_string(req.pid) + ":" + resource_mask_text(req.resources) +
+         ":" + std::to_string(effective_duration(req, cfg) / 1000000000LL) + "s";
+}
+
+void IdleGuard::audit(const std::string& subject, const std::string& kind, const std::string& target,
+                      bool allowed, const std::string& reason, int64_t now_ns) const {
+  if (!audit_) return;
+  sandbox::AuditEntry e;
+  e.when = now_ns;
+  e.subject = subject.empty() ? "unknown" : subject;
+  e.action = sandbox::Action{kind, target};
+  e.decision = sandbox::Decision{allowed, sandbox::Tier::Isolated, reason, 0};
+  audit_->record(e);
+}
+
+InhibitResult IdleGuard::grant_inhibit(const InhibitRequest& req, const sandbox::TrustedConfirmationHost* host,
+                                       const std::string& dialog_id, int64_t now_ns) {
+  InhibitResult r;
+  const std::string target = inhibit_dialog_target(req, cfg_);
+  auto refuse = [&](const std::string& why) {
+    ++inhibit_refused_;
+    r.ok = false;
+    r.reason_vi = "Từ chối thẻ giữ tỉnh: " + why;
+    audit(req.sandbox_id, "session.inhibit.grant", target, false, r.reason_vi, now_ns);
+    return r;
+  };
+  const int64_t dur = effective_duration(req, cfg_);
+  if (req.pid == 0 || req.sandbox_id.empty()) return refuse("thiếu tiến trình hoặc hộp cát cụ thể");
+  if (req.resources == 0 || (req.resources & ~kAllResources) != 0)
+    return refuse("phải khai rõ tài nguyên (mạng / micro / camera / danh bạ)");
+  if (dur <= 0 || dur > cfg_.inhibit_max_ns)
+    return refuse("thời hạn phải trong (0, " + std::to_string(cfg_.inhibit_max_ns / 3600000000000LL) +
+                  " giờ] — không có thẻ vĩnh viễn; gia hạn phải xác nhận lại");
+  // Không có hộp thoại tin cậy ⇒ không có thẻ (ứng dụng không tự cấp được).
+  if (!host || dialog_id.empty()) return refuse("chưa qua hộp thoại xác nhận tin cậy (P4.13)");
+  if (host->dialog_target(dialog_id) != target)
+    return refuse("hộp thoại không khớp đúng yêu cầu này (pid/hộp cát/tài nguyên/thời hạn)");
+  if (!host->is_confirmed(dialog_id)) return refuse("người dùng chưa xác nhận bằng thiết bị vật lý");
+  if (used_dialogs_.count(dialog_id)) return refuse("hộp thoại đã được dùng — mỗi lần xác nhận chỉ cấp một thẻ");
+
+  // Đèn báo là điều kiện: host phải vẽ được đèn cho MỌI tài nguyên trong thẻ.
+  for (unsigned b = 0; b < 4; ++b) {
+    const auto res = static_cast<SensitiveResource>(b);
+    if (!(req.resources & resource_bit(res))) continue;
+    if (!indicator_ || !indicator_(res, true)) {
+      refresh_indicators();
+      return refuse(std::string("host không vẽ được đèn báo ") + sensitive_resource_name_vi(res));
+    }
+    lit_mask_ |= resource_bit(res);
+  }
+
+  used_dialogs_.insert(dialog_id);
+  InhibitCard c;
+  c.id = next_card_++;
+  c.pid = req.pid;
+  c.sandbox_id = req.sandbox_id;
+  c.proc_name = req.proc_name;
+  c.resources = req.resources;
+  c.issued_ns = now_ns;
+  c.expires_ns = now_ns + dur;
+  c.dialog_id = dialog_id;
+  cards_[c.id] = c;
+  cards_by_pid_.emplace(c.pid, c.id);
+  r.ok = true;
+  r.card_id = c.id;
+  r.reason_vi = fmt("Đã cấp thẻ giữ tỉnh #%llu cho \"%s\" (pid %llu, hộp cát %s): %s trong %lld phút; đèn báo hiện suốt thời gian này",
+                    static_cast<unsigned long long>(c.id), req.proc_name.c_str(),
+                    static_cast<unsigned long long>(req.pid), req.sandbox_id.c_str(),
+                    resource_mask_text(req.resources).c_str(), static_cast<long long>(dur / 60000000000LL));
+  audit(req.sandbox_id, "session.inhibit.grant", target, true, r.reason_vi, now_ns);
+  return r;
+}
+
+const InhibitCard* IdleGuard::active_inhibit(uint64_t pid, const std::string& sandbox_id, SensitiveResource res,
+                                             int64_t now_ns) {
+  // Bước 1: thu hồi thẻ hết hạn của tiến trình này (trước khi trả con trỏ nào).
+  std::vector<uint64_t> expired;
+  auto range = cards_by_pid_.equal_range(pid);
+  for (auto it = range.first; it != range.second; ++it) {
+    auto c = cards_.find(it->second);
+    if (c != cards_.end() && now_ns >= c->second.expires_ns) expired.push_back(c->first);
+  }
+  for (uint64_t id : expired) revoke_inhibit(id, "thẻ hết hạn", now_ns);
+  // Bước 2: tìm thẻ còn hạn khớp đúng hộp cát + tài nguyên.
+  range = cards_by_pid_.equal_range(pid);
+  for (auto it = range.first; it != range.second; ++it) {
+    auto c = cards_.find(it->second);
+    if (c != cards_.end() && c->second.sandbox_id == sandbox_id && (c->second.resources & resource_bit(res)))
+      return &c->second;
+  }
+  return nullptr;
+}
+
+bool IdleGuard::revoke_inhibit(uint64_t card_id, const std::string& reason_vi, int64_t now_ns) {
+  auto it = cards_.find(card_id);
+  if (it == cards_.end()) return false;
+  const InhibitCard c = it->second;
+  cards_.erase(it);
+  auto range = cards_by_pid_.equal_range(c.pid);
+  for (auto p = range.first; p != range.second; ++p) {
+    if (p->second == card_id) {
+      cards_by_pid_.erase(p);
+      break;
+    }
+  }
+  audit(c.sandbox_id, "session.inhibit.revoke", "#" + std::to_string(card_id) + ":" + resource_mask_text(c.resources),
+        true, "thu hồi thẻ giữ tỉnh: " + reason_vi, now_ns);
+  refresh_indicators();
+  return true;
+}
+
+size_t IdleGuard::revoke_inhibits_for_pid(uint64_t pid, const std::string& reason_vi, int64_t now_ns) {
+  std::vector<uint64_t> ids;
+  auto range = cards_by_pid_.equal_range(pid);
+  for (auto it = range.first; it != range.second; ++it) ids.push_back(it->second);
+  size_t n = 0;
+  for (uint64_t id : ids) n += revoke_inhibit(id, reason_vi, now_ns) ? 1 : 0;
+  return n;
+}
+
+size_t IdleGuard::revoke_all_inhibits(const std::string& reason_vi, int64_t now_ns) {
+  std::vector<uint64_t> ids;
+  for (const auto& kv : cards_) ids.push_back(kv.first);
+  size_t n = 0;
+  for (uint64_t id : ids) n += revoke_inhibit(id, reason_vi, now_ns) ? 1 : 0;
+  return n;
+}
+
+bool IdleGuard::indicator_lit(SensitiveResource res) const { return (lit_mask_ & resource_bit(res)) != 0; }
+
+// Tắt đèn của tài nguyên không còn thẻ nào che (chỉ host gọi được qua renderer).
+void IdleGuard::refresh_indicators() {
+  uint32_t needed = 0;
+  for (const auto& kv : cards_) needed |= kv.second.resources;
+  for (unsigned b = 0; b < 4; ++b) {
+    const auto res = static_cast<SensitiveResource>(b);
+    const uint32_t bit = resource_bit(res);
+    if ((lit_mask_ & bit) && !(needed & bit)) {
+      if (indicator_) indicator_(res, false);
+      lit_mask_ &= ~bit;
+    }
+  }
 }
 
 bool IdleGuard::is_badge_revoked(uint64_t badge) const {

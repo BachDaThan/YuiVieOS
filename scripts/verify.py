@@ -57,7 +57,7 @@ REQUIRED_DIRS = [
 ]
 REQUIRED_FILES = [
     "Cargo.toml", "Makefile", "README.md", "LICENSE", "include/yui/yui.h",
-    "kernel-cap/src/lib.rs", "kernel-cap/src/sha256.rs",
+    "kernel-cap/src/lib.rs", "kernel-cap/src/sha256.rs", "kernel-cap/src/input.rs",
     "kernel-cap/src/sha512.rs", "kernel-cap/src/ed25519.rs",
     "kernel-cap/src/keyring.rs", "kernel-cap/src/bundle.rs",
     "kernel-services/yui-sched/src/lib.rs", "kernel-services/yui-sched/src/guard.rs",
@@ -287,6 +287,64 @@ def check_rust() -> None:
             ok(f"ngoặc cân: {rel}")
     if not unsafe_found:
         ok("không có 'unsafe' trong crate nhân")
+
+
+def parse_enum_cpp(src: str, name: str) -> list[tuple[str, int]] | None:
+    m = re.search(r"enum\s+class\s+" + name + r"\s*\{(.*?)\};", src, re.S)
+    if not m:
+        return None
+    body = re.sub(r"//[^\n]*", "", m.group(1))
+    out, nxt = [], 0
+    for item in (x.strip() for x in body.split(",")):
+        if not item:
+            continue
+        if "=" in item:
+            n, v = (t.strip() for t in item.split("=", 1))
+            nxt = int(v, 0)
+        else:
+            n = item
+        out.append((n, nxt))
+        nxt += 1
+    return out
+
+
+def parse_enum_rust(src: str, name: str) -> list[tuple[str, int]] | None:
+    m = re.search(r"pub\s+enum\s+" + name + r"\s*\{(.*?)\}", src, re.S)
+    if not m:
+        return None
+    body = re.sub(r"//[^\n]*", "", m.group(1))
+    out, nxt = [], 0
+    for item in (x.strip() for x in body.split(",")):
+        if not item:
+            continue
+        if "=" in item:
+            n, v = (t.strip() for t in item.split("=", 1))
+            nxt = int(v, 0)
+        else:
+            n = item
+        out.append((n, nxt))
+        nxt += 1
+    return out
+
+
+# Enum dùng chung C++ ↔ Rust: (tệp C++, tệp Rust, tên enum).
+MIRRORED_ENUMS = [
+    ("include/yui/sandbox.hpp", "kernel-cap/src/input.rs", "InputSourceKind"),
+    ("include/yui/sandbox.hpp", "kernel-cap/src/input.rs", "InputPrivilege"),
+]
+
+
+def check_mirrored_enums() -> None:
+    header("enum phản chiếu C++ ↔ Rust (P2.21)")
+    for cpp, rs, name in MIRRORED_ENUMS:
+        a = parse_enum_cpp((ROOT / cpp).read_text(encoding="utf-8"), name)
+        b = parse_enum_rust((ROOT / rs).read_text(encoding="utf-8"), name)
+        if a is None or b is None:
+            bad(f"không tìm thấy enum {name} ở {cpp if a is None else rs}")
+        elif a != b:
+            bad(f"{name} lệch: C++ {a} ≠ Rust {b}")
+        else:
+            ok(f"{name}: {len(a)} biến thể khớp ({', '.join(n for n, _ in a)})")
 
 
 def check_frame() -> None:
@@ -579,6 +637,7 @@ def main() -> int:
     check_policies()
     check_ibus_component()
     check_rust()
+    check_mirrored_enums()
     check_frame()
     check_kernel_dependencies()
     check_third_party()

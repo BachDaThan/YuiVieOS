@@ -974,4 +974,253 @@ YUI_TEST(redteam, clickjacking_and_compatibility_evasion_attempts) {
   CHECK(v_err.find("đã bị thu hồi") != std::string::npos);
 }
 
+// ============================================================================
+// P2.21 — nhãn nguồn RemoteAuthorized / GuestBluetooth: điều khiển app được,
+// KHÔNG BAO GIỜ bấm được hộp thoại xác nhận tin cậy.
+// ============================================================================
+
+namespace {
+
+sandbox::TaggedInputEvent click(sandbox::InputSourceKind src, int x, int y) {
+  sandbox::TaggedInputEvent ev;
+  ev.source = src;
+  ev.x = x;
+  ev.y = y;
+  ev.is_button_down = true;
+  if (src == sandbox::InputSourceKind::PhysicalHardware) ev.hardware_device_id = 0x1001;
+  if (src == sandbox::InputSourceKind::RemoteAuthorized) ev.remote_session_id = 42;
+  return ev;
+}
+
+size_t count_audit(const sandbox::Enforcer& enf, const std::string& kind, bool allowed) {
+  size_t n = 0;
+  for (const auto& e : enf.audit())
+    if (e.action.kind == kind && e.decision.allowed == allowed) ++n;
+  return n;
+}
+
+}  // namespace
+
+YUI_TEST(redteam, remote_authorized_input_never_confirms_trusted_dialog) {
+  using sandbox::InputPrivilege;
+  using sandbox::InputSourceKind;
+  // Bảng quyền: chỉ thiết bị vật lý (mã thiết bị ≠ 0) mới xác nhận được.
+  CHECK(sandbox::input_privilege(click(InputSourceKind::PhysicalHardware, 0, 0)) ==
+        InputPrivilege::TrustedConfirmation);
+  CHECK(sandbox::input_privilege(click(InputSourceKind::RemoteAuthorized, 0, 0)) == InputPrivilege::AppControl);
+  CHECK(sandbox::input_privilege(click(InputSourceKind::GuestBluetooth, 0, 0)) == InputPrivilege::AppControl);
+  CHECK(sandbox::input_privilege(click(InputSourceKind::SyntheticApp, 0, 0)) == InputPrivilege::None);
+  auto unbound = click(InputSourceKind::RemoteAuthorized, 0, 0);
+  unbound.remote_session_id = 0;  // không gắn phiên đã cấp thẻ ⇒ không quyền gì
+  CHECK(sandbox::input_privilege(unbound) == InputPrivilege::None);
+  auto fake_phys = click(InputSourceKind::PhysicalHardware, 0, 0);
+  fake_phys.hardware_device_id = 0;
+  CHECK(!sandbox::counts_as_trusted_confirmation(fake_phys));
+  auto weird = click(InputSourceKind::PhysicalHardware, 0, 0);
+  weird.source = static_cast<InputSourceKind>(7);  // giá trị lạ từ dây ⇒ không quyền gì
+  CHECK(sandbox::input_privilege(weird) == InputPrivilege::None);
+  CHECK(sandbox::may_drive_application(click(InputSourceKind::RemoteAuthorized, 1, 1)));
+  CHECK(sandbox::may_drive_application(click(InputSourceKind::GuestBluetooth, 1, 1)));
+  CHECK(!sandbox::may_drive_application(click(InputSourceKind::SyntheticApp, 1, 1)));
+  CHECK_EQ(std::string(sandbox::input_source_name(InputSourceKind::RemoteAuthorized)), std::string("RemoteAuthorized"));
+
+  sandbox::Enforcer enforcer;
+  sandbox::TrustedConfirmationHost host(&enforcer);
+  const std::string dlg = host.show_dialog("store:org.example.app", "Cài ứng dụng?", "Cài ứng dụng?", 1000);
+  // 50 cú bấm từ phiên từ xa đã cấp thẻ, đúng toạ độ nút Xác nhận, sau thời gian chờ.
+  for (int i = 0; i < 50; ++i) CHECK(!host.handle_input(dlg, click(InputSourceKind::RemoteAuthorized, 150, 220), 2000 + i));
+  // 10 cú bấm từ bàn phím/chuột Bluetooth đi qua ngăn xếp trong khách.
+  for (int i = 0; i < 10; ++i) CHECK(!host.handle_input(dlg, click(InputSourceKind::GuestBluetooth, 150, 220), 3000 + i));
+  CHECK(!host.handle_input(dlg, weird, 3100));
+  CHECK(host.is_active(dlg));
+  CHECK(!host.is_confirmed(dlg));
+  CHECK_EQ(host.remote_attempts_blocked(), size_t(60));
+  CHECK_EQ(host.synthetic_attacks_blocked(), size_t(61));
+  CHECK_EQ(count_audit(enforcer, "security.remote_confirm", false), size_t(60));
+  bool reason_ok = false;
+  for (const auto& e : enforcer.audit())
+    if (e.action.kind == "security.remote_confirm" && e.decision.reason.find("RemoteAuthorized") != std::string::npos)
+      reason_ok = true;
+  CHECK(reason_ok);
+
+  // Thiết bị vật lý vẫn xác nhận được như cũ (P4.13 không đổi).
+  CHECK(host.handle_input(dlg, click(InputSourceKind::PhysicalHardware, 150, 220), 4000));
+  CHECK(host.is_confirmed(dlg));
+  CHECK_EQ(count_audit(enforcer, "security.physical_confirm", true), size_t(1));
+}
+
+// ============================================================================
+// P2.20 — thẻ giữ tỉnh session.inhibit: ngoại lệ hẹp, có hạn, qua xác nhận
+// tin cậy, đèn báo do host vẽ là điều kiện.
+// ============================================================================
+
+namespace {
+
+struct Indicators {
+  bool working = true;          // compositor vẽ được đèn không
+  bool on[4] = {false, false, false, false};
+  int draws = 0;
+  guard::IndicatorRenderer renderer() {
+    return [this](guard::SensitiveResource r, bool want) {
+      ++draws;
+      if (!working && want) {
+        on[static_cast<int>(r)] = false;
+        return false;
+      }
+      on[static_cast<int>(r)] = want;
+      return true;
+    };
+  }
+};
+
+guard::IdleActivitySample bg(uint64_t pid, const std::string& sb, guard::SensitiveResource r, int64_t now) {
+  guard::IdleActivitySample s;
+  s.pid = pid;
+  s.proc_name = "may-chu-game";
+  s.sandbox_id = sb;
+  s.resource = r;
+  s.has_window = false;
+  s.user_initiated = false;
+  s.token_badge = 0xB000 + pid;
+  s.now_ns = now;
+  return s;
+}
+
+// Host hiện hộp thoại cho đúng yêu cầu rồi người dùng bấm bằng chuột thật.
+std::string confirm_physically(sandbox::TrustedConfirmationHost& host, const std::string& target,
+                               sandbox::InputSourceKind src = sandbox::InputSourceKind::PhysicalHardware) {
+  const std::string id = host.show_dialog(target, "Giữ tỉnh dịch vụ nền?", "Cho phép chạy nền khi máy rảnh?", 1000);
+  host.handle_input(id, click(src, 150, 220), 2000);
+  return id;
+}
+
+}  // namespace
+
+YUI_TEST(redteam, session_inhibit_card_scenarios) {
+  using guard::SensitiveResource;
+  sandbox::Enforcer enforcer;
+  sandbox::TrustedConfirmationHost host(&enforcer);
+  guard::IdleConfig cfg;
+  guard::IdleGuard ig(cfg);
+  Indicators lamp;
+  ig.set_audit(&enforcer);
+  ig.set_indicator_renderer(lamp.renderer());
+  ig.record_user_activity(0);
+  const int64_t t0 = 400 * kSec;  // đã rảnh 400 s > 300 s
+
+  // (1) Dịch vụ nền không cửa sổ, không thẻ ⇒ vẫn bị chặn (quy tắc P2.15 không đổi).
+  CHECK(bool(ig.observe(bg(500, "sb:server", SensitiveResource::Network, t0))));
+  CHECK(ig.is_throttled(500));
+  CHECK(ig.is_badge_revoked(0xB000 + 500));
+  ig.clear(500);
+
+  // (4) Ứng dụng tự xin thẻ, không qua hộp thoại ⇒ từ chối + audit.
+  guard::InhibitRequest req;
+  req.pid = 501;
+  req.sandbox_id = "sb:server";
+  req.proc_name = "may-chu-game";
+  req.resources = guard::resource_bit(SensitiveResource::Network);
+  auto r4 = ig.grant_inhibit(req, nullptr, "", t0);
+  CHECK(!r4.ok);
+  CHECK(r4.reason_vi.find("xác nhận tin cậy") != std::string::npos);
+  auto r4b = ig.grant_inhibit(req, &host, "dlg-không-có", t0);  // mã hộp thoại bịa
+  CHECK(!r4b.ok);
+  // Hộp thoại có thật nhưng chỉ bị bấm bởi phiên từ xa (P2.21) ⇒ chưa xác nhận ⇒ từ chối.
+  const std::string remote_dlg =
+      confirm_physically(host, guard::inhibit_dialog_target(req, cfg), sandbox::InputSourceKind::RemoteAuthorized);
+  CHECK(!host.is_confirmed(remote_dlg));
+  CHECK(!ig.grant_inhibit(req, &host, remote_dlg, t0).ok);
+  CHECK_EQ(ig.inhibit_count(), size_t(0));
+  CHECK(count_audit(enforcer, "session.inhibit.grant", false) >= size_t(3));
+
+  // (2) Thẻ chỉ-mạng qua xác nhận vật lý ⇒ mạng chạy, micro vẫn bị chặn.
+  const std::string dlg = confirm_physically(host, guard::inhibit_dialog_target(req, cfg));
+  auto r2 = ig.grant_inhibit(req, &host, dlg, t0);
+  CHECK(r2.ok);
+  CHECK(r2.reason_vi.find("240 phút") != std::string::npos);  // mặc định 4 giờ
+  CHECK(lamp.on[static_cast<int>(SensitiveResource::Network)]);
+  CHECK(ig.indicator_lit(SensitiveResource::Network));
+  CHECK(!lamp.on[static_cast<int>(SensitiveResource::Microphone)]);
+  CHECK(!bool(ig.observe(bg(501, "sb:server", SensitiveResource::Network, t0 + kSec))));
+  CHECK(!ig.is_throttled(501));
+  CHECK(bool(ig.observe(bg(501, "sb:server", SensitiveResource::Microphone, t0 + 2 * kSec))));  // không tự kèm micro
+  CHECK(ig.is_throttled(501));
+  ig.clear(501);
+  // Thẻ gắn đúng tiến trình + hộp cát: tiến trình khác hay hộp cát khác không dùng ké được.
+  CHECK(bool(ig.observe(bg(502, "sb:server", SensitiveResource::Network, t0 + 3 * kSec))));
+  CHECK(bool(ig.observe(bg(501, "sb:khac", SensitiveResource::Network, t0 + 3 * kSec))));
+  ig.clear(501);
+  ig.clear(502);
+  // Một lần xác nhận chỉ cấp một thẻ.
+  CHECK(!ig.grant_inhibit(req, &host, dlg, t0).ok);
+  // Hộp thoại xác nhận cho "mạng" không dùng được để xin "mạng + camera".
+  guard::InhibitRequest wider = req;
+  wider.resources |= guard::resource_bit(SensitiveResource::Camera);
+  const std::string dlg_net = confirm_physically(host, guard::inhibit_dialog_target(req, cfg));
+  CHECK(!ig.grant_inhibit(wider, &host, dlg_net, t0).ok);
+  // Không có thẻ vĩnh viễn: thời hạn vượt trần 4 giờ ⇒ từ chối.
+  guard::InhibitRequest forever = req;
+  forever.duration_ns = 5LL * 3600 * kSec;
+  const std::string dlg_forever = confirm_physically(host, guard::inhibit_dialog_target(forever, cfg));
+  CHECK(!ig.grant_inhibit(forever, &host, dlg_forever, t0).ok);
+  guard::InhibitRequest none = req;
+  none.resources = 0;
+  CHECK(!ig.grant_inhibit(none, &host, confirm_physically(host, guard::inhibit_dialog_target(none, cfg)), t0).ok);
+
+  // (3) Thẻ hết hạn ⇒ thu hồi, quy tắc cũ áp lại, đèn tắt.
+  const int64_t expiry = t0 + cfg.inhibit_default_ns;
+  CHECK(!bool(ig.observe(bg(501, "sb:server", SensitiveResource::Network, expiry - kSec))));
+  CHECK(bool(ig.observe(bg(501, "sb:server", SensitiveResource::Network, expiry))));
+  CHECK_EQ(ig.inhibit_count(), size_t(0));
+  CHECK(!lamp.on[static_cast<int>(SensitiveResource::Network)]);
+  CHECK(count_audit(enforcer, "session.inhibit.revoke", true) >= size_t(1));
+  ig.clear(501);
+
+  // (5) Thẻ micro: đèn báo là điều kiện. Host không vẽ được đèn ⇒ không cấp;
+  //     đèn tắt giữa chừng ⇒ thẻ không có hiệu lực ⇒ micro bị chặn.
+  guard::InhibitRequest mic = req;
+  mic.pid = 600;
+  mic.duration_ns = 3600 * kSec;
+  mic.resources = guard::resource_bit(SensitiveResource::Microphone);
+  lamp.working = false;
+  CHECK(!ig.grant_inhibit(mic, &host, confirm_physically(host, guard::inhibit_dialog_target(mic, cfg)), t0).ok);
+  lamp.working = true;
+  auto r5 = ig.grant_inhibit(mic, &host, confirm_physically(host, guard::inhibit_dialog_target(mic, cfg)), t0);
+  CHECK(r5.ok);
+  CHECK(lamp.on[static_cast<int>(SensitiveResource::Microphone)]);
+  CHECK(!bool(ig.observe(bg(600, "sb:server", SensitiveResource::Microphone, t0 + kSec))));
+  lamp.working = false;  // compositor mất đèn
+  CHECK(bool(ig.observe(bg(600, "sb:server", SensitiveResource::Microphone, t0 + 2 * kSec))));
+  CHECK(ig.is_throttled(600));
+  CHECK(!ig.indicator_lit(SensitiveResource::Microphone));
+  CHECK(count_audit(enforcer, "session.inhibit.indicator_missing", false) >= size_t(1));
+  lamp.working = true;
+  ig.clear(600);
+
+  // Dịch vụ tắt ⇒ thu hồi thẻ của tiến trình đó; đổi người dùng ⇒ thu hồi hết.
+  CHECK_EQ(ig.revoke_inhibits_for_pid(600, "dịch vụ đã tắt", t0 + 3 * kSec), size_t(1));
+  CHECK(!lamp.on[static_cast<int>(SensitiveResource::Microphone)]);
+  guard::InhibitRequest a = req, b = req;
+  a.pid = 701;
+  b.pid = 702;
+  CHECK(ig.grant_inhibit(a, &host, confirm_physically(host, guard::inhibit_dialog_target(a, cfg)), t0).ok);
+  CHECK(ig.grant_inhibit(b, &host, confirm_physically(host, guard::inhibit_dialog_target(b, cfg)), t0).ok);
+  CHECK_EQ(ig.revoke_all_inhibits("đổi người dùng", t0 + 4 * kSec), size_t(2));
+  CHECK_EQ(ig.inhibit_count(), size_t(0));
+  CHECK(bool(ig.observe(bg(701, "sb:server", SensitiveResource::Network, t0 + 5 * kSec))));
+
+  // (6) 50 yêu cầu thẻ giả liên tiếp (không hộp thoại / bấm tổng hợp / bấm từ xa) ⇒ đều bị chặn.
+  const size_t refused_before = ig.inhibit_requests_refused();
+  for (int i = 0; i < 50; ++i) {
+    guard::InhibitRequest f = req;
+    f.pid = 800 + static_cast<uint64_t>(i);
+    std::string id;
+    if (i % 3 == 1) id = confirm_physically(host, guard::inhibit_dialog_target(f, cfg), sandbox::InputSourceKind::SyntheticApp);
+    if (i % 3 == 2) id = confirm_physically(host, guard::inhibit_dialog_target(f, cfg), sandbox::InputSourceKind::RemoteAuthorized);
+    CHECK(!ig.grant_inhibit(f, &host, id, t0).ok);
+  }
+  CHECK_EQ(ig.inhibit_requests_refused() - refused_before, size_t(50));
+  CHECK_EQ(ig.inhibit_count(), size_t(0));
+}
+
 YUI_TEST_MAIN("test_redteam")

@@ -333,6 +333,28 @@ trước máy tính để thu thập dữ liệu nhạy cảm (`include/yui/guar
    - Thao tác chập chờn trước ngưỡng thời gian rảnh ⇒ không kích hoạt giả mạo,
      chỉ kích hoạt khi thực sự đủ điều kiện rảnh.
 
+5. **Thẻ giữ tỉnh `session.inhibit` (P2.20)** — ngoại lệ hẹp cho dịch vụ nền
+   không cửa sổ (máy chủ game, phiên nền của khách):
+   - chỉ cấp qua hộp thoại xác nhận tin cậy (P4.13) mà đích khớp đúng yêu cầu
+     `inhibit:<hộp cát>:pid=<n>:<tài nguyên>:<giây>s`; mỗi hộp thoại cấp một thẻ;
+   - có hạn (mặc định = tối đa 4 giờ), gia hạn phải xác nhận lại; không có thẻ vĩnh viễn;
+   - chỉ đúng tài nguyên đã khai (thẻ mạng không kèm micro/camera), gắn một tiến trình + hộp cát;
+   - **đèn báo do host vẽ là điều kiện**: không vẽ được đèn ⇒ không cấp; đèn mất
+     giữa chừng ⇒ thẻ không có hiệu lực cho tài nguyên đó;
+   - audit mọi bước; thu hồi O(1) theo thẻ, theo tiến trình (dịch vụ tắt) hoặc toàn bộ
+     (đổi người dùng); hết hạn ⇒ thu hồi + tắt đèn. Tiến trình không thẻ vẫn theo quy tắc 300 s.
+
+### 10.5.1 Nhãn nguồn sự kiện nhập (P4.13 + P2.21)
+
+| Nguồn | Điều khiển ứng dụng | Bấm hộp thoại tin cậy / cấp thẻ / mở cổng / cài khoá |
+|---|---|---|
+| `PhysicalHardware` (driver gốc, mã thiết bị ≠ 0) | có | **có** |
+| `RemoteAuthorized` (phiên từ xa đã cấp thẻ) | có | không — từ chối + audit `security.remote_confirm` |
+| `GuestBluetooth` (BT qua ngăn xếp trong khách) | có | không — như trên |
+| `SyntheticApp` | không | không — audit `security.synthetic_click` |
+
+Bản Rust `kernel-cap/src/input.rs` phản chiếu enum; `scripts/verify.py` so tên và giá trị hai bên.
+
 ### 10.6 An ninh Bộ gõ bên thứ ba (Third-Party IME Sandbox — P3.13)
 
 Bộ gõ (IME) là một trong những thành phần có nguy cơ rò rỉ dữ liệu cao nhất vì

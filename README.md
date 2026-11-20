@@ -41,7 +41,7 @@ cần thư viện ngoài, không cần Rust.
 
 ```bash
 make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell,yui-splash,yui-update,yui-store,yui-sandbox-exec}
-make test         # 12569 kiểm thử (12503 C++17 + 66 C11 ABI)
+make test         # 12747 kiểm thử (12681 C++17 + 66 C11 ABI)
 make check        # test + smoke run + kiểm tra tĩnh (scripts/verify.sh, gồm máy kiểm ranh giới P7.10)
 ```
 

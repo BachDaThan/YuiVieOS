@@ -443,19 +443,46 @@ class MicroVmSupervisor {
 };
 
 // ------------------------------------ Trusted Confirmation Path (P4.13) --
+//
+// Nhãn nguồn sự kiện nhập (P4.13, mở rộng P2.21). Thứ tự và giá trị số phải
+// khớp bản Rust `kernel-cap/src/input.rs` (scripts/verify.py kiểm).
+// QUY TẮC CỨNG: chỉ `PhysicalHardware` (driver gốc của host gắn thẻ: USB,
+// PS/2, cảm ứng; `hardware_device_id` ≠ 0) mới tính là xác nhận tin cậy.
 enum class InputSourceKind {
-  PhysicalHardware,  // Thiết bị vật lý do nhân gắn thẻ (bàn phím/chuột phần cứng)
-  SyntheticApp       // Sự kiện tổng hợp từ ứng dụng / guest / background injection
+  PhysicalHardware = 0,  // Thiết bị vật lý do nhân gắn thẻ (bàn phím/chuột phần cứng)
+  SyntheticApp = 1,      // Sự kiện tổng hợp từ ứng dụng / guest / background injection
+  RemoteAuthorized = 2,  // Phiên từ xa đã được cấp thẻ (yui-remote P6.43, yui-kvm-share P6.42)
+  GuestBluetooth = 3     // Bàn phím/chuột BT đi qua ngăn xếp trong khách (P6.46) — không phải vật lý
+};
+
+// Mức quyền một sự kiện nhập mang theo.
+enum class InputPrivilege {
+  None,                 // không được đưa vào ứng dụng khác
+  AppControl,           // điều khiển ứng dụng thường (gõ, bấm trong cửa sổ app)
+  TrustedConfirmation   // thêm: bấm hộp thoại xác nhận tin cậy, cấp thẻ giữ tỉnh,
+                        // mở cổng, cài khoá ký…
 };
 
 struct TaggedInputEvent {
   InputSourceKind source = InputSourceKind::SyntheticApp;
   uint64_t hardware_device_id = 0;  // > 0 nếu là thiết bị phần cứng thật
+  uint64_t remote_session_id = 0;   // > 0 nếu là phiên từ xa đã cấp thẻ (RemoteAuthorized)
   int x = 0;
   int y = 0;
   bool is_button_down = false;
   uint32_t keycode = 0;
 };
+
+const char* input_source_name(InputSourceKind k);
+// Mức quyền của sự kiện: PhysicalHardware (id ≠ 0) ⇒ TrustedConfirmation;
+// RemoteAuthorized (phiên ≠ 0) và GuestBluetooth ⇒ AppControl; còn lại None.
+InputPrivilege input_privilege(const TaggedInputEvent& e);
+inline bool counts_as_trusted_confirmation(const TaggedInputEvent& e) {
+  return input_privilege(e) == InputPrivilege::TrustedConfirmation;
+}
+inline bool may_drive_application(const TaggedInputEvent& e) {
+  return input_privilege(e) != InputPrivilege::None;
+}
 
 struct ConfirmationDialog {
   std::string dialog_id;
@@ -486,12 +513,16 @@ class TrustedConfirmationHost {
   // Bên dùng xác nhận phải so đích để một cú bấm không bị dùng cho việc khác.
   std::string dialog_target(const std::string& dialog_id) const;
 
+  // Mọi sự kiện không-vật-lý bị chặn (tổng hợp + từ xa + BT qua khách).
   size_t synthetic_attacks_blocked() const { return synthetic_attacks_blocked_; }
+  // Riêng phần từ phiên từ xa / BT qua khách (đã nằm trong số trên).
+  size_t remote_attempts_blocked() const { return remote_attempts_blocked_; }
 
  private:
   Enforcer* enforcer_;
   std::unordered_map<std::string, ConfirmationDialog> dialogs_;
   size_t synthetic_attacks_blocked_ = 0;
+  size_t remote_attempts_blocked_ = 0;
   uint64_t next_dialog_id_ = 1;
 };
 
