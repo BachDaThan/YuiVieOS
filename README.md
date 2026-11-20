@@ -40,8 +40,8 @@ Yêu cầu: `g++` ≥ 10 (C++17), `make`, `python3`, POSIX. **Không** cần m�
 cần thư viện ngoài, không cần Rust.
 
 ```bash
-make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell,yui-splash,yui-update,yui-store,yui-sandbox-exec}
-make test         # 15303 kiểm thử (15237 C++17 + 66 C11 ABI)
+make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-hw,yui-trim,yui-shell,yui-splash,yui-update,yui-store,yui-sandbox-exec}
+make test         # 15593 kiểm thử (15527 C++17 + 66 C11 ABI)
 make check        # test + smoke run + kiểm tra tĩnh (scripts/verify.sh, gồm máy kiểm ranh giới P7.10)
 ```
 
@@ -105,7 +105,7 @@ pkg-stripper/        Tầng 5: Smart App Stripper (apppack)
 userspace-vi/        Tầng 5: text · ime · ui · shell · ui/app (Flutter)
 include/yui/         API công khai + header C `yui.h`
 tests/               9 bộ test C++17 + 1 bộ test C11
-tools/               yui-profiler · yui-trim · yui-shell · yui-splash
+tools/               yui-profiler · yui-hw · yui-trim · yui-shell · yui-splash
 arch/                linkerscript per arch: x86_64 · arm64 · riscv64
 scripts/             verify.sh · verify.py · build-kernel.sh · qemu-smoke.sh
 .github/workflows/   CI: cpp · rust · docs · cross-arch · kernel · qemu
@@ -124,6 +124,7 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | Tầng | Thành phần | Trạng thái | Bằng chứng |
 |---|---|---|---|
 | 0 | Hardware Auto-Profiler: CPU/RAM/GPU/pin/nhiệt → `may-yeu`/`can-bang`/`may-manh` + k/W | ✅ chạy | `kernel-services/profile.cpp`, `tools/profiler` |
+| 0 | Trợ lý phần cứng `yui-hw` (P6.31): quét PCI/USB/IOMMU/VT-x/EPT/firmware/ổ đĩa ⇒ hạng A/B/C/D **dự kiến** theo quy tắc + hạng **đã đo** chỉ từ bảng `docs/hwdb.tsv` (`real`/`qemu` có bằng chứng); báo cáo chỉ ghi ra tệp cục bộ | 🟡 kiểm thử trên cây sysfs giả + 31 mô tả tổng hợp; **chưa chạy trên máy thật nào** — không có con số "% phần cứng được hỗ trợ" | `kernel-services/hw.cpp`, `tools/hw`, `tests/test_hw.cpp` (290 check) |
 | 0 | Luồng khởi động 3 kiến trúc + linker script | ✅ build 3/3, boot 2/3 | `arch/{x86_64,arm64,riscv64}/linker.ld` |
 | 0 | Khung nhân bare-metal: serial, bộ cấp phát, `YuiBootInfo`, profiler, bảng năng lực trên ring 0 | ✅ boot thật (aarch64, riscv64) / 🔄 x86_64 đã sửa boot path (multiboot2 + ELF32 objcopy), đợi CI xác nhận | `kernel-frame/`; CI `qemu` bắt buộc 3 kiến trúc |
 | 0 | Màn hình chào trên framebuffer tuyến tính (font 5×7) + **chữ Việt có dấu** | ✅ kiểm thử | `userspace-vi/fb.cpp` (1184 check, `fb_viet.*` 29 check), `tools/splash`, [`docs/splash.png`](docs/splash.png) |

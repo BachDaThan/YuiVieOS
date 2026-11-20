@@ -78,6 +78,8 @@ REQUIRED_FILES = [
     "tests/test_ime.cpp",
     "include/yui/store.hpp", "pkg-stripper/store.cpp", "tools/store/main.cpp",
     "tests/test_store.cpp",
+    "include/yui/hw.hpp", "kernel-services/hw.cpp", "tools/hw/main.cpp",
+    "tests/test_hw.cpp", "docs/hwdb.tsv",
     "include/yui/trash.hpp", "userspace-vi/trash.cpp", "tests/test_trash.cpp",
     "include/yui/posix.hpp", "userspace-vi/posix.cpp", "tests/test_posix.cpp",
     "tools/sandbox-exec/main.cpp",
