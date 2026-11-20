@@ -163,7 +163,9 @@ def until_prompt(limit=30):
     return buf
 
 until_prompt()
-s.sendall(("pmemsave %d %d %s\n" % (addr, size, os.path.abspath(raw))).encode())
+# Tên tệp PHẢI trong ngoặc kép: không có thì bộ phân tích biểu thức của HMP
+# đọc "1920000 /home/…" thành phép chia ("invalid char 'h' in expression").
+s.sendall(('pmemsave %d %d "%s"\n' % (addr, size, os.path.abspath(raw))).encode())
 reply = until_prompt(60)
 for _ in range(300):
     if os.path.exists(raw) and os.path.getsize(raw) >= size:
