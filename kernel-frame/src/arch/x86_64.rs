@@ -36,14 +36,18 @@ mb2_start:
     .long mb2_end - mb2_start /* header_length */
     .long -(0xE85250D6 + 0x00000000 + (mb2_end - mb2_start))
     /* Thẻ yêu cầu framebuffer (type 5, cờ 1 = tuỳ chọn): GRUB dựng chế độ
-     * đồ hoạ tuyến tính và trả thẻ framebuffer (type 8) — P2.16. Độ phân
-     * giải ở đây chỉ là gợi ý; `set gfxpayload=WxHxD` trong grub.cfg thắng. */
+     * đồ hoạ tuyến tính và trả thẻ framebuffer (type 8) — P2.16.
+     * Rộng/cao/độ sâu = 0 nghĩa là "không ưu tiên": nếu ghi số ở đây GRUB
+     * đặt đè biến gfxpayload bằng số đó (CI thấy 1024x768 thắng cả
+     * `set gfxpayload=…` trong grub.cfg). Để 0 thì gfxpayload của người dùng
+     * thắng, không có thì GRUB tự chọn ("auto": với VBE là chế độ ưu tiên
+     * trong EDID nếu đọc được — đúng hướng "chế độ gốc" của P2.16). */
     .word 5
     .word 1
     .long 20
-    .long 1024
-    .long 768
-    .long 32
+    .long 0
+    .long 0
+    .long 0
     .long 0                   /* đệm: thẻ kế tiếp phải tròn 8 byte (16+20+4 = 40) */
     .word 0                   /* end tag: type = 0 */
     .word 0
