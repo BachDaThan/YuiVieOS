@@ -251,7 +251,8 @@ jobs:
           set -o pipefail
           YUI_QEMU_LOG=/tmp/qemu-serial.log ./scripts/qemu-smoke.sh ${{ matrix.arch }} --strict 2>&1 | tee /tmp/qemu.log
       - name: "Splash đúng ở ≥ 3 độ phân giải (P2.16: GRUB multiboot2 + VBE, chụp màn hình)"
-        # 800x600 (4:3), 1280x1024 (5:4), 1920x1080 (16:9): GRUB dựng chế độ
+        # 800x600 (4:3), 1280x1024 (5:4), 1920x1080 (16:9) ở 32 bit + 1024x768
+        # ở 24 bit: GRUB dựng chế độ
         # VBE theo gfxpayload, nhân đọc thẻ framebuffer type 8 và vẽ; ảnh chụp
         # qua monitor QEMU được kiểm từng điểm ảnh (scripts/check_splash_ppm.py).
         if: matrix.arch == 'x86_64'

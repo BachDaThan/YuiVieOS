@@ -1,11 +1,11 @@
 #!/bin/sh
 # scripts/qemu-splash.sh — P2.16: màn hình chào phải vẽ ĐÚNG ở ≥ 3 độ phân giải.
 #
-#   ./scripts/qemu-splash.sh            # mặc định: 800x600 1280x1024 1920x1080
+#   ./scripts/qemu-splash.sh            # mặc định: 800x600 1280x1024 1920x1080 1024x768x24
 #   ./scripts/qemu-splash.sh --strict   # thiếu qemu/grub/nhân ⇒ thất bại
-#   YUI_SPLASH_RES="1024x768 1920x1080" ./scripts/qemu-splash.sh
+#   YUI_SPLASH_RES="1024x768 1920x1080x32" ./scripts/qemu-splash.sh   # WxH[xD], D mặc định 32
 #
-# Đường đi (x86_64, BIOS): GRUB2 `multiboot2` + `set gfxpayload=WxHx32` dựng
+# Đường đi (x86_64, BIOS): GRUB2 `multiboot2` + `set gfxpayload=WxHxD` dựng
 # framebuffer VBE tuyến tính → nhân đọc thẻ framebuffer (type 8) → splash vẽ
 # với hệ số k của yui_cap::display. Sau khi cổng nối tiếp báo "ve xong", ta
 # chụp màn hình QEMU (monitor `screendump`) và scripts/check_splash_ppm.py
@@ -24,7 +24,7 @@ for arg in "$@"; do
     esac
 done
 
-RESOLUTIONS="${YUI_SPLASH_RES:-800x600 1280x1024 1920x1080}"
+RESOLUTIONS="${YUI_SPLASH_RES:-800x600 1280x1024 1920x1080 1024x768x24}"
 KERNEL="build/kernel/yui-kernel-x86_64.elf"
 TIMEOUT="${YUI_QEMU_TIMEOUT:-120}"
 OUT="build/splash"
@@ -54,8 +54,10 @@ fi
 mkdir -p "$OUT"
 FAILED=0
 for RES in $RESOLUTIONS; do
-    W="${RES%x*}"
-    H="${RES#*x}"
+    W="$(echo "$RES" | cut -dx -f1)"
+    H="$(echo "$RES" | cut -dx -f2)"
+    D="$(echo "$RES" | cut -dx -f3)"
+    [ -n "$D" ] || D=32
     ISO_DIR="$OUT/iso-$RES"
     ISO="$OUT/yui-$RES.iso"
     LOG="$OUT/serial-$RES.log"
@@ -68,13 +70,16 @@ for RES in $RESOLUTIONS; do
 set timeout=0
 set default=0
 insmod all_video
-menuentry "YuiVieOS ${RES}" {
-    set gfxpayload=${RES}x32
+menuentry "YuiVieOS ${W}x${H}x${D}" {
     multiboot2 /boot/yui.elf
+    # SAU lệnh multiboot2: khi đọc header, GRUB đặt đè gfxpayload theo thẻ
+    # framebuffer của nhân ("auto" vì nhân không ghi độ phân giải ưu tiên).
+    # Chế độ chỉ được dựng lúc 'boot', nên giá trị đặt ở đây mới có hiệu lực.
+    set gfxpayload=${W}x${H}x${D}
     boot
 }
 EOF
-    echo "── $RES: dựng ISO (GRUB multiboot2, gfxpayload=${RES}x32)"
+    echo "── $RES: dựng ISO (GRUB multiboot2, gfxpayload=${W}x${H}x${D})"
     if ! timeout 180 grub-mkrescue -d /usr/lib/grub/i386-pc -o "$ISO" "$ISO_DIR" >"$OUT/mkrescue-$RES.log" 2>&1; then
         echo "✗ grub-mkrescue thất bại ($RES):" >&2
         tail -20 "$OUT/mkrescue-$RES.log" >&2
@@ -160,7 +165,7 @@ PY
     kill -9 "$PID" 2>/dev/null || true
     wait "$PID" 2>/dev/null || true
 
-    if python3 scripts/check_splash_ppm.py "$PPM" "$W" "$H" "$LOG"; then
+    if python3 scripts/check_splash_ppm.py "$PPM" "$W" "$H" "$LOG" "$D"; then
         :
     else
         FAILED=1

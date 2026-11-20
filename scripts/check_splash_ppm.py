@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Kiểm ảnh chụp màn hình chào của nhân (P2.16) — dùng bởi scripts/qemu-splash.sh.
 
-    python3 scripts/check_splash_ppm.py splash.ppm W H serial.log
+    python3 scripts/check_splash_ppm.py splash.ppm W H serial.log [BPP]
 
 Không so với một "ảnh vàng" (bảng thông số đổi theo máy), mà kiểm các bất biến
 của bố cục trong kernel-frame/src/splash.rs:
-  * đúng kích thước W×H; nhân báo đúng WxHx32, nguồn multiboot2, và k đúng
+  * đúng kích thước W×H; nhân báo đúng WxHxBPP (mặc định 32), nguồn multiboot2, và k đúng
     như quy tắc của yui_cap::display::choose_scale (DPI đoán theo độ phân giải);
   * dải đỏ trên cùng cao đúng h/30 + 2, nền đúng màu;
   * tiêu đề "YUIVIEOS BETA" TRÙNG TỪNG ĐIỂM ẢNH với bản dựng lại từ font 5×7
@@ -67,12 +67,13 @@ def text_width(text, scale):
 
 
 def main():
-    if len(sys.argv) != 5:
+    if len(sys.argv) not in (5, 6):
         print(__doc__)
         return 2
     path, W, H, log_path = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+    bpp = int(sys.argv[5]) if len(sys.argv) == 6 else 32
     errors = []
-    tag = "%dx%d" % (W, H)
+    tag = "%dx%dx%d" % (W, H, bpp)
 
     def bad(msg):
         errors.append(msg)
@@ -98,8 +99,8 @@ def main():
         bad("log serial thiếu dòng 'Man hinh : ve xong … k=…'")
     else:
         got = (int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5)), m.group(6))
-        if got != (w, h, 32, k, "multiboot2"):
-            bad("nhân báo %s, mong đợi %dx%dx32 k=%d nguồn multiboot2" % (got, w, h, k))
+        if got != (w, h, bpp, k, "multiboot2"):
+            bad("nhân báo %s, mong đợi %dx%dx%d k=%d nguồn multiboot2" % (got, w, h, bpp, k))
 
     # Dải đỏ + nền.
     band = h // 30 + 2
