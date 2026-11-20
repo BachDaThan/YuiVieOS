@@ -41,7 +41,7 @@ cần thư viện ngoài, không cần Rust.
 
 ```bash
 make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell,yui-splash,yui-update,yui-store,yui-sandbox-exec}
-make test         # 12569 kiểm thử (12503 C++17 + 66 C11 ABI)
+make test         # 14702 kiểm thử (14636 C++17 + 66 C11 ABI)
 make check        # test + smoke run + kiểm tra tĩnh (scripts/verify.sh, gồm máy kiểm ranh giới P7.10)
 ```
 
@@ -127,6 +127,7 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 0 | Luồng khởi động 3 kiến trúc + linker script | ✅ build 3/3, boot 2/3 | `arch/{x86_64,arm64,riscv64}/linker.ld` |
 | 0 | Khung nhân bare-metal: serial, bộ cấp phát, `YuiBootInfo`, profiler, bảng năng lực trên ring 0 | ✅ boot thật (aarch64, riscv64) / 🔄 x86_64 đã sửa boot path (multiboot2 + ELF32 objcopy), đợi CI xác nhận | `kernel-frame/`; CI `qemu` bắt buộc 3 kiến trúc |
 | 0 | Màn hình chào trên framebuffer tuyến tính (font 5×7) + **chữ Việt có dấu** | ✅ kiểm thử | `userspace-vi/fb.cpp` (1184 check, `fb_viet.*` 29 check), `tools/splash`, [`docs/splash.png`](docs/splash.png) |
+| 0 | Chọn chế độ hiển thị gốc (EDID) + hệ số phóng nguyên HiDPI 1–4 theo DPI thật + viền đen thay vì kéo giãn; thẻ framebuffer Multiboot2 trong nhân (P2.16) | 🟡 logic C++ + Rust có test; splash 4 chế độ qua GRUB/QEMU xanh trên CI; GOP chờ P6.4 | `userspace-vi/display.cpp`, `kernel-cap/src/display.rs`, `tests/test_display.cpp` (1512 check, 34 bảng EDID), `scripts/qemu-splash.sh` |
 | 1 | Bảng năng lực: 16 quyền (kể cả `compute.heavy`), dẫn xuất chỉ thu hẹp, thu hồi bắc cầu | ✅ Rust | `kernel-cap/src/lib.rs` |
 | 1 | Thẻ năng lực ký HMAC-SHA-256, xác minh hằng thời gian, lỗi có kiểu | ✅ hai phía | `kernel-cap/src/lib.rs`, `vmm-sandbox/sandbox.cpp` |
 | 1 | SHA-256 / HMAC / SHAKE-256 / scrypt tự viết, có vector RFC | ✅ | `kernel-services/crypto.cpp`, `tests/test_crypto.cpp` |
@@ -135,7 +136,7 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 2 | Bộ lọc egress theo năng lực (mặc định chặn, allowlist policies/*.json) | ✅ kiểm thử | `vmm-sandbox/sandbox.cpp::EgressFilter`, `tests/test_redteam.cpp` |
 | 2 | Lập lịch chuyển đổi nóng LAVD (P/E-core, tín dụng đánh thức, công bằng) | ✅ Rust | `kernel-services/yui-sched` (9 test) |
 | 2 | ZRAM: codec YUI-LZ + kho trang nén, fallback verbatim | ✅ Rust + C++ | `kernel-services/yui-zram` (8 test), `kernel-services/codec.cpp` |
-| 2 | `yui-frame` (khung unsafe duy nhất) | ✅ boot được (2 kiến trúc) | `kernel-frame/` — 29 khối `unsafe` trong 7 tệp được `verify.sh` kiểm toán |
+| 2 | `yui-frame` (khung unsafe duy nhất) | ✅ boot được (2 kiến trúc) | `kernel-frame/` — 35 khối `unsafe` trong 7 tệp được `verify.sh` kiểm toán |
 | 2 | Tickless, DVFS, FS bất biến, Linux ABI | 🟡 chính sách + fsstore/ABI model có test; kernel integration và QEMU/hardware QA còn thiếu | P2.5, P2.7–P2.9 |
 | 3 | Hộp cát 3 bậc + audit + 4 policy mẫu có test | ✅ | `vmm-sandbox/` (129 check) |
 | 3 | Manifest micro-VM (JSON Schema) | 🟡 đặc tả | `vmm-sandbox/vmm/` |
@@ -147,6 +148,7 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 4 | 5 công cụ OS MCP `sys_power`/`sys_scheduler`/`sys_app_stripper`/`sys_proc`/`sys_search_vault` + xác nhận | ✅ chạy (P4.3 `[x]`) | `ai-bridge-yuid/daemon/`, P4.3 |
 | 4 | Cài đặt tham chiếu graph/vault/engine (**sẽ thay ở P5**) | 🟡 tạm | `ai-bridge-yuid/reference/` |
 | 5 | Smart App Stripper: strip ELF, khử trùng lặp, lọc locale, chống zip-slip | ✅ chạy | `pkg-stripper/apppack.cpp`, `tools/trim` (61 check) |
+| 5 | Giải nén an toàn (P4.33): DEFLATE + zstd tự viết, `zip`/`gz`/`zst`/`tar`/`tar.gz`/`tar.zst`, chặn zip-slip/liên kết/bom nén, CRC/XXH64, xoá sạch khi lỗi | ✅ chạy (chưa 7z) | `pkg-stripper/archive.cpp`, `pkg-stripper/zstd.cpp`, `tests/test_archive.cpp` (429 check) |
 | 5 | Bộ gõ Telex **và** VNI, đặt dấu đúng chính tả | ✅ 246 test | `userspace-vi/ime.cpp` |
 | 5 | Shell song ngữ Việt–Anh, 36 lệnh (gồm `tìmapp`/`cài`/`gỡ` của Kho, `xoá`/`khôiphục`/`dọnrác` của thùng rác) | ✅ chạy | `userspace-vi/shell.cpp` |
 | 5 | Chế độ POSIX trong `yui-shell` (`!lệnh` hoặc `chạy …`): ống dẫn, `>` `>>` `<` `2>&1`, `&`/`jobs`/`kill`/`wait`, biến, trích dẫn; `yuid` kiểm + audit từng lệnh, Landlock + no_new_privs qua `yui-sandbox-exec`; dòng lạ không tự chạy | ✅ chạy trên Linux host (Landlock); nhân riêng chờ P2.7 | `userspace-vi/posix.cpp`, `tools/sandbox-exec/`, `tests/test_posix.cpp` (141 check), P4.12 |
@@ -161,7 +163,7 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 - **Không giả mạo, không né kiểm tra.** Không giả IMEI/ID thiết bị/vị trí, không vượt Play Integrity, không né chống gian lận của game (task P7.10). Game kiểm nghiêm sẽ từ chối máy ảo/container; bạn tự tuân thủ điều khoản của ứng dụng/game (đa tài khoản, giả vùng, công cụ ngoài). Dự án không quảng bá việc "treo/cày nhiều tài khoản". <!-- ranh-giới-ok: phạm vi: tuyên bố dự án KHÔNG làm các việc này -->
 - **Không đóng gói** Windows, Google Mobile Services, bộ dịch mã đóng nguồn hay bản vá game: tải theo nhu cầu từ nguồn chính thức, theo [`docs/THIRD-PARTY.md`](docs/THIRD-PARTY.md).
 - **Không hứa con số chưa đo** (FPS, độ trễ, RAM so với Windows/Linux). Chỉ ghi số có phép đo kèm máy và lệnh (P6.25–P6.26).
-- **Chưa có:** đồ họa 3D trên nhân riêng (chưa có đường GPU, P6.28), Android/Windows trong micro-VM (P3), giao diện Kho Ứng Dụng (P4.16; mới có lõi CLI/RPC P4.15, chưa có danh mục thật, chưa nhận `.tar.gz`/`.zip`/`.apk`), lọc quảng cáo (P4.18), server/NAS (backlog). Xem [`docs/PLAN.md`](docs/PLAN.md).
+- **Chưa có:** đồ họa 3D trên nhân riêng (chưa có đường GPU, P6.28), Android/Windows trong micro-VM (P3), giao diện Kho Ứng Dụng (P4.16; mới có lõi CLI/RPC P4.15, chưa có danh mục thật; `.tar.gz`/`.tar.zst`/`.zip` đã nhận qua bộ giải nén an toàn P4.33, chưa có 7z/`.deb`), lọc quảng cáo (P4.18), server/NAS (backlog). Xem [`docs/PLAN.md`](docs/PLAN.md).
 
 **Chưa kiểm chứng được trong môi trường soạn thảo này**: biên dịch Rust (không có
 `cargo`), boot QEMU (không có `qemu-system-*`), build Flutter (không có SDK). Cả

@@ -1,13 +1,21 @@
 //! Màn hình chào trên framebuffer tuyến tính — bản bare-metal.
 //!
-//! Cùng bố cục với `userspace-vi/fb.cpp` (đã kiểm thử 1155 check): dải đỏ trên
-//! cùng, chữ "YUIVIEOS BETA", bảng thông số máy, dòng chân trang. Ở đây chỉ có
-//! 32-bit màu và font 5x7 tối giản vì không có bộ cấp phát ảnh.
+//! Cùng bố cục với `userspace-vi/fb.cpp` (`render_splash`): dải đỏ trên cùng,
+//! chữ "YUIVIEOS BETA", phụ đề, bảng thông số máy, dòng chân trang. Ở đây chỉ
+//! có font 5x7 tối giản vì không có bộ cấp phát ảnh.
 //!
-//! Toàn bộ `unsafe` của tệp này nằm ở hai hàm `put`/`fill`: chúng ghi vào vùng
-//! nhớ do firmware cấp, đúng loại việc mà khung phần cứng phải làm.
+//! P2.16: mọi kích thước (cỡ chữ, khoảng cách, bảng) nhân với hệ số HiDPI
+//! nguyên `k` do `yui_cap::display::choose_scale` chọn — đúng hàm mà bản C++
+//! và bộ vector chung kiểm. Chữ chỉ được phóng bằng khối k×k (không nội suy).
+//! Firmware không cho kích thước vật lý ở đây (EDID đến sau, cùng GOP — P6.4),
+//! nên DPI là ĐOÁN theo độ phân giải: 4K ⇒ k = 2, còn lại k = 1.
+//!
+//! Toàn bộ `unsafe` của tệp này nằm ở hàm `put`: nó ghi vào vùng nhớ do
+//! firmware cấp, đúng loại việc mà khung phần cứng phải làm.
 
 use alloc::format;
+
+use yui_cap::display;
 
 use crate::boot::{BootInfo, Framebuffer};
 use crate::profiler;
@@ -18,8 +26,14 @@ const ACCENT: u32 = 0xFFDA_251D;
 const SOFT: u32 = 0xFF8A_94B8;
 const PANEL: u32 = 0xFF15_1B33;
 
-/// Trả về số pixel đã vẽ, hoặc None nếu framebuffer không dùng được.
-pub fn render(fb: &Framebuffer, info: &BootInfo) -> Option<u64> {
+/// Kết quả vẽ: số pixel và hệ số k đã dùng.
+pub struct Drawn {
+    pub pixels: u64,
+    pub k: u8,
+}
+
+/// Trả về None nếu framebuffer không dùng được.
+pub fn render(fb: &Framebuffer, info: &BootInfo) -> Option<Drawn> {
     if fb.addr == 0 || fb.width < 120 || fb.height < 80 || fb.bpp < 24 {
         return None;
     }
@@ -36,33 +50,57 @@ pub fn render(fb: &Framebuffer, info: &BootInfo) -> Option<u64> {
         height: fb.height as i32,
         stride,
         bytes_per_pixel,
+        shifts: (fb.red_shift, fb.green_shift, fb.blue_shift),
     };
+    let (w, h) = (surface.width, surface.height);
 
-    surface.fill(0, 0, surface.width, surface.height / 30 + 2, ACCENT);
-    surface.fill(0, 0, surface.width, surface.height, BG);
+    let scale = display::choose_scale(&display::ScaleInput {
+        width_px: fb.width,
+        height_px: fb.height,
+        ..display::ScaleInput::default()
+    });
+    let k = scale.k as i32;
 
-    let title_scale = if surface.width >= 640 { 4 } else { 3 };
+    // Nền trước, dải đỏ sau (thứ tự ngược lại thì dải bị nền đè mất).
+    surface.fill(0, 0, w, h, BG);
+    surface.fill(0, 0, w, h / 30 + 2, ACCENT);
+
     let title = "YUIVIEOS BETA";
-    let tw = text_width(title, title_scale);
-    surface.text((surface.width - tw) / 2, surface.height / 3, title, INK, title_scale);
-
-    let sub = "HE DIEU HANH VIET NAM";
-    let sw = text_width(sub, 2);
-    surface.text((surface.width - sw) / 2, surface.height / 3 + 7 * title_scale + 8, sub, SOFT, 2);
+    let mut title_scale = (if w >= 640 { 4 } else if w >= 400 { 3 } else { 2 }) * k;
+    while title_scale > 1 && text_width(title, title_scale) > w - 16 {
+        title_scale -= 1;
+    }
+    surface.centered(title, title_scale, h / 3, INK);
+    let sub_scale = if title_scale > k { title_scale - k } else { 1 };
+    surface.centered("HE DIEU HANH VIET NAM", sub_scale, h / 3 + 7 * title_scale + 6 * k, SOFT);
 
     let c = profiler::classify(info.ram_mb, info.harts);
-    let panel_w = surface.width - surface.width / 10;
-    let panel_x = surface.width / 20;
-    let panel_y = surface.height - 64;
-    surface.fill(panel_x, panel_y, panel_w, 48, PANEL);
-    surface.fill(panel_x, panel_y, 4, 48, ACCENT);
-
     let line1 = format!("{}  {} HARTS  {} MB", c.tier, info.harts, info.ram_mb);
     let line2 = format!("K={}  W={}  {}", c.k, c.window, info.simd);
-    surface.text(panel_x + 14, panel_y + 8, &line1, INK, 1);
-    surface.text(panel_x + 14, panel_y + 24, &line2, SOFT, 1);
+    let panel_x = w / 20;
+    let panel_w = w - 2 * panel_x;
+    let inner = panel_w - 22 * k;
+    let mut panel_scale = 2 * k;
+    while panel_scale > 1
+        && (text_width(&line1, panel_scale) > inner || text_width(&line2, panel_scale) > inner)
+    {
+        panel_scale -= 1;
+    }
+    let line_gap = 6 * k;
+    let panel_h = 2 * 7 * panel_scale + line_gap + 16 * k;
+    let panel_y = h - panel_h - 7 * k - 24 * k;
+    surface.fill(panel_x, panel_y, panel_w, panel_h, PANEL);
+    surface.fill(panel_x, panel_y, 4 * k, panel_h, ACCENT);
+    let (tx, ty) = (panel_x + 14 * k, panel_y + 8 * k);
+    surface.text(tx, ty, &line1, INK, panel_scale);
+    surface.text(tx, ty + 7 * panel_scale + line_gap, &line2, SOFT, panel_scale);
 
-    Some(surface.width as u64 * surface.height as u64)
+    surface.centered("CLEAN-ROOM  -  SAFE RUST KERNEL", k, h - 7 * k - 8 * k, SOFT);
+
+    Some(Drawn {
+        pixels: w as u64 * h as u64,
+        k: scale.k,
+    })
 }
 
 struct Surface {
@@ -71,6 +109,7 @@ struct Surface {
     height: i32,
     stride: u32,
     bytes_per_pixel: u32,
+    shifts: (u8, u8, u8),
 }
 
 impl Surface {
@@ -79,18 +118,27 @@ impl Surface {
             return;
         }
         let offset = y as u32 * self.stride + x as u32 * self.bytes_per_pixel;
+        // ARGB của bố cục → bố cục kênh màu firmware báo (thường trùng XRGB).
+        let (rs, gs, bs) = self.shifts;
+        let native = (((argb >> 16) & 0xFF) << rs) | (((argb >> 8) & 0xFF) << gs) | ((argb & 0xFF) << bs);
         // An toàn: offset đã bị chặn trong (pitch × height) do kiểm tra ở trên,
-        // và vùng nhớ thuộc framebuffer firmware cấp cho nhân.
+        // và vùng nhớ thuộc framebuffer firmware cấp cho nhân (boot.rs đã kiểm
+        // nó nằm trong vùng ánh xạ đồng nhất).
         unsafe {
             let pixel = self.base.add(offset as usize);
             if self.bytes_per_pixel >= 4 {
-                core::ptr::write_volatile(pixel as *mut u32, argb);
+                core::ptr::write_volatile(pixel as *mut u32, native);
             } else {
-                core::ptr::write_volatile(pixel, (argb & 0xFF) as u8);
-                core::ptr::write_volatile(pixel.add(1), ((argb >> 8) & 0xFF) as u8);
-                core::ptr::write_volatile(pixel.add(2), ((argb >> 16) & 0xFF) as u8);
+                core::ptr::write_volatile(pixel, (native & 0xFF) as u8);
+                core::ptr::write_volatile(pixel.add(1), ((native >> 8) & 0xFF) as u8);
+                core::ptr::write_volatile(pixel.add(2), ((native >> 16) & 0xFF) as u8);
             }
         }
+    }
+
+    fn centered(&self, text: &str, scale: i32, y: i32, argb: u32) {
+        let x = (self.width - text_width(text, scale)) / 2;
+        self.text(x.max(0), y, text, argb, scale);
     }
 
     fn fill(&self, x: i32, y: i32, w: i32, h: i32, argb: u32) {

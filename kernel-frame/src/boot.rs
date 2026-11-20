@@ -6,7 +6,8 @@
 
 use alloc::string::String;
 
-/// Framebuffer tuyến tính do firmware cấp (multiboot flag bit 12 / simple-framebuffer).
+/// Framebuffer tuyến tính do firmware cấp (multiboot 1 flag bit 12, thẻ
+/// framebuffer type 8 của multiboot 2 — P2.16; GOP là P6.4).
 #[derive(Clone, Copy, Debug)]
 pub struct Framebuffer {
     pub addr: u64,
@@ -14,6 +15,69 @@ pub struct Framebuffer {
     pub height: u32,
     pub pitch: u32,
     pub bpp: u8,
+    /// Vị trí bit của từng kênh màu trong một điểm ảnh (mặc định 16/8/0 =
+    /// XRGB, kiểu VBE/GOP phổ biến nhất; firmware báo khác thì theo firmware).
+    pub red_shift: u8,
+    pub green_shift: u8,
+    pub blue_shift: u8,
+    /// Nguồn: "multiboot1" / "multiboot2" — in ra log để biết đường nào chạy.
+    pub source: &'static str,
+}
+
+/// Kiểm một framebuffer firmware báo: chỉ nhận RGB trực tiếp 24/32 bit, kích
+/// thước hợp lý, và (x86_64) nằm trọn trong 4 GiB đầu mà bảng trang khởi động
+/// ánh xạ đồng nhất. Sai ở đâu thì in ra và trả None — không vẽ bừa.
+#[allow(clippy::too_many_arguments)]
+fn checked_fb(
+    addr: u64,
+    pitch: u32,
+    width: u32,
+    height: u32,
+    bpp: u8,
+    fb_type: u8,
+    shifts: (u8, u8, u8),
+    source: &'static str,
+) -> Option<Framebuffer> {
+    if fb_type != 1 {
+        println!("    - framebuffer {}: type {} (khong phai RGB truc tiep), bo qua", source, fb_type);
+        return None;
+    }
+    if addr == 0 || width == 0 || height == 0 || width > 16384 || height > 16384 {
+        println!("    - framebuffer {}: kich thuoc vo ly {}x{}, bo qua", source, width, height);
+        return None;
+    }
+    if bpp != 24 && bpp != 32 {
+        println!("    - framebuffer {}: {} bit/pixel chua ho tro, bo qua", source, bpp);
+        return None;
+    }
+    let min_pitch = width as u64 * (bpp as u64 / 8);
+    if (pitch as u64) < min_pitch {
+        println!("    - framebuffer {}: pitch {} < {}, bo qua", source, pitch, min_pitch);
+        return None;
+    }
+    let end = addr.checked_add(pitch as u64 * height as u64);
+    if end.map_or(true, |e| e > (4u64 << 30)) {
+        println!("    - framebuffer {}: nam ngoai 4 GiB anh xa dong nhat, bo qua", source);
+        return None;
+    }
+    let (r, g, b) = shifts;
+    let sane = |v: u8| v % 8 == 0 && (v as u32) < bpp as u32;
+    let (r, g, b) = if sane(r) && sane(g) && sane(b) && r != g && g != b && r != b {
+        (r, g, b)
+    } else {
+        (16, 8, 0)
+    };
+    Some(Framebuffer {
+        addr,
+        width,
+        height,
+        pitch,
+        bpp,
+        red_shift: r,
+        green_shift: g,
+        blue_shift: b,
+        source,
+    })
 }
 
 /// Thông tin khởi động thô: hoặc multiboot info (x86_64) hoặc DTB (ARM/RISC-V).
@@ -138,15 +202,13 @@ fn parse_multiboot(info: &mut BootInfo, addr: u64) {
         let width = unsafe { core::ptr::read_unaligned((addr as *const u32).add(25)) };
         let height = unsafe { core::ptr::read_unaligned((addr as *const u32).add(26)) };
         let bpp = unsafe { core::ptr::read_volatile((addr as *const u8).add(108)) };
-        if fb_addr != 0 && width > 0 && height > 0 && bpp >= 24 {
-            info.framebuffer = Some(Framebuffer {
-                addr: fb_addr,
-                width,
-                height,
-                pitch,
-                bpp,
-            });
-        }
+        let fb_type = unsafe { core::ptr::read_volatile((addr as *const u8).add(109)) };
+        // color_info (type 1): red_pos(110) red_size(111) green_pos(112)
+        // green_size(113) blue_pos(114) blue_size(115).
+        let byte = |off: usize| unsafe { core::ptr::read_volatile((addr as *const u8).add(off)) };
+        let shifts = (byte(110), byte(112), byte(114));
+        info.framebuffer =
+            checked_fb(fb_addr, pitch, width, height, bpp, fb_type, shifts, "multiboot1");
     }
 
     // Số nhân: multiboot 1 không có; lấy từ ACPI MADT là P2.2. In 1 và nói rõ.
@@ -210,7 +272,28 @@ fn parse_multiboot2(info: &mut BootInfo, addr: u64) {
                     println!();
                 }
             }
-            _ => {}  // thẻ khác (mmap, framebuffer…) — chưa dùng, bỏ qua
+            8 => {
+                // framebuffer info (P2.16). Bố cục theo GRUB (multiboot2.h):
+                // addr u64 (8), pitch (16), width (20), height (24), bpp u8 (28),
+                // type u8 (29), reserved u16 (30), color_info từ 32: với type 1
+                // là red_pos, red_size, green_pos, green_size, blue_pos, blue_size.
+                if tag_size >= 32 {
+                    let fb_addr = le32(blob, pos + 8) as u64 | ((le32(blob, pos + 12) as u64) << 32);
+                    let pitch = le32(blob, pos + 16);
+                    let width = le32(blob, pos + 20);
+                    let height = le32(blob, pos + 24);
+                    let bpp = blob[pos + 28];
+                    let fb_type = blob[pos + 29];
+                    let shifts = if tag_size >= 38 {
+                        (blob[pos + 32], blob[pos + 34], blob[pos + 36])
+                    } else {
+                        (16, 8, 0)
+                    };
+                    info.framebuffer =
+                        checked_fb(fb_addr, pitch, width, height, bpp, fb_type, shifts, "multiboot2");
+                }
+            }
+            _ => {}  // thẻ khác (mmap, EFI…) — chưa dùng, bỏ qua
         }
         pos = (pos + tag_size + 7) & !7;
     }

@@ -1,5 +1,6 @@
 // Linear framebuffer rasteriser — see include/yui/fb.hpp.
 #include "yui/fb.hpp"
+#include "yui/display.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -115,6 +116,27 @@ void clear(const Surface& s, uint32_t argb) {
   for (long i = 0; i < n; ++i) s.pixels[i] = argb;
 }
 
+int present_scaled(const Surface& dst, const Surface& src) {
+  if (!valid(dst) || !valid(src)) return 0;
+  const auto lb = display::letterbox(uint32_t(src.width), uint32_t(src.height),
+                                     uint32_t(dst.width), uint32_t(dst.height));
+  if (lb.k == 0) return 0;
+  const int k = int(lb.k), ox = int(lb.x), oy = int(lb.y);
+  const int ow = int(lb.w), oh = int(lb.h);
+  for (int y = 0; y < dst.height; ++y) {
+    uint32_t* row = dst.pixels + long(y) * dst.width;
+    if (y < oy || y >= oy + oh) {
+      for (int x = 0; x < dst.width; ++x) row[x] = 0xFF000000u;
+      continue;
+    }
+    const uint32_t* srow = src.pixels + long((y - oy) / k) * src.width;
+    for (int x = 0; x < ox; ++x) row[x] = 0xFF000000u;
+    for (int x = 0; x < ow; ++x) row[ox + x] = srow[x / k];
+    for (int x = ox + ow; x < dst.width; ++x) row[x] = 0xFF000000u;
+  }
+  return k;
+}
+
 void fill_rect(const Surface& s, Rect r, uint32_t argb) {
   if (!valid(s) || r.w <= 0 || r.h <= 0) return;
   int x0 = r.x < 0 ? 0 : r.x;
@@ -187,7 +209,7 @@ std::string ascii_upper(const std::string& utf8) {
   return out;
 }
 
-long render_splash(const Surface& s, const profile::HostProfile& host) {
+long render_splash(const Surface& s, const profile::HostProfile& host, int scale_k) {
   if (!valid(s) || s.width < 120 || s.height < 80) return 0;
 
   clear(s, kBg);
@@ -201,10 +223,21 @@ long render_splash(const Surface& s, const profile::HostProfile& host) {
   petal(s, cx - size, s.height / 5 + size / 2, size - 2, kSoft);
   petal(s, cx + size, s.height / 5 + size / 2, size - 2, kSoft);
 
-  const int title_scale = s.width >= 640 ? 4 : (s.width >= 400 ? 3 : 2);
+  // Hệ số HiDPI nguyên (P2.16): splash không biết kích thước vật lý nên
+  // dùng DPI đoán theo độ phân giải (4K ⇒ 2), bên gọi có thể ép `scale_k`.
+  int k = scale_k;
+  if (k < 1 || k > 4) {
+    display::ScaleInput si;
+    si.width_px = uint32_t(s.width);
+    si.height_px = uint32_t(s.height);
+    k = display::choose_scale(si).k;
+  }
+  int title_scale = (s.width >= 640 ? 4 : (s.width >= 400 ? 3 : 2)) * k;
+  while (title_scale > 1 && text_width("YUIVIEOS BETA", title_scale) > s.width - 16) --title_scale;
   centered(s, "YUIVIEOS BETA", title_scale, s.height / 3, kInk);
-  centered(s, "HE DIEU HANH VIET NAM", title_scale > 1 ? title_scale - 1 : 1,
-           s.height / 3 + text_height(title_scale) + 6, kSoft);
+  const int sub_scale = title_scale > k ? title_scale - k : 1;
+  centered(s, "HE DIEU HANH VIET NAM", sub_scale, s.height / 3 + text_height(title_scale) + 6 * k,
+           kSoft);
 
   // Machine panel: what the profiler decided, so the boot screen is also a
   // diagnostic (a technician can read it from a photo).
@@ -218,27 +251,27 @@ long render_splash(const Surface& s, const profile::HostProfile& host) {
 
   const int panel_x = s.width / 20;
   const int panel_w = s.width - 2 * panel_x;
-  const int inner = panel_w - 22;  // accent bar + padding
+  const int inner = panel_w - 22 * k;  // accent bar + padding
 
-  // Never overflow the panel: shrink from 2x to 1x before clipping anything.
-  int panel_scale = 2;
+  // Never overflow the panel: shrink from 2k to 1x before clipping anything.
+  int panel_scale = 2 * k;
   while (panel_scale > 1 &&
          (text_width(line1, panel_scale) > inner || text_width(line2, panel_scale) > inner)) {
     --panel_scale;
   }
-  const int line_gap = 6;
-  const int panel_h = 2 * text_height(panel_scale) + line_gap + 16;
-  const int panel_y = s.height - panel_h - text_height(1) - 24;
+  const int line_gap = 6 * k;
+  const int panel_h = 2 * text_height(panel_scale) + line_gap + 16 * k;
+  const int panel_y = s.height - panel_h - text_height(k) - 24 * k;
   fill_rect(s, Rect{panel_x, panel_y, panel_w, panel_h}, kPanel);
-  fill_rect(s, Rect{panel_x, panel_y, 4, panel_h}, kAccent);
+  fill_rect(s, Rect{panel_x, panel_y, 4 * k, panel_h}, kAccent);
 
-  const int tx = panel_x + 14;
-  const int ty = panel_y + 8;
+  const int tx = panel_x + 14 * k;
+  const int ty = panel_y + 8 * k;
   draw_text(s, tx, ty, line1, kInk, panel_scale);
   draw_text(s, tx, ty + text_height(panel_scale) + line_gap, line2, kSoft, panel_scale);
 
   // Footer: one honest line about what this build is.
-  centered(s, "clean-room  -  safe rust kernel", 1, s.height - text_height(1) - 8, kSoft);
+  centered(s, "clean-room  -  safe rust kernel", k, s.height - text_height(k) - 8 * k, kSoft);
   return long(s.width) * s.height;
 }
 

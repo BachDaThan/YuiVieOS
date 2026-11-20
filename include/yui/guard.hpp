@@ -20,16 +20,29 @@
 // Mở rộng P2.15: Guard rảnh rỗi (Idle Guard):
 //   Ứng dụng nền mở micro/camera, đọc danh bạ hoặc gửi mạng khi không có
 //   thao tác người dùng trong N phút ⇒ hạ xung, thu hồi thẻ O(1), audit + hỏi.
+//
+// Mở rộng P2.20: thẻ giữ tỉnh `session.inhibit` — ngoại lệ HẸP cho dịch vụ
+//   nền không cửa sổ (máy chủ game, phiên nền của khách): chỉ cấp qua hộp
+//   thoại xác nhận tin cậy (P4.13), có hạn (mặc định = tối đa 4 giờ), chỉ đúng
+//   tài nguyên đã khai, gắn một tiến trình + hộp cát, đèn báo do host vẽ là
+//   điều kiện để thẻ có hiệu lực, audit mọi bước, thu hồi O(1).
 #ifndef YUI_GUARD_HPP
 #define YUI_GUARD_HPP
 
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+namespace yui::sandbox {
+class Enforcer;
+class TrustedConfirmationHost;
+}  // namespace yui::sandbox
 
 namespace yui::guard {
 
@@ -184,6 +197,7 @@ const char* sensitive_resource_name_vi(SensitiveResource res);
 struct IdleActivitySample {
   uint64_t pid = 0;
   std::string proc_name;
+  std::string sandbox_id;         // hộp cát của tiến trình (thẻ giữ tỉnh gắn theo đây)
   SensitiveResource resource = SensitiveResource::Microphone;
   bool has_window = false;        // có cửa sổ giao diện hoạt động không
   bool user_initiated = false;    // do người dùng chủ động kích hoạt
@@ -206,7 +220,50 @@ struct IdleAlert {
 struct IdleConfig {
   int64_t idle_timeout_ns = 300LL * 1000 * 1000 * 1000;  // mặc định 5 phút (300 s)
   int throttle_percent = 20;
+  // Thẻ giữ tỉnh (P2.20): thời hạn mặc định và trần — không có thẻ vĩnh viễn.
+  int64_t inhibit_default_ns = 4LL * 3600 * 1000 * 1000 * 1000;  // 4 giờ
+  int64_t inhibit_max_ns = 4LL * 3600 * 1000 * 1000 * 1000;      // gia hạn = xin lại, xác nhận lại
 };
+
+// ---------------------------------------------- thẻ giữ tỉnh (P2.20) --
+// Mặt nạ bit theo SensitiveResource (1 << giá trị enum).
+uint32_t resource_bit(SensitiveResource r);
+std::string resource_mask_text(uint32_t mask);  // "camera,mic,net" (thứ tự cố định)
+
+struct InhibitRequest {
+  uint64_t pid = 0;
+  std::string sandbox_id;      // bắt buộc: thẻ gắn đúng một hộp cát
+  std::string proc_name;
+  uint32_t resources = 0;      // mặt nạ resource_bit(); chỉ cấp đúng những gì khai
+  int64_t duration_ns = 0;     // 0 ⇒ inhibit_default_ns; > inhibit_max_ns ⇒ từ chối
+};
+
+// Chuỗi đích của hộp thoại tin cậy cho đúng yêu cầu này. Host gọi
+// `TrustedConfirmationHost::show_dialog(inhibit_dialog_target(req), …)`;
+// khi cấp thẻ, đích hộp thoại phải khớp TỪNG KÝ TỰ (đổi pid, hộp cát, tài
+// nguyên hay thời hạn ⇒ phải xác nhận lại).
+std::string inhibit_dialog_target(const InhibitRequest& req, const IdleConfig& cfg);
+
+struct InhibitCard {
+  uint64_t id = 0;
+  uint64_t pid = 0;
+  std::string sandbox_id;
+  std::string proc_name;
+  uint32_t resources = 0;
+  int64_t issued_ns = 0;
+  int64_t expires_ns = 0;
+  std::string dialog_id;
+};
+
+struct InhibitResult {
+  bool ok = false;
+  uint64_t card_id = 0;
+  std::string reason_vi;
+};
+
+// Đèn báo Micro/Camera/Mạng/Danh bạ do HOST vẽ (compositor/thanh trạng thái).
+// Trả true nếu đèn đang thật sự hiện. Khách không có đường gọi hàm này.
+using IndicatorRenderer = std::function<bool(SensitiveResource res, bool on)>;
 
 /// Quy tắc bảo vệ tài nguyên nhạy cảm khi máy rảnh:
 /// Ứng dụng nền mở micro/camera, đọc danh bạ hoặc gửi mạng khi không có
@@ -243,9 +300,41 @@ class IdleGuard {
   void clear_alerts() { alerts_.clear(); }
   const Config& config() const { return cfg_; }
 
+  // ---- thẻ giữ tỉnh session.inhibit (P2.20) ----
+  void set_audit(sandbox::Enforcer* enforcer) { audit_ = enforcer; }
+  void set_indicator_renderer(IndicatorRenderer r) { indicator_ = std::move(r); }
+
+  // Cấp thẻ: chỉ khi hộp thoại `dialog_id` của `host` đã được xác nhận bằng
+  // thiết bị vật lý, đích khớp `inhibit_dialog_target(req)`, hộp thoại chưa
+  // dùng, thời hạn ≤ trần, tài nguyên khai rõ và đèn báo vẽ được. Mọi lần từ
+  // chối đều audit. Ứng dụng KHÔNG có đường tự cấp: thiếu hộp thoại ⇒ từ chối.
+  InhibitResult grant_inhibit(const InhibitRequest& req, const sandbox::TrustedConfirmationHost* host,
+                              const std::string& dialog_id, int64_t now_ns);
+  // Thẻ còn hiệu lực đang che tài nguyên này cho (pid, hộp cát)? Thẻ hết hạn
+  // bị thu hồi tại đây.
+  const InhibitCard* active_inhibit(uint64_t pid, const std::string& sandbox_id, SensitiveResource res,
+                                    int64_t now_ns);
+  bool revoke_inhibit(uint64_t card_id, const std::string& reason_vi, int64_t now_ns);  // O(1)
+  size_t revoke_inhibits_for_pid(uint64_t pid, const std::string& reason_vi, int64_t now_ns);  // dịch vụ tắt
+  size_t revoke_all_inhibits(const std::string& reason_vi, int64_t now_ns);  // đổi người dùng / khoá phiên
+  size_t inhibit_count() const { return cards_.size(); }
+  size_t inhibit_requests_refused() const { return inhibit_refused_; }
+  bool indicator_lit(SensitiveResource res) const;
+
  private:
   Config cfg_;
   int64_t last_user_activity_ns_ = 0;
+  sandbox::Enforcer* audit_ = nullptr;
+  IndicatorRenderer indicator_;
+  std::unordered_map<uint64_t, InhibitCard> cards_;          // id → thẻ (thu hồi O(1))
+  std::unordered_multimap<uint64_t, uint64_t> cards_by_pid_;  // pid → id
+  std::unordered_set<std::string> used_dialogs_;              // hộp thoại dùng một lần
+  uint32_t lit_mask_ = 0;
+  uint64_t next_card_ = 1;
+  size_t inhibit_refused_ = 0;
+  void audit(const std::string& subject, const std::string& kind, const std::string& target, bool allowed,
+             const std::string& reason, int64_t now_ns) const;
+  void refresh_indicators();
   std::unordered_set<uint64_t> revoked_badges_;  // O(1) tra cứu thu hồi
   std::unordered_set<uint64_t> throttled_pids_;
   std::vector<IdleAlert> alerts_;

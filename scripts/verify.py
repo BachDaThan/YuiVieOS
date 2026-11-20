@@ -57,7 +57,7 @@ REQUIRED_DIRS = [
 ]
 REQUIRED_FILES = [
     "Cargo.toml", "Makefile", "README.md", "LICENSE", "include/yui/yui.h",
-    "kernel-cap/src/lib.rs", "kernel-cap/src/sha256.rs",
+    "kernel-cap/src/lib.rs", "kernel-cap/src/sha256.rs", "kernel-cap/src/input.rs",
     "kernel-cap/src/sha512.rs", "kernel-cap/src/ed25519.rs",
     "kernel-cap/src/keyring.rs", "kernel-cap/src/bundle.rs",
     "kernel-services/yui-sched/src/lib.rs", "kernel-services/yui-sched/src/guard.rs",
@@ -81,7 +81,12 @@ REQUIRED_FILES = [
     "include/yui/trash.hpp", "userspace-vi/trash.cpp", "tests/test_trash.cpp",
     "include/yui/posix.hpp", "userspace-vi/posix.cpp", "tests/test_posix.cpp",
     "tools/sandbox-exec/main.cpp",
+    "include/yui/archive.hpp", "pkg-stripper/archive.cpp", "pkg-stripper/zstd.cpp", "tests/test_archive.cpp",
+    "tests/archive_fixtures.hpp", "scripts/gen_archive_fixtures.py",
     "scripts/check_boundaries.py", "scripts/test_check_boundaries.py",
+    "include/yui/display.hpp", "userspace-vi/display.cpp", "tests/test_display.cpp",
+    "kernel-cap/src/display.rs", "tests/data/display_vectors.txt", "scripts/gen_display_vectors.py",
+    "scripts/qemu-splash.sh", "scripts/check_splash_ppm.py",
 ]
 STALE = ["core", "crates", "sandbox", "ui"]  # old layout must not come back
 
@@ -287,6 +292,65 @@ def check_rust() -> None:
             ok(f"ngoặc cân: {rel}")
     if not unsafe_found:
         ok("không có 'unsafe' trong crate nhân")
+
+
+def parse_enum_cpp(src: str, name: str) -> list[tuple[str, int]] | None:
+    m = re.search(r"enum\s+class\s+" + name + r"\s*\{(.*?)\};", src, re.S)
+    if not m:
+        return None
+    body = re.sub(r"//[^\n]*", "", m.group(1))
+    out, nxt = [], 0
+    for item in (x.strip() for x in body.split(",")):
+        if not item:
+            continue
+        if "=" in item:
+            n, v = (t.strip() for t in item.split("=", 1))
+            nxt = int(v, 0)
+        else:
+            n = item
+        out.append((n, nxt))
+        nxt += 1
+    return out
+
+
+def parse_enum_rust(src: str, name: str) -> list[tuple[str, int]] | None:
+    m = re.search(r"pub\s+enum\s+" + name + r"\s*\{(.*?)\}", src, re.S)
+    if not m:
+        return None
+    body = re.sub(r"//[^\n]*", "", m.group(1))
+    out, nxt = [], 0
+    for item in (x.strip() for x in body.split(",")):
+        if not item:
+            continue
+        if "=" in item:
+            n, v = (t.strip() for t in item.split("=", 1))
+            nxt = int(v, 0)
+        else:
+            n = item
+        out.append((n, nxt))
+        nxt += 1
+    return out
+
+
+# Enum dùng chung C++ ↔ Rust: (tệp C++, tệp Rust, tên enum).
+MIRRORED_ENUMS = [
+    ("include/yui/sandbox.hpp", "kernel-cap/src/input.rs", "InputSourceKind"),
+    ("include/yui/sandbox.hpp", "kernel-cap/src/input.rs", "InputPrivilege"),
+    ("include/yui/display.hpp", "kernel-cap/src/display.rs", "PickReason"),
+]
+
+
+def check_mirrored_enums() -> None:
+    header("enum phản chiếu C++ ↔ Rust (P2.21)")
+    for cpp, rs, name in MIRRORED_ENUMS:
+        a = parse_enum_cpp((ROOT / cpp).read_text(encoding="utf-8"), name)
+        b = parse_enum_rust((ROOT / rs).read_text(encoding="utf-8"), name)
+        if a is None or b is None:
+            bad(f"không tìm thấy enum {name} ở {cpp if a is None else rs}")
+        elif a != b:
+            bad(f"{name} lệch: C++ {a} ≠ Rust {b}")
+        else:
+            ok(f"{name}: {len(a)} biến thể khớp ({', '.join(n for n, _ in a)})")
 
 
 def check_frame() -> None:
@@ -557,6 +621,17 @@ def check_secrets() -> None:
         ok("quét bí mật sạch (0 bí mật/khoá/token lộ)")
 
 
+def check_display_vectors() -> None:
+    """P2.16: tệp vector dùng chung C++/Rust phải khớp bản tham chiếu Python."""
+    header("vector chế độ hiển thị (P2.16)")
+    gen = ROOT / "scripts" / "gen_display_vectors.py"
+    res = subprocess.run([sys.executable, str(gen), "--check"], capture_output=True, text=True)
+    if res.returncode == 0:
+        ok(res.stdout.strip() or "display_vectors.txt khớp")
+    else:
+        bad((res.stderr or res.stdout).strip() or "display_vectors.txt lỗi thời")
+
+
 def check_boundaries() -> None:
     """Ranh giới "không giả mạo, không né kiểm tra" có máy kiểm (P7.10)."""  # ranh-giới-ok: tên bước kiểm P7.10
     header("ranh giới không giả mạo / không né kiểm tra (P7.10)")  # ranh-giới-ok: tên bước kiểm P7.10
@@ -579,6 +654,8 @@ def main() -> int:
     check_policies()
     check_ibus_component()
     check_rust()
+    check_mirrored_enums()
+    check_display_vectors()
     check_frame()
     check_kernel_dependencies()
     check_third_party()

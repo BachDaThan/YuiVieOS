@@ -17,6 +17,7 @@
 #include "testutil.hpp"
 #include "yui/crypto.hpp"
 #include "yui/service.hpp"
+#include "yui/archive.hpp"
 #include "yui/shell.hpp"
 #include "yui/store.hpp"
 #include "yui/text.hpp"
@@ -566,6 +567,56 @@ YUI_TEST(store, zip_slip_package_rejected) {
   std::vector<std::string> staging;
   walk(fx.root + "/staging", "", staging);
   CHECK(staging.empty());  // thư mục tạm luôn được dọn
+}
+
+// P4.33: gói `.tar.gz` qua bộ giải nén an toàn; định dạng phải khớp danh mục.
+YUI_TEST(store, tar_gz_package_via_safe_extractor) {
+  Fixture fx;
+  const Bytes tgz = archive::gzip_wrap(archive::deflate_fixed(fx.pkg), fx.pkg);
+  const std::string url = "https://downloads.example.org/hello-1.0.0.tar.gz";
+  auto good = entry_for("org.example.hello", tgz, url);
+  good.format = "tar.gz";
+  auto liar = entry_for("org.example.liar", tgz, url);
+  liar.format = "zip";  // khai báo zip nhưng thật là tar.gz
+  const Bytes evil_tar = store::build_tar({file_entry("bin/hello", "#!/bin/sh\n", 0755),
+                                           file_entry("../../yui-tgz-slip.sh", "rm -rf ~\n", 0755)});
+  const Bytes evil = archive::gzip_wrap(archive::deflate_fixed(evil_tar), evil_tar);
+  const std::string evil_url = "https://downloads.example.org/evil.tar.gz";
+  auto bad = entry_for("org.example.evil", evil, evil_url);
+  bad.format = "tar.gz";
+  const auto cat = catalog_with({good, liar, bad});
+  store::Store s(fx.opts(), fx.keys);
+  CHECK(s.load_catalog(store::catalog_to_json(cat), store::sign_catalog(cat, kCatalogSeed)).ok);
+  fx.fetcher.files[url] = tgz;
+  fx.fetcher.files[evil_url] = evil;
+  AllowGate gate;
+  const auto r = s.install("org.example.hello", fx.fetcher, gate);
+  CHECK_MSG(r.ok, r.reason_vi);
+  const std::string dir = fx.root + "/apps/org.example.hello";
+  struct stat st{};
+  CHECK(::stat((dir + "/bin/hello").c_str(), &st) == 0 && (st.st_mode & 0100));
+  CHECK(exists(dir + "/locale/vi/messages"));
+  CHECK(!exists(dir + "/locale/fr/messages"));  // vẫn gọt cục bộ như gói tar
+  CHECK_EQ(s.install("org.example.liar", fx.fetcher, gate).code, std::string("archive_rejected"));
+  // .tar.zst (zstd, P4.33) qua cùng đường.
+  const Bytes tzst = archive::zstd_store(fx.pkg);
+  const std::string zurl = "https://downloads.example.org/hello-1.0.0.tar.zst";
+  auto z = entry_for("org.example.hellozst", tzst, zurl);
+  z.format = "tar.zst";
+  const auto cat2 = catalog_with({z});
+  store::Store s2(fx.opts(), fx.keys);
+  CHECK(s2.load_catalog(store::catalog_to_json(cat2), store::sign_catalog(cat2, kCatalogSeed)).ok);
+  fx.fetcher.files[zurl] = tzst;
+  const auto rz = s2.install("org.example.hellozst", fx.fetcher, gate);
+  CHECK_MSG(rz.ok, rz.reason_vi);
+  CHECK(exists(fx.root + "/apps/org.example.hellozst/bin/hello"));
+  CHECK(!exists(fx.root + "/apps/org.example.liar"));
+  CHECK_EQ(s.install("org.example.evil", fx.fetcher, gate).code, std::string("unsafe_path"));
+  CHECK(!exists(fx.root + "/apps/org.example.evil"));
+  CHECK(!exists("/tmp/yui-tgz-slip.sh"));
+  std::vector<std::string> staging;
+  walk(fx.root + "/staging", "", staging);
+  CHECK(staging.empty());
 }
 
 // ----------------------------------------- không xác nhận thì không cài --

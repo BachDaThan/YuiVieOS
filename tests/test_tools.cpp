@@ -296,7 +296,7 @@ YUI_TEST(ui, adaptive_layout) {
   ui::HardwareForUi strong{32.0, true, false, "avx2"};
   const auto l2 = ui::plan(hidpi, strong);
   CHECK_EQ(int(l2.path), int(ui::RenderPath::GpuZeroCopy));
-  CHECK_EQ(l2.scale_px, 3);
+  CHECK_EQ(l2.scale_px, 2);  // 192 dpi = đúng 2× của 96 (P2.16: k ≈ DPI/96 làm tròn)
   CHECK(l2.columns >= 40);
   CHECK_EQ(std::string(ui::path_name(l2.path)), std::string("vulkan-drm-zero-copy"));
 

@@ -1,5 +1,6 @@
 // Adaptive UI layout planner.
 #include "yui/ui.hpp"
+#include "yui/display.hpp"
 
 #include <algorithm>
 
@@ -28,9 +29,14 @@ Layout plan(const DisplayInfo& display, const HardwareForUi& hw) {
     return l;
   }
   l.compositor_enabled = true;
-  const int dpi = std::max(72, display.dpi);
   // Integer scaling only: fractional scaling is what makes weak GPUs sweat.
-  l.scale_px = dpi >= 192 ? 3 : (dpi >= 144 ? 2 : 1);
+  // Cùng một quy tắc với nhân và splash (P2.16): k ≈ DPI/96 làm tròn, 1–4,
+  // không phóng tới mức dưới 80 cột / 25 dòng.
+  yui::display::ScaleInput si;
+  si.width_px = uint32_t(std::max(0, display.width_px));
+  si.height_px = uint32_t(std::max(0, display.height_px));
+  si.dpi_hint = uint32_t(std::max(0, display.dpi));
+  l.scale_px = yui::display::choose_scale(si).k;
 
   const bool gpu_ok = hw.has_gpu && hw.ram_gb >= 4.0 && !hw.low_power &&
                       (hw.simd == "avx2" || hw.simd == "avx512f" || hw.simd == "neon" ||

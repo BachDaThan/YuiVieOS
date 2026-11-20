@@ -1139,6 +1139,30 @@ size_t MicroVmSupervisor::active_count() const {
 }
 
 // ------------------------------------ Trusted Confirmation Path (P4.13) --
+const char* input_source_name(InputSourceKind k) {
+  switch (k) {
+    case InputSourceKind::PhysicalHardware: return "PhysicalHardware";
+    case InputSourceKind::SyntheticApp: return "SyntheticApp";
+    case InputSourceKind::RemoteAuthorized: return "RemoteAuthorized";
+    case InputSourceKind::GuestBluetooth: return "GuestBluetooth";
+  }
+  return "Unknown";
+}
+
+InputPrivilege input_privilege(const TaggedInputEvent& e) {
+  switch (e.source) {
+    case InputSourceKind::PhysicalHardware:
+      return e.hardware_device_id != 0 ? InputPrivilege::TrustedConfirmation : InputPrivilege::None;
+    case InputSourceKind::RemoteAuthorized:
+      return e.remote_session_id != 0 ? InputPrivilege::AppControl : InputPrivilege::None;
+    case InputSourceKind::GuestBluetooth:
+      return InputPrivilege::AppControl;
+    case InputSourceKind::SyntheticApp:
+      return InputPrivilege::None;
+  }
+  return InputPrivilege::None;  // giá trị lạ (ép kiểu từ số) ⇒ không quyền gì
+}
+
 TrustedConfirmationHost::TrustedConfirmationHost(Enforcer* enforcer) : enforcer_(enforcer) {}
 
 std::string TrustedConfirmationHost::show_dialog(const std::string& target_app, const std::string& title_vi,
@@ -1162,16 +1186,30 @@ bool TrustedConfirmationHost::handle_input(const std::string& dialog_id, const T
   if (it == dialogs_.end() || !it->second.active) return false;
   auto& dlg = it->second;
 
-  // Chặn sự kiện tổng hợp từ ứng dụng / guest (anti-clickjacking)
-  if (event.source != InputSourceKind::PhysicalHardware || event.hardware_device_id == 0) {
+  // Chỉ thiết bị vật lý do driver gốc gắn thẻ mới bấm được hộp thoại tin cậy.
+  // Sự kiện tổng hợp, phiên từ xa đã cấp thẻ và bàn phím BT qua khách đều bị
+  // từ chối + audit (chống clickjacking; P4.13 + P2.21).
+  if (!counts_as_trusted_confirmation(event)) {
     ++synthetic_attacks_blocked_;
+    const bool remote = event.source == InputSourceKind::RemoteAuthorized ||
+                        event.source == InputSourceKind::GuestBluetooth;
+    if (remote) ++remote_attempts_blocked_;
     if (enforcer_) {
       AuditEntry e;
       e.when = now;
       e.subject = dlg.target_app;
-      e.action = Action{"security.synthetic_click", dialog_id};
-      e.decision = Decision{false, Tier::Isolated,
-          "Bảo vệ OS: phát hiện sự kiện tổng hợp (synthetic click) cố can thiệp hộp thoại xác nhận tin cậy — từ chối (chống clickjacking)", 0};
+      if (remote) {
+        e.action = Action{"security.remote_confirm", dialog_id};
+        e.decision = Decision{false, Tier::Isolated,
+            std::string("Bảo vệ OS: sự kiện ") + input_source_name(event.source) +
+                " (điều khiển từ xa / bàn phím qua khách) không được bấm hộp thoại xác nhận tin cậy — "
+                "chỉ thiết bị vật lý gắn trực tiếp mới xác nhận được",
+            0};
+      } else {
+        e.action = Action{"security.synthetic_click", dialog_id};
+        e.decision = Decision{false, Tier::Isolated,
+            "Bảo vệ OS: phát hiện sự kiện tổng hợp (synthetic click) cố can thiệp hộp thoại xác nhận tin cậy — từ chối (chống clickjacking)", 0};
+      }
       enforcer_->record(e);
     }
     return false;
