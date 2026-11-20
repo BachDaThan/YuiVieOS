@@ -36,6 +36,20 @@ std::string fixture_text() {  // giống hệt text() trong scripts/gen_archive_
   return s;
 }
 
+std::string fixture_text2(size_t n) {  // giống hệt text2() trong scripts/gen_archive_fixtures.py
+  static const char* words[] = {"một", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám",
+                                "chín", "mười", "Yui", "Việt", "Nam", "gõ", "dấu", "nhanh"};
+  uint64_t x = 2026;
+  std::string s;
+  while (s.size() < n) {
+    x = (x * 1103515245u + 12345u) & 0x7FFFFFFFu;
+    s += words[(x >> 16) % 16];
+    s += ((x >> 8) % 11 == 0) ? "\n" : " ";
+  }
+  s.resize(n);
+  return s;
+}
+
 Bytes B(const std::string& s) { return Bytes(s.begin(), s.end()); }
 std::string S(const Bytes& b) { return std::string(b.begin(), b.end()); }
 
@@ -483,6 +497,209 @@ YUI_TEST(archive, safe_entry_path_rules) {
   CHECK(why.find("..") != std::string::npos);
 }
 
+// ================================================================ zstd (RFC 8878)
+namespace {
+Bytes cat(std::initializer_list<Bytes> parts) {
+  Bytes o;
+  for (const auto& p : parts) o.insert(o.end(), p.begin(), p.end());
+  return o;
+}
+Bytes block_hdr(uint32_t size, int type, bool last) {
+  const uint32_t h = (size << 3) | uint32_t(type << 1) | (last ? 1u : 0u);
+  return {uint8_t(h), uint8_t(h >> 8), uint8_t(h >> 16)};
+}
+const Bytes kZMagic = {0x28, 0xB5, 0x2F, 0xFD};
+}  // namespace
+
+YUI_TEST(archive, xxh64_known_values) {
+  const std::string abc = "abc";
+  CHECK_EQ(xxh64(nullptr, 0, 0), 0xef46db3751d8e999ull);
+  CHECK_EQ(xxh64(reinterpret_cast<const uint8_t*>(abc.data()), 3, 0), 0x44bc2cf5ad770999ull);
+  CHECK_EQ(xxh64(reinterpret_cast<const uint8_t*>(abc.data()), 3, 2026), 0xb64ecc80fba7034cull);
+  Bytes r(100);
+  for (size_t i = 0; i < r.size(); ++i) r[i] = uint8_t(i);
+  CHECK_EQ(xxh64(r.data(), r.size(), 0), 0x6ac1e58032166597ull);
+  std::string yui;
+  for (int i = 0; i < 1000; ++i) yui += "Yui";
+  CHECK_EQ(xxh64(reinterpret_cast<const uint8_t*>(yui.data()), yui.size(), 0), 0x30d7db8fee9df2ccull);
+  CHECK_EQ(xxh64(reinterpret_cast<const uint8_t*>(yui.data()), yui.size(), 2026), 0xdbfc9f5701cea9c3ull);
+}
+
+YUI_TEST(archive, zstd_official_golden_vectors) {
+  Bytes out;
+  auto r = unzstd(fx::fx_zg_empty_block(), out, 1 << 20);
+  CHECK_MSG(r.ok, r.error);
+  CHECK(out.empty());
+  r = unzstd(fx::fx_zg_rle_first_block(), out, 2 << 20);
+  CHECK_MSG(r.ok, r.error);
+  CHECK(out == Bytes(1 << 20, 0));
+  r = unzstd(fx::fx_zg_zeroseq_2b(), out, 1 << 20);
+  CHECK_MSG(r.ok, r.error);
+  CHECK(S(out) == "Hello World!\n");
+  // Bộ "golden-decompression-errors": phải bị từ chối.
+  CHECK(!unzstd(fx::fx_zg_err_off0(), out, 1 << 20).ok);
+  CHECK(!unzstd(fx::fx_zg_err_truncated_huff_state(), out, 1 << 20).ok);
+  CHECK(!unzstd(fx::fx_zg_err_zeroseq_extraneous(), out, 1 << 20).ok);
+}
+
+YUI_TEST(archive, zstd_real_libzstd_output) {
+  Bytes out;
+  auto r = unzstd(fx::fx_zst_l19(), out, 1 << 20);  // 4 luồng Huffman, bảng FSE nén
+  CHECK_MSG(r.ok, r.error);
+  CHECK(S(out) == fixture_text());
+  r = unzstd(fx::fx_zst_fast(), out, 1 << 20);  // mức -5: literals raw
+  CHECK_MSG(r.ok, r.error);
+  CHECK(S(out) == fixture_text());
+  r = unzstd(fx::fx_zst_blocks_l9(), out, 1 << 20);  // treeless + bảng repeat, không FCS
+  CHECK_MSG(r.ok, r.error);
+  CHECK(S(out) == fixture_text2(60000));
+  r = unzstd(fx::fx_zst_blocks_l1(), out, 1 << 20);  // bảng mặc định + RLE
+  CHECK_MSG(r.ok, r.error);
+  CHECK(S(out) == fixture_text2(20000));
+  CHECK_EQ(r.in_bytes, uint64_t(fx::fx_zst_blocks_l1().size()));
+  DribbleSource src(fx::fx_zst_blocks_l9());  // từng byte một
+  VectorSink sink;
+  CHECK(unzstd(src, sink, 1 << 20).ok);
+  CHECK(S(sink.data) == fixture_text2(60000));
+  // Nhiều frame + frame bỏ qua; rác sau cùng ⇒ lỗi.
+  const Bytes skip = {0x53, 0x2A, 0x4D, 0x18, 3, 0, 0, 0, 'a', 'b', 'c'};
+  r = unzstd(cat({skip, fx::fx_zst_l19(), skip, fx::fx_zst_fast()}), out, 1 << 20);
+  CHECK_MSG(r.ok, r.error);
+  CHECK(S(out) == fixture_text() + fixture_text());
+  CHECK(!unzstd(cat({fx::fx_zst_l19(), Bytes{1, 2, 3}}), out, 1 << 20).ok);
+  // Bộ nén raw trong repo: khứ hồi, kể cả > 1 khối.
+  const Bytes big(300000, 'y');
+  CHECK(unzstd(zstd_store(big), out, 1 << 20).ok && out == big);
+  CHECK(unzstd(zstd_store(Bytes{}), out, 10).ok && out.empty());
+}
+
+YUI_TEST(archive, zstd_truncation_and_bitflips) {
+  const Bytes& z = fx::fx_zst_l19();
+  size_t ok_prefix = 0;
+  for (size_t n = 0; n < z.size(); ++n) {
+    Bytes cut(z.begin(), z.begin() + long(n)), out;
+    if (unzstd(cut, out, 1 << 20).ok) ++ok_prefix;
+  }
+  CHECK_EQ(ok_prefix, size_t(0));
+  const Bytes& zb = fx::fx_zst_blocks_l1();
+  const std::string want = fixture_text2(20000);
+  uint32_t x = 4242;
+  size_t wrong_ok = 0, failed = 0;
+  for (int i = 0; i < 400; ++i) {
+    Bytes m = zb, out;
+    x = x * 1664525u + 1013904223u;
+    m[(x >> 8) % m.size()] ^= uint8_t(1u << (x % 8));
+    const auto r = unzstd(m, out, 1 << 20);
+    if (r.ok && S(out) != want) ++wrong_ok;  // có XXH64: "thành công" mà sai dữ liệu là không được phép
+    if (!r.ok) ++failed;
+  }
+  CHECK_EQ(wrong_ok, size_t(0));
+  CHECK(failed > 380);
+}
+
+YUI_TEST(archive, zstd_malformed_and_limits) {
+  Bytes out;
+  // Cửa sổ 2 GiB > trần 128 MiB ⇒ từ chối, không cấp phát.
+  auto r = unzstd(cat({kZMagic, Bytes{0x00, uint8_t(21 << 3)}, block_hdr(0, 0, true)}), out, 1 << 20);
+  CHECK(!r.ok && r.error.find("chưa hỗ trợ") != std::string::npos);
+  // Cần từ điển.
+  r = unzstd(cat({kZMagic, Bytes{0x01, 0x00, 0x05}, block_hdr(0, 0, true)}), out, 1 << 20);
+  CHECK(!r.ok && r.error.find("từ điển") != std::string::npos);
+  CHECK(!unzstd(cat({kZMagic, Bytes{0x08, 0x00}, block_hdr(0, 0, true)}), out, 100).ok);  // bit dành riêng
+  CHECK(!unzstd(cat({kZMagic, Bytes{0x00, 0x00}, block_hdr(0, 3, true)}), out, 100).ok);  // khối loại 3
+  // Khối raw đúng 128 KiB được; 128 KiB + 1 thì không.
+  const Bytes w128 = {0x00, 7 << 3};  // cửa sổ 2^17
+  r = unzstd(cat({kZMagic, w128, block_hdr(131072, 0, true), Bytes(131072, 'k')}), out, 1 << 20);
+  CHECK_MSG(r.ok, r.error);
+  CHECK_EQ(out.size(), size_t(131072));
+  CHECK(!unzstd(cat({kZMagic, w128, block_hdr(131073, 0, true), Bytes(131073, 'k')}), out, 1 << 20).ok);
+  // FCS khai báo khác thật.
+  CHECK(!unzstd(cat({kZMagic, Bytes{0x20, 5}, block_hdr(3, 0, true), B("abc")}), out, 100).ok);
+  // Bom RLE: mỗi khối 4 byte ⇒ 128 KiB; trần dữ liệu ra chặn được.
+  Bytes bomb = cat({kZMagic, w128});
+  for (int i = 0; i < 300; ++i) {
+    const Bytes h = block_hdr(131072, 1, i == 299);
+    bomb.insert(bomb.end(), h.begin(), h.end());
+    bomb.push_back(0);
+  }
+  r = unzstd(bomb, out, 1 << 20);
+  CHECK(!r.ok && r.error.find("vượt trần") != std::string::npos);
+  CHECK(out.size() <= (1u << 20) + 131072);
+  // FCS khai báo vượt trần ⇒ dừng trước khi giải.
+  Bytes fcs_big = cat({kZMagic, Bytes{0xC0, 7 << 3}});
+  for (int i = 0; i < 8; ++i) fcs_big.push_back(i == 4 ? 1 : 0);  // 2^32
+  fcs_big.insert(fcs_big.end(), {1, 0, 0});
+  r = unzstd(fcs_big, out, 1 << 20);
+  CHECK(!r.ok && r.error.find("vượt trần") != std::string::npos);
+  CHECK(!unzstd(B("không phải zstd"), out, 100).ok);
+  CHECK(!unzstd(Bytes{}, out, 100).ok);
+}
+
+// Khối nén dựng tay: literals raw "abc" + 1 sequence, cả ba bảng ở chế độ RLE
+// (LL=3, OF code 2, ML code 0 ⇒ độ dài 3). Luồng bit chỉ còn 2 bit phụ của
+// offset: 00 ⇒ Offset_Value 4 ⇒ khoảng cách 1 ⇒ "abc" + "ccc".
+YUI_TEST(archive, zstd_handcrafted_sequences) {
+  auto frame = [](uint8_t bitstream) {
+    const Bytes body = {0x18, 'a', 'b', 'c', 0x01, 0x54, 0x03, 0x02, 0x00, bitstream};
+    // Cửa sổ 1 KiB (không dùng single-segment: khi đó cửa sổ = FCS = 6 byte và
+    // khối nén 10 byte vượt giới hạn khối — đúng như bộ giải tham chiếu).
+    return cat({kZMagic, Bytes{0x00, 0x00}, block_hdr(uint32_t(body.size()), 2, true), body});
+  };
+  Bytes out;
+  const Bytes body6 = {0x18, 'a', 'b', 'c', 0x01, 0x54, 0x03, 0x02, 0x00, 0x04};
+  CHECK(!unzstd(cat({kZMagic, Bytes{0x20, 6}, block_hdr(10, 2, true), body6}), out, 100).ok);
+  auto r = unzstd(frame(0x04), out, 100);  // bit đánh dấu ở bit 2, dữ liệu 00
+  CHECK_MSG(r.ok, r.error);
+  CHECK(S(out) == "abcccc");
+  r = unzstd(frame(0x08), out, 100);  // thừa 1 bit không dùng ⇒ hỏng
+  CHECK(!r.ok && r.error.find("không dùng vừa hết") != std::string::npos);
+  r = unzstd(frame(0x07), out, 100);  // bit 11 ⇒ khoảng cách 4 > 3 byte đã có
+  CHECK(!r.ok && r.error.find("khoảng cách") != std::string::npos);
+  r = unzstd(frame(0x00), out, 100);  // byte cuối = 0: không có bit đánh dấu
+  CHECK(!r.ok);
+}
+
+YUI_TEST(archive, extract_tar_zst_and_single_zst) {
+  Env e("arch-zst");
+  auto r = extract_file(e.put("goi.tar.zst", fx::fx_tzst()), e.dest());
+  CHECK_MSG(r.ok, r.reason_vi);
+  CHECK(r.format == "tar.zst");
+  Bytes b;
+  CHECK(read_bytes(e.dest() + "/goi/a.txt", b) && S(b) == fixture_text());
+  struct stat st {};
+  CHECK(::stat((e.dest() + "/goi/a.txt").c_str(), &st) == 0 && (st.st_mode & 07777) == 0755);
+  r = extract_file(e.put("ghichu.txt.zst", fx::fx_zst_l19()), e.dest("ra2"));
+  CHECK_MSG(r.ok, r.reason_vi);
+  CHECK(r.format == "zst");
+  CHECK(read_bytes(e.dest("ra2") + "/ghichu.txt", b) && S(b) == fixture_text());
+  // Bom RLE trong tệp: tỉ lệ ~ 32000:1 ⇒ bomb, không để lại gì.
+  Bytes bomb = cat({kZMagic, Bytes{0x00, 7 << 3}});
+  for (int i = 0; i < 300; ++i) {
+    const Bytes h = block_hdr(131072, 1, i == 299);
+    bomb.insert(bomb.end(), h.begin(), h.end());
+    bomb.push_back(0);
+  }
+  r = extract_file(e.put("bom.zst", bomb), e.dest("ra3"));
+  CHECK(!r.ok && r.code == "bomb" && !exists(e.dest("ra3")));
+  // tar.zst có zip-slip bên trong ⇒ unsafe_path, xoá sạch.
+  TarBuilder tb;
+  tb.file("tot.txt", B("1"));
+  tb.file("../thoat.txt", B("2"));
+  r = extract_file(e.put("slip.tar.zst", zstd_store(tb.finish())), e.dest("ra4"));
+  CHECK(!r.ok && r.code == "unsafe_path" && !exists(e.dest("ra4")) && !exists(e.root + "/thoat.txt"));
+  // Cửa sổ quá lớn ⇒ unsupported; frame cần từ điển ⇒ unsupported.
+  r = extract_file(e.put("w.zst", cat({kZMagic, Bytes{0x00, uint8_t(21 << 3)}, block_hdr(0, 0, true)})), e.dest("ra5"));
+  CHECK(!r.ok && r.code == "unsupported" && !exists(e.dest("ra5")));
+  // XXH64 sai ⇒ corrupt.
+  Bytes bad = fx::fx_tzst();
+  bad.back() ^= 1;
+  r = extract_file(e.put("bad.tar.zst", bad), e.dest("ra6"));
+  CHECK(!r.ok && r.code == "corrupt" && !exists(e.dest("ra6")));
+  // Nhận diện frame bỏ qua (skippable) là zstd.
+  const Bytes sk = {0x50, 0x2A, 0x4D, 0x18, 0, 0, 0, 0};
+  CHECK(detect(sk.data(), sk.size()) == Format::Zstd);
+}
+
 // ================================================================ giải nén
 YUI_TEST(archive, extract_real_zip) {
   Env e("arch-zip");
@@ -704,8 +921,8 @@ YUI_TEST(archive, corrupt_and_unsupported) {
   CHECK(!r.ok && r.code == "unsupported");
   r = extract_file(e.put("z64.zip", build_zip({ZipItem{"a", B("a")}}, false, 0xFFFF)), e.dest());
   CHECK(!r.ok && r.code == "unsupported");
-  // zstd/7z/RAR/không rõ — kể cả khi đặt đuôi .zip.
-  const Bytes sigs[] = {{0x28, 0xb5, 0x2f, 0xfd, 0, 0, 0, 0}, {'7', 'z', 0xBC, 0xAF, 0x27, 0x1C, 0, 4},
+  // xz/7z/RAR/không rõ — kể cả khi đặt đuôi .zip.
+  const Bytes sigs[] = {{0xfd, '7', 'z', 'X', 'Z', 0, 0, 4}, {'7', 'z', 0xBC, 0xAF, 0x27, 0x1C, 0, 4},
                         {'R', 'a', 'r', '!', 0x1a, 0x07, 1, 0}, B("chỉ là văn bản thường, không nén")};
   size_t uns = 0;
   for (const auto& s : sigs) {

@@ -485,7 +485,7 @@ bool parse_catalog(const std::string& json_text, Catalog& out, std::string* err)
         has_control_chars(e.license) || has_control_chars(e.low_ram_args) || has_control_chars(e.exec))
       return fail("trường chứa ký tự điều khiển" + where);
     if (!one_of(e.kind, {"native", "wine", "apk"})) return fail("kind không hỗ trợ: " + e.kind + where);
-    if (!one_of(e.format, {"tar", "yuip", "file", "tar.gz", "zip"}))
+    if (!one_of(e.format, {"tar", "yuip", "file", "tar.gz", "tar.zst", "zip"}))
       return fail("format không hỗ trợ: " + e.format + where);
     if (!is_lower_hex(e.sha256, 64)) return fail("sha256 phải là 64 hex thường" + where);
     const std::string scheme = url_scheme(e.source_url);
@@ -1049,7 +1049,7 @@ Result Store::install(const std::string& name_or_id, Fetcher& fetcher, Confirmat
     std::string terr;
     if (!read_file(part, data) || !parse_tar(data, entries, &terr)) return make(false, "unsafe_path", "Gói bị từ chối: " + terr);
     if (!apppack::extract(entries, staging.path, &terr)) return make(false, "io_error", "Bung gói lỗi: " + terr);
-  } else if (e.format == "tar.gz" || e.format == "zip") {
+  } else if (e.format == "tar.gz" || e.format == "tar.zst" || e.format == "zip") {
     // P4.33: bộ giải DEFLATE tự viết + giải nén an toàn (zip-slip, liên kết,
     // bom nén, CRC; lỗi ⇒ không để lại tệp). Định dạng nhận theo chữ ký đầu
     // tệp và phải khớp danh mục (không để `.zip` khai báo lại là thứ khác).

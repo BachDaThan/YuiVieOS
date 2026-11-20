@@ -684,6 +684,7 @@ Format detect(const uint8_t* h, size_t n) {
   if (is({'P', 'K', 3, 4}) || is({'P', 'K', 5, 6})) return Format::Zip;
   if (is({0x1f, 0x8b})) return Format::Gzip;
   if (is({0x28, 0xb5, 0x2f, 0xfd})) return Format::Zstd;
+  if (n >= 4 && (h[0] & 0xF0) == 0x50 && h[1] == 0x2A && h[2] == 0x4D && h[3] == 0x18) return Format::Zstd;  // frame bỏ qua
   if (is({'7', 'z', 0xBC, 0xAF, 0x27, 0x1C})) return Format::SevenZip;
   if (is({'R', 'a', 'r', '!', 0x1a, 0x07})) return Format::Rar;
   if (is({0xfd, '7', 'z', 'X', 'Z', 0})) return Format::Xz;
@@ -1207,10 +1208,10 @@ class TarSink : public ByteSink {
   int zero_blocks_ = 0;
 };
 
-// Gzip: 512 byte đầu quyết định là tar.gz hay một tệp đơn.
-class GzContentSink : public ByteSink {
+// Gzip/zstd: 512 byte đầu quyết định là tar.gz/tar.zst hay một tệp đơn.
+class ContentSink : public ByteSink {
  public:
-  GzContentSink(Writer& w, Failure& f, std::string single_name)
+  ContentSink(Writer& w, Failure& f, std::string single_name)
       : w_(w), f_(f), tar_(w, f), single_name_(std::move(single_name)) {}
   bool write(const uint8_t* p, size_t n) override {
     if (mode_ == Undecided) {
@@ -1434,14 +1435,14 @@ ExtractReport extract_file(const std::string& archive_path, const std::string& d
   }
   const Format fmt = detect(head, hn);
   rep.format = format_name(fmt);
-  if (fmt == Format::Zstd || fmt == Format::SevenZip || fmt == Format::Xz || fmt == Format::Bzip2 ||
+  if (fmt == Format::SevenZip || fmt == Format::Xz || fmt == Format::Bzip2 ||
       fmt == Format::Rar || fmt == Format::Unknown) {
     ::close(fd);
     rep.code = "unsupported";
     rep.reason_vi = fmt == Format::Rar
                         ? "RAR là định dạng đóng — YuiVieOS chưa giải (xem P7.18)"
                         : fmt == Format::Unknown ? "không nhận ra định dạng tệp nén (chỉ theo chữ ký đầu tệp, không theo đuôi tên)"
-                                                 : std::string("định dạng ") + format_name(fmt) + " chưa được hỗ trợ (đang làm: zstd, 7z)";
+                                                 : std::string("định dạng ") + format_name(fmt) + " chưa được hỗ trợ (đang làm: 7z)";
     return rep;
   }
   const std::string origin = origin_in.empty() ? "giải nén từ " + basename_of(archive_path) : origin_in;
@@ -1458,19 +1459,25 @@ ExtractReport extract_file(const std::string& archive_path, const std::string& d
       while (ok && (k = src.read(buf, sizeof buf)) > 0) ok = tar.write(buf, k);
       if (ok && src.failed()) ok = f.set("io", "lỗi đọc tệp tar");
       if (ok) ok = tar.finish();
-    } else {  // Gzip
+    } else {  // Gzip hoặc zstd (cùng cách: luồng nén một lớp, bên trong là tar hoặc một tệp)
+      const bool zst = fmt == Format::Zstd;
       std::string base = basename_of(archive_path);
-      if (ends_with(base, ".gz") && base.size() > 3) base = base.substr(0, base.size() - 3);
+      const std::string ext = zst ? ".zst" : ".gz";
+      if (ends_with(base, ".tgz") || ends_with(base, ".tzst")) base = base.substr(0, base.rfind('.')) + ".tar";
+      else if (ends_with(base, ext) && base.size() > ext.size()) base = base.substr(0, base.size() - ext.size());
       else base += ".giai-nen";
       FdSource src(fd, 0, size);
-      GzContentSink sink(w, f, base);
-      const auto r = gunzip(src, sink, lim.max_total_bytes);
+      ContentSink sink(w, f, base);
+      const auto r = zst ? unzstd(src, sink, lim.max_total_bytes, lim.max_window_bytes)
+                         : gunzip(src, sink, lim.max_total_bytes);
       if (!r.ok) {
-        ok = f.code.empty() ? f.set(r.error.find("vượt trần") != std::string::npos ? "bomb" : "corrupt", r.error) : false;
+        const bool bomb = r.error.find("vượt trần") != std::string::npos;
+        const bool unsup = r.error.find("chưa hỗ trợ") != std::string::npos;
+        ok = f.code.empty() ? f.set(bomb ? "bomb" : unsup ? "unsupported" : "corrupt", r.error) : false;
       } else {
         ok = sink.finish();
       }
-      rep.format = sink.is_tar() ? "tar.gz" : "gz";
+      rep.format = zst ? (sink.is_tar() ? "tar.zst" : "zst") : (sink.is_tar() ? "tar.gz" : "gz");
     }
   }
   ::close(fd);

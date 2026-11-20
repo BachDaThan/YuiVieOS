@@ -6,9 +6,10 @@
 // thuộc kích thước tệp nén.
 //
 // Định dạng: `.zip` (stored + deflate), `.gz` (RFC 1952, nhiều member),
-// `.tar` (ustar/pax/GNU), `.tar.gz`/`.tgz`. Nhận diện bằng chữ ký đầu tệp,
-// KHÔNG theo đuôi tên. zstd (RFC 8878), 7z/LZMA, xz, bzip2: nhận ra và báo
-// "chưa hỗ trợ" rõ ràng. RAR là định dạng đóng: không làm (⚖️ P7.18).
+// `.zst` (RFC 8878, không từ điển; `pkg-stripper/zstd.cpp`), `.tar`
+// (ustar/pax/GNU), `.tar.gz`/`.tgz`, `.tar.zst`. Nhận diện bằng chữ ký đầu
+// tệp, KHÔNG theo đuôi tên. 7z/LZMA, xz, bzip2: nhận ra và báo "chưa hỗ trợ"
+// rõ ràng. RAR là định dạng đóng: không làm (⚖️ P7.18).
 //
 // An toàn (điều nguy hiểm nhất khi giải nén):
 //   * zip-slip: đường dẫn tuyệt đối, `..`, `\`, ký tự điều khiển, `\0`, tên
@@ -93,10 +94,22 @@ InflateResult inflate(const std::vector<uint8_t>& in, std::vector<uint8_t>& out,
 InflateResult gunzip(ByteSource& src, ByteSink& sink, uint64_t max_out);
 InflateResult gunzip(const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint64_t max_out);
 
+// Zstandard (RFC 8878): nhiều frame nối nhau, frame bỏ qua (skippable), kiểm
+// XXH64 (nếu có) và Frame_Content_Size. Frame cần từ điển ⇒ lỗi "chưa hỗ trợ";
+// cửa sổ khai báo > `max_window` ⇒ từ chối (bộ nhớ dùng ≤ cửa sổ + 128 KiB,
+// cấp dần theo dữ liệu thật). `crc` trong kết quả không dùng (= 0).
+InflateResult unzstd(ByteSource& src, ByteSink& sink, uint64_t max_out, uint64_t max_window = 128ull << 20);
+InflateResult unzstd(const std::vector<uint8_t>& in, std::vector<uint8_t>& out, uint64_t max_out,
+                     uint64_t max_window = 128ull << 20);
+// XXH64 (dùng cho checksum của zstd).
+uint64_t xxh64(const uint8_t* p, size_t n, uint64_t seed = 0);
+
 // Bộ nén tối giản (để test và để tạo gói thử): khối stored, hoặc Huffman cố
 // định + lặp byte (khoảng cách 1, độ dài ≤ 258). Không nhắm tỉ lệ nén tốt.
 std::vector<uint8_t> deflate_stored(const std::vector<uint8_t>& in);
 std::vector<uint8_t> deflate_fixed(const std::vector<uint8_t>& in);
+// Frame zstd chỉ gồm khối raw (không nén) + XXH64 — để test và tạo gói thử.
+std::vector<uint8_t> zstd_store(const std::vector<uint8_t>& in);
 std::vector<uint8_t> gzip_wrap(const std::vector<uint8_t>& raw_deflate, const std::vector<uint8_t>& original,
                                const std::string& name = "");
 
@@ -116,11 +129,12 @@ struct Limits {
   // Tỉ lệ (dữ liệu ra / kích thước tệp nén) chỉ xét khi dữ liệu ra đã vượt sàn.
   uint64_t max_ratio = 250;
   uint64_t ratio_floor_bytes = 32ull << 20;
+  uint64_t max_window_bytes = 128ull << 20;  // cửa sổ zstd tối đa (bộ nhớ lịch sử)
 };
 
 struct ExtractReport {
   bool ok = false;
-  std::string format;             // "zip" | "tar" | "tar.gz" | "gz" | …
+  std::string format;             // "zip" | "tar" | "tar.gz" | "gz" | "tar.zst" | "zst" | …
   std::string reason_vi;          // lý do từ chối/thành công
   std::string code;               // "", "unsafe_path", "link", "bomb", "corrupt", "unsupported", "io", "exists"
   size_t files = 0;

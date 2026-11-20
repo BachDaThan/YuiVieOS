@@ -47,6 +47,7 @@ LIB_SRC := \
 	pkg-stripper/apppack.cpp \
 	pkg-stripper/store.cpp \
 	pkg-stripper/archive.cpp \
+	pkg-stripper/zstd.cpp \
 	userspace-vi/text.cpp \
 	userspace-vi/ime.cpp \
 	userspace-vi/ui.cpp \

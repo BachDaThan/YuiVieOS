@@ -598,6 +598,18 @@ YUI_TEST(store, tar_gz_package_via_safe_extractor) {
   CHECK(exists(dir + "/locale/vi/messages"));
   CHECK(!exists(dir + "/locale/fr/messages"));  // vẫn gọt cục bộ như gói tar
   CHECK_EQ(s.install("org.example.liar", fx.fetcher, gate).code, std::string("archive_rejected"));
+  // .tar.zst (zstd, P4.33) qua cùng đường.
+  const Bytes tzst = archive::zstd_store(fx.pkg);
+  const std::string zurl = "https://downloads.example.org/hello-1.0.0.tar.zst";
+  auto z = entry_for("org.example.hellozst", tzst, zurl);
+  z.format = "tar.zst";
+  const auto cat2 = catalog_with({z});
+  store::Store s2(fx.opts(), fx.keys);
+  CHECK(s2.load_catalog(store::catalog_to_json(cat2), store::sign_catalog(cat2, kCatalogSeed)).ok);
+  fx.fetcher.files[zurl] = tzst;
+  const auto rz = s2.install("org.example.hellozst", fx.fetcher, gate);
+  CHECK_MSG(rz.ok, rz.reason_vi);
+  CHECK(exists(fx.root + "/apps/org.example.hellozst/bin/hello"));
   CHECK(!exists(fx.root + "/apps/org.example.liar"));
   CHECK_EQ(s.install("org.example.evil", fx.fetcher, gate).code, std::string("unsafe_path"));
   CHECK(!exists(fx.root + "/apps/org.example.evil"));

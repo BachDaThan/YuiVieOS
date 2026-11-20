@@ -127,3 +127,10 @@ Nguyên tắc: Store chỉ hiển thị **metadata** và chuyển luồng tải 
 | Minecraft (Mojang/Microsoft) | Game thử trong P6.27 | Độc quyền; bạn tự có bản mua hợp pháp |
 | Bản vá Minecraft / MB Loader / shader | — | **Không bundle, không trỏ liên kết tải**; bạn tự chịu theo điều khoản của game |
 | ApkStart (tham chiếu UX) | Ý tưởng "nhấp đúp APK ⇒ lối tắt" cho P4.24 | Chưa kiểm giấy phép; **chỉ học ý tưởng**, không dùng mã; không so sánh hơn thua |
+
+## 10. Dữ liệu kiểm thử từ bên thứ ba (chỉ trong `tests/`, không vào bản build nào)
+
+| Thành phần | Dùng ở đâu | Giấy phép / ghi chú |
+|---|---|---|
+| 6 vector "golden" của Zstandard (`tests/golden-decompression*` trong github.com/facebook/zstd, commit `1658a42`) | `tests/archive_fixtures.hpp` (P4.33), nhúng dạng hex qua `scripts/gen_archive_fixtures.py` — mỗi tệp 11–45 byte | Dự án zstd cấp phép kép BSD-3-Clause / GPLv2 (mình **chưa đọc kỹ** điều khoản cho riêng thư mục test; đây là vài chục byte dữ liệu thử, không phải mã). Bộ giải `pkg-stripper/zstd.cpp` viết theo RFC 8878, **không chép mã** của zstd |
+| Đầu ra nén của zlib 1.2.13 và libzstd 1.5.7 (qua Python `zlib` và gói PyPI `zstandard` 0.25.0) | `tests/archive_fixtures.hpp` | Chỉ là **dữ liệu do công cụ sinh ra** từ văn bản tự viết; `zstandard` chỉ cần khi sinh lại mẫu, không phải dependency build/test |
