@@ -39,11 +39,14 @@ pub fn self_test() {
     print!("    dan xuat  : slot {} [", child);
     print_str_no_newline(&rights_to_string(RIGHT_FS_READ));
     println!("]");
-    println!(
-        "    kiem tra  : doc fs = {}, ghi fs = {}",
-        ok(table.check(child, RIGHT_FS_READ)),
-        ok(table.check(child, RIGHT_FS_WRITE))
-    );
+    // Chuỗi/bool KHÔNG đi qua `{}`: trên aarch64 (MMU tắt) `Formatter::pad`
+    // làm nhân dừng giữa dòng — lỗi này từng chặn nhân aarch64 ngay tại đây,
+    // trước cả bước [4] màn hình chào (xem console.rs).
+    print!("    kiem tra  : doc fs = ");
+    print_str_no_newline(ok(table.check(child, RIGHT_FS_READ)));
+    print!(", ghi fs = ");
+    print_str_no_newline(ok(table.check(child, RIGHT_FS_WRITE)));
+    println!();
 
     // Tính chất 2: con không thể tự mở rộng quyền.
     match table.derive(child, RIGHT_FS_WRITE, 9) {
@@ -55,11 +58,20 @@ pub fn self_test() {
     // Tính chất 3: thu hồi bắc cầu.
     let revoked = table.revoke(root);
     let child_alive = table.check(child, RIGHT_FS_READ).is_ok();
-    println!(
-        "    thu hoi   : {} (con cua slot {} con song? {})",
-        revoked, child, child_alive
-    );
+    print!("    thu hoi   : ");
+    print_str_no_newline(yes_no(revoked));
+    print!(" (con cua slot {} con song? ", child);
+    print_str_no_newline(yes_no(child_alive));
+    println!(")");
     println!("    con song  : {} slot", table.len());
+}
+
+fn yes_no(b: bool) -> &'static str {
+    if b {
+        "true"
+    } else {
+        "false"
+    }
 }
 
 fn ok(result: Result<(), CapError>) -> &'static str {

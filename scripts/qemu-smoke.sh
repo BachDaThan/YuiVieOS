@@ -74,9 +74,13 @@ have_all() {
     # Ba dòng bắt buộc + RAM phải đọc được: "khong doc duoc" nghĩa là firmware
     # không cung cấp thông tin bộ nhớ (multiboot/DTB) — với QEMU thì luôn có,
     # nên dòng đó là lỗi, không phải ngoại lệ (xem docs/PLAN.md P2.3).
+    # "yui: boot ok" (dòng CUỐI của kmain) cũng bắt buộc: trước đây nhân
+    # aarch64 dừng giữa bước [3] (định dạng &str bằng {}) mà smoke vẫn xanh vì
+    # chỉ đòi "Tang 1".
     grep -q "yui: ready" "$LOG" 2>/dev/null &&
         grep -q "Phan loai" "$LOG" 2>/dev/null &&
         grep -q "Tang 1" "$LOG" 2>/dev/null &&
+        grep -q "yui: boot ok" "$LOG" 2>/dev/null &&
         ! grep -q "khong doc duoc" "$LOG" 2>/dev/null
 }
 
