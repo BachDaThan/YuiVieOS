@@ -232,6 +232,8 @@ check: all test verify
 	@python3 scripts/test_check_doc_numbers.py > /dev/null
 	@echo "── legal / AS-IS checker (P7.9)"
 	@python3 scripts/test_check_legal.py > /dev/null
+	@echo "── secret scanner self-test (P7.3)"
+	@python3 scripts/test_scan_secrets.py > /dev/null
 	@echo "all checks passed"
 
 install: all
