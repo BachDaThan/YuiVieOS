@@ -115,6 +115,18 @@ YUI_TEST(apppack, trims_dedupes_and_round_trips) {
   CHECK_MSG(!exists(out + "/.git/config"), "VCS metadata must not be archived");
   CHECK_EQ(read_file(out + "/src/main.c"), std::string("int main(void){return 0;}\n"));
 
+  // A relative destination works too (CLI `yui-trim --unpack x -C out`).
+  {
+    char cwd_buf[4096];
+    CHECK(::getcwd(cwd_buf, sizeof(cwd_buf)) != nullptr);
+    const std::string base = mkdtemp_dir("rel");
+    CHECK(::chdir(base.c_str()) == 0);
+    std::string rel_err;
+    CHECK_MSG(apppack::unpack_to(packed, "out/nested", &rel_err), "relative unpack: " + rel_err);
+    CHECK_EQ(read_file(base + "/out/nested/bin/app"), std::string("#!/bin/sh\necho YuiVieOS\n"));
+    CHECK(::chdir(cwd_buf) == 0);
+  }
+
   // Tampering with the package must be detected.
   auto damaged = packed;
   damaged.back() ^= 0x01;

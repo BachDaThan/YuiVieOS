@@ -540,7 +540,9 @@ bool extract(const std::vector<Entry>& entries, const std::string& dest, std::st
     const size_t slash = full.rfind('/');
     if (slash != std::string::npos) {
       const std::string dir = full.substr(0, slash);
-      std::string cur;
+      // Keep relative destinations relative (`yui-trim --unpack x -C out`):
+      // before P1.6 every prefix got a leading '/', so "out/a" became "/out".
+      std::string cur = dir[0] == '/' ? "" : ".";
       std::istringstream parts(dir);
       std::string part;
       while (std::getline(parts, part, '/')) {
