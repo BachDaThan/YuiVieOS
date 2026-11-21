@@ -191,14 +191,25 @@ Ba dòng phải thấy trên serial: `yui: ready`, `Phan loai :` (auto-profiler)
 
 Ranh giới `unsafe` do `scripts/verify.py` (`check_frame`) canh: chỉ các tệp được
 liệt kê (arch/*, boot, allocator, splash, frombytes, main) mới được có `unsafe`; tệp khác
-xuất hiện `unsafe` ⇒ `verify.sh` đỏ. Tổng hiện tại: 30 khối `unsafe {}` + 5 `unsafe fn` + 2 `unsafe impl` trong 8 tệp (đếm theo loại bởi
+xuất hiện `unsafe` ⇒ `verify.sh` đỏ. Tổng hiện tại: 34 khối `unsafe {}` + 5 `unsafe fn` + 2 `unsafe impl` trong 8 tệp (đếm theo loại bởi
 `scripts/check_doc_numbers.py`, P0.16), có chú thích an toàn.
 
-Kết quả CI (2026-11-15): build **3/3** target; boot QEMU **2/3** — `riscv64` và
-`aarch64` in đủ `yui: ready`, `Phan loai`, `Tang 1`; `x86_64` bị QEMU từ chối
-(`Cannot load x86-64 image, give a 32bit one`) nên cần multiboot2 + GRUB hoặc
-shim 32-bit trước khi đạt — xem `docs/PLAN.md` P2.2. Job `qemu` của x86_64 để
-`required: false`, nhưng vẫn chạy thật và vẫn đỏ.
+Kết quả CI (cập nhật 2026-11-21): build **3/3** target; boot QEMU **3/3**, cả ba
+job `qemu` đều bắt buộc. x86_64 boot theo **ba đường**: QEMU `-kernel`
+(multiboot 1, `qemu-smoke.sh`), GRUB BIOS `i386-pc` + VBE ở 4 chế độ
+(`qemu-splash.sh`), và **UEFI** — q35 + OVMF + GRUB `x86_64-efi` + khung hình
+GOP ở 3 chế độ (`qemu-splash.sh --uefi`; nhân tự in `firmware: UEFI`). Mỗi lần
+boot có màn chào được chụp và kiểm từng điểm ảnh, dòng `FromBytes : ok` và dòng
+`Ghi khung : truoc … MB/s, sau WC … MB/s` (số trong máy ảo không đại diện) — xem
+`docs/PLAN.md` P2.2, P2.16.
+
+Chạy thử UEFI ở máy mình (Ubuntu/Debian):
+
+```sh
+sudo apt-get install qemu-system-x86 grub-common grub-efi-amd64-bin ovmf mtools xorriso
+./scripts/build-kernel.sh x86_64
+./scripts/qemu-splash.sh --uefi        # ảnh + log ở build/splash-uefi/
+```
 
 ---
 
@@ -206,7 +217,8 @@ shim 32-bit trước khi đạt — xem `docs/PLAN.md` P2.2. Job `qemu` của x8
 
 `.github/workflows/ci.yml` chạy build C++/C11, Rust, cross-arch và boot kernel/QEMU
 trên push/PR. Job C++ chạy `make -j`, build adapter IBus (`make ibus`),
-`make test` (**2842 check**), `make check`, cài vào `$RUNNER_TEMP` rồi link
+`make test` (số check theo từng test nằm ở `build/test-logs/`, README/PLAN được
+`scripts/check_doc_numbers.py` so với log), `make check`, cài vào `$RUNNER_TEMP` rồi link
 chương trình C ngoài cây với `libyui.a`. Job Rust chạy test/build; các job kernel
 và QEMU xác nhận ba kiến trúc theo `docs/PLAN.md` §8.
 

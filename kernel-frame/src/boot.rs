@@ -127,7 +127,17 @@ pub struct BootInfo {
     pub ram_mb: u64,
     pub ram_source: &'static str,
     pub framebuffer: Option<Framebuffer>,
+    /// Các vùng RAM `available` [đầu, đầu+dài) từ bản đồ bộ nhớ của bộ nạp
+    /// (multiboot2 thẻ 6). Dùng để chắc một thao tác trên vùng MMIO (ví dụ bật
+    /// write-combining cho khung hình, P2.16) không chạm RAM.
+    pub ram_ranges: [(u64, u64); MAX_RAM_RANGES],
+    pub ram_range_count: usize,
+    /// `false` nếu bản đồ có nhiều vùng hơn MAX_RAM_RANGES hoặc không có bản
+    /// đồ nào: khi đó mọi kiểm tra "không chạm RAM" phải trả lời "không biết".
+    pub ram_ranges_complete: bool,
 }
+
+pub const MAX_RAM_RANGES: usize = 32;
 
 impl BootInfo {
     pub fn cpu_display(&self) -> String {
@@ -173,6 +183,9 @@ pub fn parse(raw: RawBoot) -> BootInfo {
         ram_mb: 0,
         ram_source: "khong doc duoc",
         framebuffer: None,
+        ram_ranges: [(0, 0); MAX_RAM_RANGES],
+        ram_range_count: 0,
+        ram_ranges_complete: false,
     };
 
     print!("    - simd: ");
@@ -261,6 +274,11 @@ fn parse_multiboot2(info: &mut BootInfo, addr: u64) {
 
     let mut pos = 8usize;  // sau header total_size + reserved
     let mut guard = 0u32;
+    // Tổng vùng `available` (type 1) của thẻ mmap (type 6), tính bằng byte.
+    // Dưới UEFI, `mem_upper` của thẻ meminfo chỉ đếm vùng LIỀN từ 1 MiB tới lỗ
+    // đầu tiên OVMF giữ lại, nên có thể nhỏ hơn RAM thật nhiều lần ⇒ có mmap
+    // thì dùng mmap (P2.2/P6.4).
+    let mut mmap_avail: u64 = 0;
     while pos + 8 <= blob.len() && guard < 10_000 {
         guard += 1;
         // Multiboot2: mọi trường là LITTLE-endian (khác FDT).
@@ -318,9 +336,54 @@ fn parse_multiboot2(info: &mut BootInfo, addr: u64) {
                         checked_fb(fb_addr, pitch, width, height, bpp, fb_type, shifts, "multiboot2");
                 }
             }
-            _ => {}  // thẻ khác (mmap, EFI…) — chưa dùng, bỏ qua
+            6 => {
+                // memory map: entry_size (8), entry_version (12), từ 16 là các
+                // mục { base u64, len u64, type u32, reserved u32 }.
+                if tag_size >= 16 {
+                    let entry_size = le32(blob, pos + 8) as usize;
+                    if entry_size >= 24 {
+                        info.ram_ranges_complete = true;
+                        let mut e = pos + 16;
+                        while e + 24 <= pos + tag_size {
+                            let start = le32(blob, e) as u64 | ((le32(blob, e + 4) as u64) << 32);
+                            let len = le32(blob, e + 8) as u64 | ((le32(blob, e + 12) as u64) << 32);
+                            if le32(blob, e + 16) == 1 {
+                                mmap_avail = mmap_avail.saturating_add(len);
+                                if info.ram_range_count < MAX_RAM_RANGES {
+                                    info.ram_ranges[info.ram_range_count] = (start, len);
+                                    info.ram_range_count += 1;
+                                } else {
+                                    info.ram_ranges_complete = false;
+                                }
+                            }
+                            e += entry_size;
+                        }
+                    }
+                }
+            }
+            11 | 12 if tag_size >= 12 => {
+                // Con trỏ bảng hệ thống EFI 32/64 bit: chỉ có khi bộ nạp chạy
+                // trên UEFI. Đây là bằng chứng firmware là UEFI, không đoán.
+                let ptr = if tag_type == 12 && tag_size >= 16 {
+                    le32(blob, pos + 8) as u64 | ((le32(blob, pos + 12) as u64) << 32)
+                } else {
+                    le32(blob, pos + 8) as u64
+                };
+                print!("    - firmware: UEFI (bang he thong EFI");
+                if tag_type == 12 {
+                    print!("64");
+                } else {
+                    print!("32");
+                }
+                println!(" @ {:#x})", ptr);
+            }
+            _ => {}  // thẻ khác (ACPI, EFI mmap…) — chưa dùng, bỏ qua
         }
         pos = (pos + tag_size + 7) & !7;
+    }
+    if mmap_avail >= 1024 * 1024 {
+        info.ram_mb = (mmap_avail + (1 << 20) - 1) >> 20;
+        info.ram_source = "multiboot2 mmap (vung available)";
     }
     info.harts = 1;
 }
@@ -528,7 +591,7 @@ fn fdt_framebuffer(info: &mut BootInfo, blob: &[u8]) {
 
 /// Vùng ảnh nhân [__kernel_start, __kernel_end) theo linker script (gồm cả
 /// .bss, nơi đặt ngăn xếp và đống cấp phát).
-fn kernel_image() -> (u64, u64) {
+pub fn kernel_image() -> (u64, u64) {
     extern "C" {
         static __kernel_start: u8;
         static __kernel_end: u8;

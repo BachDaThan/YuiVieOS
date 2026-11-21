@@ -12,6 +12,14 @@
 //
 // Nothing here guesses: every dropped byte is counted in the report so the shell
 // can show a Vietnamese summary of exactly what was removed.
+//
+// Protected apps (P1.6): before touching anything, the tree is scanned for
+// copy-protection / integrity markers (Widevine CDM, VMP/integrity `.sig` next
+// to a binary, VMProtect/Themida/WinLicense/Enigma/SteamStub sections in ELF or
+// PE).  If any is found the trimmer switches to verbatim mode: nothing is
+// dropped, zeroed or deduped, the report says `stripped == false` with the
+// reasons, and the package only holds a lossless copy (0 bytes modified).
+// Modifying such files breaks the app at best and may breach its licence.
 #ifndef YUI_APPPACK_HPP
 #define YUI_APPPACK_HPP
 
@@ -34,7 +42,19 @@ struct TrimOptions {
   bool strip_docs = false;         // share/doc, share/man, *.md
   bool strip_debug_elf = true;     // zero-fill .debug_*/.comment/.note* sections
   bool dedupe = true;              // content-addressed duplicate removal
+  // node_modules/, .venv/, target/, build/: build products of a *source* tree,
+  // but runtime code inside a shipped app (Electron `resources/app/node_modules`,
+  // `app.asar.unpacked/node_modules`).  Off by default since P1.6.
+  bool strip_build_dirs = false;
+  bool verbatim = false;           // keep every byte (forced on for protected apps)
+  bool detect_protection = true;   // scan for DRM/integrity markers first
   int level = 7;                   // YUI-LZ effort
+};
+
+// One copy-protection / integrity marker found in a tree.
+struct ProtectionMarker {
+  std::string path;     // relative path of the file that carries the marker
+  std::string reason;   // short Vietnamese reason, e.g. "Widevine CDM (DRM)"
 };
 
 struct Entry {
@@ -55,10 +75,20 @@ struct TrimReport {
   uint64_t bytes_after_dedupe = 0;
   uint64_t bytes_debug_zeroed = 0;
   uint64_t bytes_packed = 0;
+  bool stripped = true;       // false ⇒ verbatim copy, 0 bytes modified (protected app)
+  std::vector<ProtectionMarker> protection;
+  size_t specials_skipped = 0;  // symlinks, sockets, FIFOs (never archived)
   std::vector<std::string> dropped_samples;
   std::vector<std::string> warnings;
   std::string summary_vi() const;
 };
+
+// Scans a tree for copy-protection / integrity markers (see header comment).
+// VCS metadata directories are not scanned.  Results are sorted by path.
+std::vector<ProtectionMarker> detect_protection(const std::string& root);
+
+// Section names of an ELF64 or PE/COFF image ({} when neither / malformed).
+std::vector<std::string> binary_section_names(const Bytes& image);
 
 // Collect + trim without packing (useful for previews and tests).
 bool collect(const std::string& root, const TrimOptions& opts, std::vector<Entry>& out, TrimReport& rep,

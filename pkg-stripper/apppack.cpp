@@ -74,12 +74,110 @@ uint64_t get_u64(const Bytes& b, size_t& p) {
   return v;
 }
 
-bool is_skipped_dir(const std::string& name) {
-  static const char* kSkip[] = {".git", ".hg", ".svn", "node_modules", "__pycache__",
-                                ".cache", ".pytest_cache", ".venv", "target", "build"};
-  for (const char* s : kSkip)
+bool is_vcs_dir(const std::string& name) { return name == ".git" || name == ".hg" || name == ".svn"; }
+
+// VCS metadata and regenerable caches are always dropped (unless verbatim).
+// Build-product directories only with `strip_build_dirs`: inside a shipped app
+// (Electron `resources/app/node_modules`, `app.asar.unpacked/node_modules`)
+// they are runtime code and dropping them breaks the app (found by P1.6).
+bool is_skipped_dir(const std::string& name, const TrimOptions& opts) {
+  if (opts.verbatim) return false;
+  static const char* kAlways[] = {".git", ".hg", ".svn", "__pycache__", ".cache", ".pytest_cache"};
+  for (const char* s : kAlways)
+    if (name == s) return true;
+  if (!opts.strip_build_dirs) return false;
+  static const char* kBuild[] = {"node_modules", ".venv", "target", "build"};
+  for (const char* s : kBuild)
     if (name == s) return true;
   return false;
+}
+
+std::string lower_ascii(std::string s) {
+  for (char& c : s)
+    if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+  return s;
+}
+
+// Reads the first `n` bytes (fewer if the file is shorter).
+Bytes read_head(const std::string& path, size_t n) {
+  Bytes out;
+  FILE* f = std::fopen(path.c_str(), "rb");
+  if (!f) return out;
+  out.resize(n);
+  out.resize(std::fread(out.data(), 1, n, f));
+  std::fclose(f);
+  return out;
+}
+
+// Section names that identify a copy-protection wrapper.  Only names that are
+// fixed and documented by the tools themselves / widely catalogued.
+const char* protection_section_reason(const std::string& section) {
+  if (section == ".vmp0" || section == ".vmp1" || section == ".vmp2") return "VMProtect (mã hoá/ảo hoá mã)";
+  if (section == ".themida") return "Themida (bảo vệ chống sửa)";
+  if (section == ".winlice") return "WinLicense (bản quyền + chống sửa)";
+  if (section == ".enigma1" || section == ".enigma2") return "Enigma Protector";
+  if (section == ".bind") return "SteamStub DRM (Steam)";
+  return nullptr;
+}
+
+void scan_protection(const std::string& root, const std::string& rel, std::vector<ProtectionMarker>& out) {
+  const std::string dir_path = rel.empty() ? root : root + "/" + rel;
+  DIR* dir = ::opendir(dir_path.c_str());
+  if (!dir) return;
+  std::vector<std::string> names;
+  while (dirent* ent = ::readdir(dir)) {
+    const std::string name = ent->d_name;
+    if (name != "." && name != "..") names.push_back(name);
+  }
+  ::closedir(dir);
+  std::sort(names.begin(), names.end());
+  for (const auto& name : names) {
+    const std::string child_rel = rel.empty() ? name : rel + "/" + name;
+    const std::string child_abs = root + "/" + child_rel;
+    struct stat st{};
+    if (::lstat(child_abs.c_str(), &st) != 0) continue;
+    const std::string low = lower_ascii(name);
+    if (S_ISDIR(st.st_mode)) {
+      if (is_vcs_dir(name)) continue;
+      if (low == "widevinecdm") {
+        out.push_back({child_rel + "/", "Widevine CDM (DRM của Google)"});
+        continue;  // one marker per CDM directory is enough
+      }
+      scan_protection(root, child_rel, out);
+      continue;
+    }
+    if (!S_ISREG(st.st_mode)) continue;
+    if (low == "libwidevinecdm.so" || low == "widevinecdm.dll" || low == "libwidevinecdm.dylib") {
+      out.push_back({child_rel, "Widevine CDM (DRM của Google)"});
+      continue;
+    }
+    if (yui::text::ends_with(low, ".sig") && name.size() > 4) {
+      // castlabs VMP / integrity signature: `<binary>.sig` beside `<binary>`.
+      const std::string stem = name.substr(0, name.size() - 4);
+      const std::string lstem = lower_ascii(stem);
+      struct stat sib{};
+      const std::string sib_abs = dir_path + "/" + stem;
+      if (::stat(sib_abs.c_str(), &sib) == 0 && S_ISREG(sib.st_mode) &&
+          ((sib.st_mode & 0111) || yui::text::ends_with(lstem, ".exe") || yui::text::ends_with(lstem, ".dll") ||
+           yui::text::ends_with(lstem, ".so") || lstem.find(".so.") != std::string::npos)) {
+        out.push_back({child_rel, "chữ ký toàn vẹn/VMP cho " + stem + " (sửa một byte là hỏng)"});
+        continue;
+      }
+    }
+    if (st.st_size < 64) continue;
+    const Bytes head = read_head(child_abs, 4);
+    const bool elf = head.size() == 4 && head[0] == 0x7f && head[1] == 'E' && head[2] == 'L' && head[3] == 'F';
+    const bool pe = head.size() >= 2 && head[0] == 'M' && head[1] == 'Z';
+    if (!elf && !pe) continue;
+    Bytes image;
+    if (!read_file(child_abs, image, nullptr)) continue;
+    for (const auto& sec : binary_section_names(image)) {
+      if (const char* why = protection_section_reason(sec)) {
+        out.push_back({child_rel, std::string(why) + ", section " + sec});
+        break;
+      }
+    }
+  }
 }
 
 // Locale filtering only applies to conventional layouts:
@@ -136,12 +234,12 @@ void walk(const std::string& root, const std::string& rel, const TrimOptions& op
     if (::lstat(child_abs.c_str(), &st) != 0) continue;
 
     if (S_ISDIR(st.st_mode)) {
-      if (is_skipped_dir(name)) {
+      if (is_skipped_dir(name, opts)) {
         ++rep.files_dropped;
         if (rep.dropped_samples.size() < 32) rep.dropped_samples.push_back(child_rel + "/ (thư mục)");
         continue;
       }
-      if (!locale_allowed(child_rel, opts) || docs_skipped(child_rel, opts)) {
+      if (!opts.verbatim && (!locale_allowed(child_rel, opts) || docs_skipped(child_rel, opts))) {
         ++rep.files_dropped;
         if (rep.dropped_samples.size() < 32) rep.dropped_samples.push_back(child_rel + "/ (ngôn ngữ/tài liệu)");
         continue;
@@ -149,13 +247,19 @@ void walk(const std::string& root, const std::string& rel, const TrimOptions& op
       walk(root, child_rel, opts, out, rep, error);
       continue;
     }
-    if (!S_ISREG(st.st_mode)) continue;
+    if (!S_ISREG(st.st_mode)) {
+      // Symlinks/FIFOs/sockets are never archived; say so instead of hiding it.
+      if (rep.specials_skipped++ < 8)
+        rep.warnings.push_back("bỏ qua " + std::string(S_ISLNK(st.st_mode) ? "liên kết mềm" : "tệp đặc biệt") +
+                               ": " + child_rel);
+      continue;
+    }
 
     ++rep.files_in;
     rep.bytes_in += uint64_t(st.st_size);
 
-    if (yui::text::ends_with(name, ".debug") || !locale_allowed(child_rel, opts) ||
-        docs_skipped(child_rel, opts)) {
+    if (!opts.verbatim && (yui::text::ends_with(name, ".debug") || !locale_allowed(child_rel, opts) ||
+                           docs_skipped(child_rel, opts))) {
       ++rep.files_dropped;
       if (rep.dropped_samples.size() < 32) rep.dropped_samples.push_back(child_rel);
       continue;
@@ -166,7 +270,7 @@ void walk(const std::string& root, const std::string& rel, const TrimOptions& op
     e.mode = uint32_t(st.st_mode & 07777);
     e.kind = (st.st_mode & 0111) ? 'x' : 'f';
     if (!read_file(child_abs, e.data, error)) continue;
-    if (opts.strip_debug_elf && e.data.size() > 4 && e.data[0] == 0x7f && e.data[1] == 'E' &&
+    if (!opts.verbatim && opts.strip_debug_elf && e.data.size() > 4 && e.data[0] == 0x7f && e.data[1] == 'E' &&
         e.data[2] == 'L' && e.data[3] == 'F') {
       rep.bytes_debug_zeroed += strip_elf_debug(e.data);
     }
@@ -195,6 +299,15 @@ std::string TrimReport::summary_vi() const {
   char buf[96];
   std::snprintf(buf, sizeof(buf), " (giảm %.1f%%)", saved);
   os << " — " << human(bytes_in) << " → " << human(bytes_packed) << buf;
+  if (!stripped) {
+    if (protection.empty()) {
+      os << " · giữ nguyên 100% byte (--verbatim), chỉ nén không mất dữ liệu";
+    } else {
+      os << " · KHÔNG GỌT: phát hiện bảo vệ bản quyền/toàn vẹn (" << protection.front().reason;
+      if (protection.size() > 1) os << " và " << (protection.size() - 1) << " dấu hiệu khác";
+      os << ") — giữ nguyên 100% byte, chỉ nén không mất dữ liệu";
+    }
+  }
   if (!warnings.empty()) os << " · " << warnings.size() << " cảnh báo";
   return os.str();
 }
@@ -272,18 +385,79 @@ uint64_t strip_elf_debug(Bytes& image) {
   return zeroed;
 }
 
-bool collect(const std::string& root, const TrimOptions& opts, std::vector<Entry>& out, TrimReport& rep,
+std::vector<std::string> binary_section_names(const Bytes& image) {
+  std::vector<std::string> names;
+  auto rd16 = [&](size_t off) -> uint16_t { return uint16_t(image[off] | (image[off + 1] << 8)); };
+  auto rd32 = [&](size_t off) -> uint32_t {
+    uint32_t v = 0;
+    for (int i = 3; i >= 0; --i) v = (v << 8) | image[off + size_t(i)];
+    return v;
+  };
+  auto rd64 = [&](size_t off) -> uint64_t {
+    uint64_t v = 0;
+    for (int i = 7; i >= 0; --i) v = (v << 8) | image[off + size_t(i)];
+    return v;
+  };
+  if (image.size() >= 64 && image[0] == 0x7f && image[1] == 'E' && image[2] == 'L' && image[3] == 'F' &&
+      image[4] == 2 && image[5] == 1) {  // ELF64 little-endian
+    const uint64_t shoff = rd64(0x28);
+    const uint16_t shentsize = rd16(0x3A), shnum = rd16(0x3C), shstrndx = rd16(0x3E);
+    if (shentsize < 64 || shnum == 0 || shstrndx >= shnum || shoff > image.size() ||
+        uint64_t(shentsize) * shnum > image.size() - shoff)
+      return names;
+    const size_t str_sh = size_t(shoff) + size_t(shstrndx) * shentsize;
+    const uint64_t str_off = rd64(str_sh + 0x18), str_size = rd64(str_sh + 0x20);
+    if (str_off > image.size() || str_size > image.size() - str_off) return names;
+    for (uint16_t i = 0; i < shnum; ++i) {
+      const uint32_t name_off = rd32(size_t(shoff) + size_t(i) * shentsize);
+      if (name_off >= str_size) continue;
+      std::string n;
+      for (uint64_t k = str_off + name_off; k < str_off + str_size && image[size_t(k)]; ++k) n += char(image[size_t(k)]);
+      if (!n.empty()) names.push_back(n);
+    }
+    return names;
+  }
+  if (image.size() >= 0x40 && image[0] == 'M' && image[1] == 'Z') {  // PE/COFF
+    const uint32_t pe = rd32(0x3C);
+    if (uint64_t(pe) + 24 > image.size() || image[pe] != 'P' || image[pe + 1] != 'E' || image[pe + 2] != 0 ||
+        image[pe + 3] != 0)
+      return names;
+    const uint16_t nsec = rd16(pe + 6), opt = rd16(pe + 20);
+    const uint64_t table = uint64_t(pe) + 24 + opt;
+    for (uint16_t i = 0; i < nsec && table + uint64_t(i + 1) * 40 <= image.size(); ++i) {
+      const size_t s = size_t(table) + size_t(i) * 40;
+      std::string n;
+      for (size_t k = 0; k < 8 && image[s + k]; ++k) n += char(image[s + k]);
+      if (!n.empty()) names.push_back(n);
+    }
+  }
+  return names;
+}
+
+std::vector<ProtectionMarker> detect_protection(const std::string& root) {
+  std::vector<ProtectionMarker> out;
+  scan_protection(root, "", out);
+  return out;
+}
+
+bool collect(const std::string& root, const TrimOptions& opts_in, std::vector<Entry>& out, TrimReport& rep,
              std::string* error) {
   struct stat st{};
   if (::stat(root.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
     if (error) *error = "không phải thư mục: " + root;
     return false;
   }
+  TrimOptions opts = opts_in;
+  if (opts.detect_protection && !opts.verbatim) {
+    rep.protection = detect_protection(root);
+    if (!rep.protection.empty()) opts.verbatim = true;  // 0 bytes modified
+  }
+  rep.stripped = !opts.verbatim;
   out.clear();
   walk(root, "", opts, out, rep, error);
   std::sort(out.begin(), out.end(), [](const Entry& a, const Entry& b) { return a.path < b.path; });
 
-  if (opts.dedupe) {
+  if (opts.dedupe && !opts.verbatim) {
     std::map<std::string, std::string> seen;  // sha256 -> first path
     for (auto& e : out) {
       if (e.data.empty()) continue;
@@ -366,7 +540,9 @@ bool extract(const std::vector<Entry>& entries, const std::string& dest, std::st
     const size_t slash = full.rfind('/');
     if (slash != std::string::npos) {
       const std::string dir = full.substr(0, slash);
-      std::string cur;
+      // Keep relative destinations relative (`yui-trim --unpack x -C out`):
+      // before P1.6 every prefix got a leading '/', so "out/a" became "/out".
+      std::string cur = dir[0] == '/' ? "" : ".";
       std::istringstream parts(dir);
       std::string part;
       while (std::getline(parts, part, '/')) {

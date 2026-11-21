@@ -33,8 +33,7 @@ pub struct Drawn {
     pub k: u8,
 }
 
-/// Trả về None nếu framebuffer không dùng được.
-pub fn render(fb: &Framebuffer, info: &BootInfo) -> Option<Drawn> {
+fn surface(fb: &Framebuffer) -> Option<Surface> {
     if fb.addr == 0 || fb.width < 120 || fb.height < 80 || fb.bpp < 24 {
         return None;
     }
@@ -44,15 +43,36 @@ pub fn render(fb: &Framebuffer, info: &BootInfo) -> Option<Drawn> {
     } else {
         fb.width * bytes_per_pixel
     };
-
-    let surface = Surface {
+    Some(Surface {
         base: fb.addr as *mut u8,
         width: fb.width as i32,
         height: fb.height as i32,
         stride,
         bytes_per_pixel,
         shifts: (fb.red_shift, fb.green_shift, fb.blue_shift),
-    };
+    })
+}
+
+/// Đo ghi khung hình (P2.16): tô nền các dòng đầu sao cho ≤ `max_bytes`, bằng
+/// đúng đường `put` mà màn chào dùng. Trả (số byte đã ghi, số chu kỳ) —
+/// `fbspeed.rs` đổi ra MB/s. Không thêm `unsafe`: đi qua `Surface::put`.
+pub fn fill_bench(fb: &Framebuffer, max_bytes: u64) -> Option<(u64, u64)> {
+    let surface = surface(fb)?;
+    let row_bytes = surface.width as u64 * surface.bytes_per_pixel as u64;
+    let rows = (max_bytes / row_bytes.max(1)).clamp(1, surface.height as u64) as i32;
+    let t0 = crate::arch::cycles();
+    surface.fill(0, 0, surface.width, rows, BG);
+    let t1 = crate::arch::cycles();
+    Some((row_bytes * rows as u64, t1.wrapping_sub(t0)))
+}
+
+/// Trả về None nếu framebuffer không dùng được.
+///
+/// `speed` = (MB/s trước, MB/s sau WC nếu bật được, chạy trong máy ảo) từ
+/// `fbspeed::measure`: in thành dòng thứ ba của bảng thông số để người thử trên
+/// **máy thật không có cổng nối tiếp** vẫn đọc được số đo (P2.16).
+pub fn render(fb: &Framebuffer, info: &BootInfo, speed: Option<(u64, Option<u64>, bool)>) -> Option<Drawn> {
+    let surface = surface(fb)?;
     let (w, h) = (surface.width, surface.height);
 
     let scale = display::choose_scale(&display::ScaleInput {
@@ -84,23 +104,39 @@ pub fn render(fb: &Framebuffer, info: &BootInfo) -> Option<Drawn> {
     let mut line2 = String::new();
     let _ = write!(line2, "K={}  W={}  ", c.k, c.window);
     line2.push_str(info.simd);
+    let mut line3 = String::new();
+    if let Some((before, after, in_vm)) = speed {
+        let _ = write!(line3, "GHI KHUNG {} MB/S", before);
+        if let Some(a) = after {
+            let _ = write!(line3, "  WC {} MB/S", a);
+        }
+        if in_vm {
+            line3.push_str("  MAY AO");
+        }
+    }
+    let lines = if line3.is_empty() { 2 } else { 3 };
     let panel_x = w / 20;
     let panel_w = w - 2 * panel_x;
     let inner = panel_w - 22 * k;
     let mut panel_scale = 2 * k;
     while panel_scale > 1
-        && (text_width(&line1, panel_scale) > inner || text_width(&line2, panel_scale) > inner)
+        && (text_width(&line1, panel_scale) > inner
+            || text_width(&line2, panel_scale) > inner
+            || text_width(&line3, panel_scale) > inner)
     {
         panel_scale -= 1;
     }
     let line_gap = 6 * k;
-    let panel_h = 2 * 7 * panel_scale + line_gap + 16 * k;
+    let panel_h = lines * 7 * panel_scale + (lines - 1) * line_gap + 16 * k;
     let panel_y = h - panel_h - 7 * k - 24 * k;
     surface.fill(panel_x, panel_y, panel_w, panel_h, PANEL);
     surface.fill(panel_x, panel_y, 4 * k, panel_h, ACCENT);
     let (tx, ty) = (panel_x + 14 * k, panel_y + 8 * k);
     surface.text(tx, ty, &line1, INK, panel_scale);
     surface.text(tx, ty + 7 * panel_scale + line_gap, &line2, SOFT, panel_scale);
+    if lines == 3 {
+        surface.text(tx, ty + 2 * (7 * panel_scale + line_gap), &line3, SOFT, panel_scale);
+    }
 
     surface.centered("CLEAN-ROOM  -  SAFE RUST KERNEL", k, h - 7 * k - 8 * k, SOFT);
 
@@ -236,6 +272,7 @@ fn glyph_for(c: u8) -> Option<&'static [u8; 7]> {
         b'.' => &FONT_DOT,
         b'=' => &FONT_EQ,
         b'?' => &FONT_QUESTION,
+        b'/' => &FONT_SLASH,
         _ => return None,
     })
 }
@@ -281,3 +318,4 @@ const FONT_DASH: [u8; 7] = [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00];
 const FONT_DOT: [u8; 7] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C];
 const FONT_EQ: [u8; 7] = [0x00, 0x00, 0x1F, 0x00, 0x1F, 0x00, 0x00];
 const FONT_QUESTION: [u8; 7] = [0x0E, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04];
+const FONT_SLASH: [u8; 7] = [0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10];

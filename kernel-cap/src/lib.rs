@@ -25,6 +25,7 @@ pub mod input;
 pub mod display;
 pub mod fdt;
 pub mod frombytes;
+pub mod memrange;
 
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};

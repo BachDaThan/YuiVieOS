@@ -1,0 +1,7 @@
+{
+  "name": "yui-electron-smoke",
+  "version": "1.0.0",
+  "description": "App thử cho P1.6: chạy Electron trước/sau khi yui-trim gọt (scripts/realapp-trim.sh)",
+  "main": "main.js",
+  "license": "MIT"
+}

@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+# P1.6 — Smart Stripper trên app THẬT (chạy trên CI; máy bạn cũng chạy được).
+#
+#   ./scripts/realapp-trim.sh electron   # Electron chính thức + app thử: gọt, bung, CHẠY lại
+#   ./scripts/realapp-trim.sh vscodium   # VSCodium (bản build MIT của VS Code, app Electron lớn có thật)
+#   ./scripts/realapp-trim.sh drm        # Google Chrome (kèm Widevine CDM): phải stripped=false, 0 byte sửa
+#
+# Cần: build/bin/yui-trim (make), curl, unzip, xvfb-run, dpkg-deb, các thư viện
+# GTK/NSS mà Chromium cần. Tải về thư mục build/realapp/ (bị .gitignore, KHÔNG
+# phân phối lại gì: Stripper chạy cục bộ trên bản người dùng đã có — PLAN §3).
+#
+# Mỗi dòng kết quả in kèm "::notice" để CI hiện thành annotation.
+set -Eeuo pipefail
+# Lệnh nào hỏng (set -e) cũng thành annotation: CI không cho tải log về được.
+trap 'rc=$?; echo "LỖI dòng $LINENO: $BASH_COMMAND (mã $rc)" >&2; [ -z "${GITHUB_ACTIONS:-}" ] || echo "::error title=P1.6 ${MODE:-}::dòng $LINENO: $BASH_COMMAND (mã $rc)"' ERR
+cd "$(dirname "$0")/.."
+ROOT=$PWD
+TRIM=$ROOT/build/bin/yui-trim
+WORK=$ROOT/build/realapp
+ELECTRON_VERSION=${ELECTRON_VERSION:-33.2.1}
+VSCODIUM_VERSION=${VSCODIUM_VERSION:-1.143.17232}
+MAX_RATIO=${MAX_RATIO:-65}   # gói .yuip ≤ 65 % cây gốc  ⇔  nhỏ hơn ≥ 35 %
+[ -x "$TRIM" ] || { echo "thiếu $TRIM — chạy make trước" >&2; exit 2; }
+mkdir -p "$WORK"
+
+note() { echo "$*"; [ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=P1.6 $MODE::$*" || true; }
+die() {
+  trap - ERR
+  echo "LỖI: $*" >&2
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    echo "::error title=P1.6 $MODE::$*"
+    # đuôi log của lần chạy app gần nhất (nếu có), mỗi dòng một annotation
+    local f; f=$(ls -t "$WORK"/*.log 2>/dev/null | head -1 || true)
+    [ -n "$f" ] && tail -n 15 "$f" | cut -c1-300 | sed 's/%/%25/g' | while IFS= read -r l; do echo "::error title=P1.6 log $(basename "$f")::$l"; done
+  fi
+  exit 1
+}
+bytes() { du -sb "$1" | cut -f1; }
+pct() { echo $(( ($1 * 1000 / $2 + 5) / 10 )); }
+
+# So từng tệp thường: đường dẫn, quyền, nội dung (sha256). In số tệp khác.
+same_files() {
+  local a=$1 b=$2
+  diff <(cd "$a" && find . -type f -printf '%P %m\n' | sort) \
+       <(cd "$b" && find . -type f -printf '%P %m\n' | sort) > "$WORK/diff-list.txt" || true
+  diff <(cd "$a" && find . -type f -print0 | sort -z | xargs -0 sha256sum) \
+       <(cd "$b" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$WORK/diff-sha.txt" || true
+  local n=$(( $(grep -c '^[<>]' "$WORK/diff-list.txt" || true) + $(grep -c '^[<>]' "$WORK/diff-sha.txt" || true) ))
+  echo "$n"
+}
+
+electron_case() {
+  local zip=electron-v$ELECTRON_VERSION-linux-x64.zip
+  local base=https://github.com/electron/electron/releases/download/v$ELECTRON_VERSION
+  cd "$WORK"
+  [ -f "$zip" ] || curl -fsSL --retry 3 -o "$zip" "$base/$zip"
+  curl -fsSL --retry 3 -o SHASUMS256.txt "$base/SHASUMS256.txt"
+  grep " \*$zip\$" SHASUMS256.txt | sed 's/ \*/  /' | sha256sum -c - >/dev/null || die "SHA-256 của $zip không khớp SHASUMS256.txt"
+  rm -rf orig out
+  mkdir orig && unzip -q "$zip" -d orig
+  # App thử đóng gói đúng cách Electron tìm app: resources/app/ (package.json + main.js)
+  # + một gói trong node_modules (trước P1.6 Stripper xoá node_modules ⇒ app hỏng).
+  mkdir -p orig/resources/app/node_modules/yui-dep
+  cp "$ROOT/tests/data/electron-smoke/package.json" "$ROOT/tests/data/electron-smoke/main.js" orig/resources/app/
+  cp "$ROOT/tests/data/electron-smoke/yui-dep.js" orig/resources/app/node_modules/yui-dep/index.js
+  echo '{"name":"yui-dep","version":"1.0.0","main":"index.js"}' > orig/resources/app/node_modules/yui-dep/package.json
+
+  run_app() {  # $1 = thư mục app, $2 = tệp kết quả, còn lại = cờ thêm
+    local dir=$1 out=$2; shift 2
+    rm -f "$out"
+    YUI_SMOKE_OUT=$out LANG=en_US.UTF-8 timeout 120 xvfb-run -a "$dir/electron" --no-sandbox --disable-gpu "$@" \
+      > "$out.log" 2>&1 || { cat "$out.log" >&2; die "app không chạy được ($dir $*)"; }
+    [ -s "$out" ] || { cat "$out.log" >&2; die "app không ghi kết quả ($dir $*)"; }
+  }
+  run_app orig "$WORK/before.json"
+  local t0 t1; t0=$(date +%s%N)
+  "$TRIM" orig -o app.yuip | tee trim.log
+  t1=$(date +%s%N); TRIM_MS=$(( (t1 - t0) / 1000000 ))
+  grep -q '^stripped=true$' trim.log || die "Electron không có DRM mà Stripper báo stripped=false"
+  mkdir out && "$TRIM" --unpack app.yuip -C out >/dev/null
+  run_app out "$WORK/after.json"
+  run_app out "$WORK/after-vi.json" --lang=vi
+  run_app out "$WORK/after-fr.json" --lang=fr   # fr.pak đã bị gọt: Chromium phải lùi về en-US, không sập
+  cmp -s before.json after.json || { cat before.json after.json; die "kết quả app trước/sau gọt khác nhau"; }
+  grep -q '"locale":"vi"' after-vi.json || { cat after-vi.json; die "--lang=vi sau gọt không ra locale vi (vi.pak mất?)"; }
+  grep -q '"text":"Xin chào YuiVieOS|42"' after.json || { cat after.json; die "renderer không chạy đúng"; }
+
+  local tree zipb pack unp
+  tree=$(bytes orig); zipb=$(stat -c %s "$zip"); pack=$(stat -c %s app.yuip); unp=$(bytes out)
+  local ratio; ratio=$(pct "$pack" "$tree")
+  note "Electron $ELECTRON_VERSION + app thử: cây gốc $((tree / 1048576)) MiB → gói .yuip $((pack / 1048576)) MiB (= $ratio % cây gốc, nhỏ hơn $((100 - ratio)) %); bung ra $((unp / 1048576)) MiB (gọt ngôn ngữ ngoài vi/en); zip chính thức $((zipb / 1048576)) MiB (gói = $(pct "$pack" "$zipb") % zip); gọt + nén mất $((TRIM_MS / 1000)).$(( (TRIM_MS % 1000) / 100 )) s trên runner CI"
+  note "Chạy được sau gọt: $(cat after.json) · --lang=vi ⇒ $(grep -o '"locale":"[^"]*"' after-vi.json) · --lang=fr (đã gọt) ⇒ $(grep -o '"locale":"[^"]*"' after-fr.json)"
+  [ "$ratio" -le "$MAX_RATIO" ] || die "gói = $ratio % cây gốc, chưa đạt ≤ $MAX_RATIO %"
+}
+
+# Kiểm "chạy được" của VSCodium; in các mục đạt, mỗi mục một từ.
+vsc_checks() {
+  local dir=$1 tag=$2 ok=""
+  local u="$WORK/vsc-$tag-user" e="$WORK/vsc-$tag-ext"
+  rm -rf "$u" "$e"
+  if "$dir/bin/codium" --version > "$WORK/vsc-$tag-version.log" 2>&1 && grep -q "^${VSCODIUM_VERSION%.*}" "$WORK/vsc-$tag-version.log"; then ok="$ok cli-version"; fi
+  if "$dir/bin/codium" --list-extensions --user-data-dir "$u" --extensions-dir "$e" > "$WORK/vsc-$tag-ext.log" 2>&1; then ok="$ok cli-extensions"; fi
+  # Giao diện: chạy dưới Xvfb; đạt nếu sau 20 s còn tiến trình renderer (cửa sổ)
+  # của ĐÚNG bản này (đường dẫn tuyệt đối) đang sống.
+  local adir; adir=$(cd "$dir" && pwd)
+  rm -rf "$u"
+  xvfb-run -a "$adir/codium" --no-sandbox --disable-gpu --user-data-dir "$u" --extensions-dir "$e" \
+      --disable-workspace-trust --skip-welcome --new-window > "$WORK/vsc-$tag-gui.log" 2>&1 &
+  local xpid=$!
+  sleep 20
+  local nren; nren=$(pgrep -fc -- "$adir/codium --type=renderer" || true)
+  pkill -f -- "$adir/codium" || true
+  wait "$xpid" 2>/dev/null || true
+  if [ "${nren:-0}" -ge 1 ]; then ok="$ok gui-renderer"; fi
+  if [ -n "${GITHUB_ACTIONS:-}" ] && [ "$tag" = before ] && [ "${nren:-0}" -lt 1 ]; then
+    {
+      echo "::notice title=P1.6 vscodium gui-debug::không thấy renderer; tiến trình codium: $( (pgrep -fa -- "$adir/codium" || true) | cut -c1-120 | head -5 | tr '\n' ' ')"
+      (tail -n 8 "$WORK/vsc-$tag-gui.log" || true) | cut -c1-250 | sed 's/%/%25/g' | while IFS= read -r l; do echo "::notice title=P1.6 vscodium gui-log::$l"; done
+    } >&2
+  fi
+  echo "$ok"
+}
+
+vscodium_case() {
+  local tgz=VSCodium-linux-x64-$VSCODIUM_VERSION.tar.gz
+  local base=https://github.com/VSCodium/vscodium/releases/download/$VSCODIUM_VERSION
+  cd "$WORK"
+  [ -f "$tgz" ] || curl -fsSL --retry 3 -o "$tgz" "$base/$tgz"
+  curl -fsSL --retry 3 -o "$tgz.sha256" "$base/$tgz.sha256"
+  sha256sum -c "$tgz.sha256" >/dev/null || die "SHA-256 của $tgz không khớp tệp .sha256 của bản phát hành"
+  rm -rf vsc-orig vsc-out && mkdir vsc-orig && tar -xzf "$tgz" -C vsc-orig
+  local before after
+  before=$(vsc_checks vsc-orig before)
+  [ -n "$before" ] || die "VSCodium gốc không qua kiểm nào — môi trường CI thiếu gì đó, không đo được"
+  "$TRIM" vsc-orig -o vsc.yuip | tee trim-vsc.log
+  grep -q '^stripped=true$' trim-vsc.log || die "VSCodium không có DRM mà Stripper báo stripped=false"
+  mkdir vsc-out && "$TRIM" --unpack vsc.yuip -C vsc-out >/dev/null
+  after=$(vsc_checks vsc-out after)
+  local missing="" k
+  for k in $before; do case " $after " in *" $k "*) ;; *) missing="$missing $k" ;; esac; done
+  [ -z "$missing" ] || die "sau gọt hỏng:$missing (trước gọt đạt:$before)"
+  local tree pack unp tgzb ratio
+  tree=$(bytes vsc-orig); pack=$(stat -c %s vsc.yuip); unp=$(bytes vsc-out); tgzb=$(stat -c %s "$tgz")
+  ratio=$(pct "$pack" "$tree")
+  note "VSCodium $VSCODIUM_VERSION: cây gốc $((tree / 1048576)) MiB → gói .yuip $((pack / 1048576)) MiB (= $ratio % cây gốc, nhỏ hơn $((100 - ratio)) %); bung ra $((unp / 1048576)) MiB; tar.gz chính thức $((tgzb / 1048576)) MiB (gói = $(pct "$pack" "$tgzb") % tar.gz)"
+  note "VSCodium chạy được sau gọt — đạt:$after (trước gọt đạt:$before)"
+  [ "$ratio" -le "$MAX_RATIO" ] || die "gói = $ratio % cây gốc, chưa đạt ≤ $MAX_RATIO %"
+}
+
+drm_case() {
+  local deb=google-chrome-stable_current_amd64.deb
+  cd "$WORK"
+  [ -f "$deb" ] || curl -fsSL --retry 3 -o "$deb" "https://dl.google.com/linux/direct/$deb"
+  rm -rf chrome-x chrome-out
+  dpkg-deb -x "$deb" chrome-x
+  local app=chrome-x/opt/google/chrome
+  [ -x "$app/chrome" ] || die "không thấy $app/chrome trong gói"
+  local ver; ver=$("$app/chrome" --version 2>/dev/null || echo "?")
+  "$TRIM" "$app" -o chrome.yuip --strip-docs | tee trim-drm.log
+  grep -q '^stripped=false$' trim-drm.log || die "Chrome có Widevine CDM mà Stripper vẫn gọt (stripped=true)"
+  grep -q 'Widevine' trim-drm.log || die "lý do không nêu Widevine"
+  mkdir chrome-out && "$TRIM" --unpack chrome.yuip -C chrome-out >/dev/null
+  local nd; nd=$(same_files "$app" chrome-out)
+  local nfiles; nfiles=$(find "$app" -type f | wc -l)
+  [ "$nd" = 0 ] || { head -20 diff-list.txt diff-sha.txt >&2; die "$nd khác biệt sau bung — phải 0 byte bị sửa"; }
+  local nspecial; nspecial=$(find "$app" ! -type f ! -type d | wc -l)
+  local dom; dom=$(timeout 60 chrome-out/chrome --headless=new --no-sandbox --disable-gpu \
+      --dump-dom 'data:text/html;charset=utf-8,<h1>Xin chao YuiVieOS</h1>' 2>/dev/null || true)
+  echo "$dom" | grep -q 'Xin chao YuiVieOS' || die "Chrome sau bung không chạy được (headless)"
+  note "$ver (Widevine CDM): stripped=false · $(grep -c '⚠ bảo vệ' trim-drm.log) dấu hiệu, ví dụ: $(grep -m1 '⚠ bảo vệ' trim-drm.log | sed 's/^ *⚠ bảo vệ: //')"
+  note "0 byte bị sửa: $nfiles/$nfiles tệp trùng đường dẫn + quyền + SHA-256 sau bung ($nspecial liên kết/tệp đặc biệt không lưu); bản bung chạy headless được"
+}
+
+MODE=${1:-}
+case "$MODE" in
+  electron) electron_case ;;
+  vscodium) vscodium_case ;;
+  drm) drm_case ;;
+  *) echo "dùng: $0 electron|vscodium|drm" >&2; exit 2 ;;
+esac

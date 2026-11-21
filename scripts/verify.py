@@ -16,7 +16,9 @@ Checks, in order:
   8. numbers quoted in the docs match the code: `unsafe` counted by kind,
      the P0 check total and README check counts vs. the `make test` logs,
      no untagged performance numbers in README (P0.16,
-     scripts/check_doc_numbers.py).
+     scripts/check_doc_numbers.py);
+  9. the AS-IS label and the Lite legal docs are complete and actually shown
+     by the shell and the kernel banner (P7.9, scripts/check_legal.py).
 
 Exit code 0 only if everything passes.  Run through scripts/verify.sh.
 """
@@ -92,10 +94,14 @@ REQUIRED_FILES = [
     "tests/archive_fixtures.hpp", "scripts/gen_archive_fixtures.py",
     "scripts/check_boundaries.py", "scripts/test_check_boundaries.py",
     "scripts/check_doc_numbers.py", "scripts/test_check_doc_numbers.py",
+    "scripts/check_legal.py", "scripts/test_check_legal.py", "include/yui/legal.hpp",
+    "scripts/test_scan_secrets.py", ".github/workflows/secrets.yml",
+    "scripts/realapp-trim.sh", "tests/data/electron-smoke/main.js",
     "include/yui/display.hpp", "userspace-vi/display.cpp", "tests/test_display.cpp",
     "kernel-cap/src/display.rs", "tests/data/display_vectors.txt", "scripts/gen_display_vectors.py",
     "kernel-cap/src/fdt.rs", "tests/data/fdt_fb_vectors.txt", "scripts/gen_fdt_vectors.py",
     "kernel-cap/src/frombytes.rs", "kernel-frame/src/frombytes.rs",
+    "kernel-cap/src/memrange.rs", "kernel-frame/src/fbspeed.rs",
     "tests/data/frombytes_vectors.txt", "scripts/gen_frombytes_vectors.py",
     "scripts/qemu-splash-dt.sh",
     "scripts/qemu-splash.sh", "scripts/check_splash_ppm.py",
@@ -248,7 +254,7 @@ BRACKETS = {"(": ")", "[": "]", "{": "}"}
 # nào khác xuất hiện `unsafe` đều là hồi quy.
 FRAME_UNSAFE_FILES = {
     "arch/mod.rs": "lệnh hlt / wfi để dừng máy",
-    "arch/x86_64.rs": "cổng nối tiếp (in/out), CPUID, cầu nối 32→64 bit",
+    "arch/x86_64.rs": "cổng nối tiếp (in/out), CPUID, cầu nối 32→64 bit, TSC/PIT + PAT write-combining (P2.16)",
     "arch/aarch64.rs": "UART PL011 qua con trỏ MMIO, đọc thanh ghi hệ thống",
     "arch/riscv64.rs": "lời gọi SBI qua ecall, đọc thanh ghi misa",
     "boot.rs": "đọc multiboot info / device tree do firmware cấp",
@@ -692,6 +698,20 @@ def check_doc_numbers() -> None:
         ok(res.stdout.strip())
 
 
+def check_legal() -> None:
+    """Nhãn AS-IS + tài liệu pháp lý mức Lite (P7.9)."""
+    header("nhãn AS-IS + tài liệu pháp lý Lite (P7.9)")
+    script = ROOT / "scripts/check_legal.py"
+    if not script.is_file():
+        bad("scripts/check_legal.py không tồn tại")
+        return
+    res = subprocess.run([sys.executable, str(script)], cwd=str(ROOT), capture_output=True, text=True)
+    if res.returncode != 0:
+        bad(f"nhãn AS-IS / tài liệu pháp lý chưa đạt:\n{(res.stdout + res.stderr).strip()}")
+    else:
+        ok(res.stdout.strip())
+
+
 def main() -> int:
     if not (ROOT / "docs/PLAN.md").exists():
         print("verify.py: chạy từ trong repo YuiVieOS Beta")
@@ -708,6 +728,7 @@ def main() -> int:
     check_secrets()
     check_boundaries()
     check_doc_numbers()
+    check_legal()
     check_links()
     check_doc_paths()
     check_line_endings()
