@@ -368,6 +368,8 @@ jobs:
           sudo apt-get install -y -qq xvfb unzip libnss3 libgtk-3-0t64 libgbm1 libasound2t64 libxss1
       - name: "Electron: trim, unpack, run again"
         run: ./scripts/realapp-trim.sh electron
+      - name: "VSCodium (real Electron app): trim, unpack, still runs"
+        run: ./scripts/realapp-trim.sh vscodium
       - name: "DRM app (Chrome + Widevine): stripped=false, 0 bytes modified"
         run: ./scripts/realapp-trim.sh drm
 

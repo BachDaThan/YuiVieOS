@@ -2,6 +2,7 @@
 # P1.6 — Smart Stripper trên app THẬT (chạy trên CI; máy bạn cũng chạy được).
 #
 #   ./scripts/realapp-trim.sh electron   # Electron chính thức + app thử: gọt, bung, CHẠY lại
+#   ./scripts/realapp-trim.sh vscodium   # VSCodium (bản build MIT của VS Code, app Electron lớn có thật)
 #   ./scripts/realapp-trim.sh drm        # Google Chrome (kèm Widevine CDM): phải stripped=false, 0 byte sửa
 #
 # Cần: build/bin/yui-trim (make), curl, unzip, xvfb-run, dpkg-deb, các thư viện
@@ -17,6 +18,7 @@ ROOT=$PWD
 TRIM=$ROOT/build/bin/yui-trim
 WORK=$ROOT/build/realapp
 ELECTRON_VERSION=${ELECTRON_VERSION:-33.2.1}
+VSCODIUM_VERSION=${VSCODIUM_VERSION:-1.143.17232}
 MAX_RATIO=${MAX_RATIO:-65}   # gói .yuip ≤ 65 % cây gốc  ⇔  nhỏ hơn ≥ 35 %
 [ -x "$TRIM" ] || { echo "thiếu $TRIM — chạy make trước" >&2; exit 2; }
 mkdir -p "$WORK"
@@ -71,7 +73,9 @@ electron_case() {
     [ -s "$out" ] || { cat "$out.log" >&2; die "app không ghi kết quả ($dir $*)"; }
   }
   run_app orig "$WORK/before.json"
+  local t0 t1; t0=$(date +%s%N)
   "$TRIM" orig -o app.yuip | tee trim.log
+  t1=$(date +%s%N); TRIM_MS=$(( (t1 - t0) / 1000000 ))
   grep -q '^stripped=true$' trim.log || die "Electron không có DRM mà Stripper báo stripped=false"
   mkdir out && "$TRIM" --unpack app.yuip -C out >/dev/null
   run_app out "$WORK/after.json"
@@ -84,8 +88,49 @@ electron_case() {
   local tree zipb pack unp
   tree=$(bytes orig); zipb=$(stat -c %s "$zip"); pack=$(stat -c %s app.yuip); unp=$(bytes out)
   local ratio; ratio=$(pct "$pack" "$tree")
-  note "Electron $ELECTRON_VERSION + app thử: cây gốc $((tree / 1048576)) MiB → gói .yuip $((pack / 1048576)) MiB (= $ratio % cây gốc, nhỏ hơn $((100 - ratio)) %); bung ra $((unp / 1048576)) MiB (gọt ngôn ngữ ngoài vi/en); zip chính thức $((zipb / 1048576)) MiB (gói = $(pct "$pack" "$zipb") % zip)"
+  note "Electron $ELECTRON_VERSION + app thử: cây gốc $((tree / 1048576)) MiB → gói .yuip $((pack / 1048576)) MiB (= $ratio % cây gốc, nhỏ hơn $((100 - ratio)) %); bung ra $((unp / 1048576)) MiB (gọt ngôn ngữ ngoài vi/en); zip chính thức $((zipb / 1048576)) MiB (gói = $(pct "$pack" "$zipb") % zip); gọt + nén mất $((TRIM_MS / 1000)).$(( (TRIM_MS % 1000) / 100 )) s trên runner CI"
   note "Chạy được sau gọt: $(cat after.json) · --lang=vi ⇒ $(grep -o '"locale":"[^"]*"' after-vi.json) · --lang=fr (đã gọt) ⇒ $(grep -o '"locale":"[^"]*"' after-fr.json)"
+  [ "$ratio" -le "$MAX_RATIO" ] || die "gói = $ratio % cây gốc, chưa đạt ≤ $MAX_RATIO %"
+}
+
+# Kiểm "chạy được" của VSCodium; in các mục đạt, mỗi mục một từ.
+vsc_checks() {
+  local dir=$1 tag=$2 ok=""
+  local u="$WORK/vsc-$tag-user" e="$WORK/vsc-$tag-ext"
+  rm -rf "$u" "$e"
+  if "$dir/bin/codium" --version > "$WORK/vsc-$tag-version.log" 2>&1 && grep -q "^${VSCODIUM_VERSION%.*}" "$WORK/vsc-$tag-version.log"; then ok="$ok cli-version"; fi
+  if "$dir/bin/codium" --list-extensions --user-data-dir "$u" --extensions-dir "$e" > "$WORK/vsc-$tag-ext.log" 2>&1; then ok="$ok cli-extensions"; fi
+  # Giao diện: chạy 25 s dưới Xvfb; đạt nếu cửa sổ renderer đã ghi log và tiến trình chưa chết.
+  rm -rf "$u"
+  ( timeout 25 xvfb-run -a "$dir/codium" --no-sandbox --disable-gpu --user-data-dir "$u" --extensions-dir "$e" \
+      --disable-workspace-trust --skip-welcome --new-window > "$WORK/vsc-$tag-gui.log" 2>&1; echo $? > "$WORK/vsc-$tag-gui.rc" ) || true
+  if [ "$(cat "$WORK/vsc-$tag-gui.rc")" = 124 ] && find "$u/logs" -path '*window*' -name '*.log' 2>/dev/null | grep -q .; then ok="$ok gui-window"; fi
+  echo "$ok"
+}
+
+vscodium_case() {
+  local tgz=VSCodium-linux-x64-$VSCODIUM_VERSION.tar.gz
+  local base=https://github.com/VSCodium/vscodium/releases/download/$VSCODIUM_VERSION
+  cd "$WORK"
+  [ -f "$tgz" ] || curl -fsSL --retry 3 -o "$tgz" "$base/$tgz"
+  curl -fsSL --retry 3 -o "$tgz.sha256" "$base/$tgz.sha256"
+  sha256sum -c "$tgz.sha256" >/dev/null || die "SHA-256 của $tgz không khớp tệp .sha256 của bản phát hành"
+  rm -rf vsc-orig vsc-out && mkdir vsc-orig && tar -xzf "$tgz" -C vsc-orig
+  local before after
+  before=$(vsc_checks vsc-orig before)
+  [ -n "$before" ] || die "VSCodium gốc không qua kiểm nào — môi trường CI thiếu gì đó, không đo được"
+  "$TRIM" vsc-orig -o vsc.yuip | tee trim-vsc.log
+  grep -q '^stripped=true$' trim-vsc.log || die "VSCodium không có DRM mà Stripper báo stripped=false"
+  mkdir vsc-out && "$TRIM" --unpack vsc.yuip -C vsc-out >/dev/null
+  after=$(vsc_checks vsc-out after)
+  local missing="" k
+  for k in $before; do case " $after " in *" $k "*) ;; *) missing="$missing $k" ;; esac; done
+  [ -z "$missing" ] || die "sau gọt hỏng:$missing (trước gọt đạt:$before)"
+  local tree pack unp tgzb ratio
+  tree=$(bytes vsc-orig); pack=$(stat -c %s vsc.yuip); unp=$(bytes vsc-out); tgzb=$(stat -c %s "$tgz")
+  ratio=$(pct "$pack" "$tree")
+  note "VSCodium $VSCODIUM_VERSION: cây gốc $((tree / 1048576)) MiB → gói .yuip $((pack / 1048576)) MiB (= $ratio % cây gốc, nhỏ hơn $((100 - ratio)) %); bung ra $((unp / 1048576)) MiB; tar.gz chính thức $((tgzb / 1048576)) MiB (gói = $(pct "$pack" "$tgzb") % tar.gz)"
+  note "VSCodium chạy được sau gọt — đạt:$after (trước gọt đạt:$before)"
   [ "$ratio" -le "$MAX_RATIO" ] || die "gói = $ratio % cây gốc, chưa đạt ≤ $MAX_RATIO %"
 }
 
@@ -116,6 +161,7 @@ drm_case() {
 MODE=${1:-}
 case "$MODE" in
   electron) electron_case ;;
+  vscodium) vscodium_case ;;
   drm) drm_case ;;
-  *) echo "dùng: $0 electron|drm" >&2; exit 2 ;;
+  *) echo "dùng: $0 electron|vscodium|drm" >&2; exit 2 ;;
 esac
