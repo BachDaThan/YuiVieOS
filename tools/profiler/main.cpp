@@ -3,21 +3,24 @@
 //   yui-profiler            tóm tắt tiếng Việt
 //   yui-profiler --json     JSON đầy đủ (dùng cho /var/lib/yui/profile.json)
 //   yui-profiler --write P  ghi JSON ra P
+//   yui-profiler --hw       kèm bảng thiết bị + hạng tương thích của yui-hw (P6.31)
 #include <cstdio>
 #include <cstring>
 #include <string>
 
+#include "yui/hw.hpp"
 #include "yui/profile.hpp"
 
 int main(int argc, char** argv) {
-  bool json_out = false;
+  bool json_out = false, with_hw = false;
   std::string write_path;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--json") json_out = true;
+    else if (a == "--hw") with_hw = true;
     else if (a == "--write" && i + 1 < argc) write_path = argv[++i];
     else if (a == "--help" || a == "-h") {
-      std::printf("yui-profiler [--json] [--write PATH]\n");
+      std::printf("yui-profiler [--json] [--write PATH] [--hw]\n");
       return 0;
     } else {
       std::fprintf(stderr, "yui-profiler: tham số không hợp lệ: %s\n", a.c_str());
@@ -25,7 +28,13 @@ int main(int argc, char** argv) {
     }
   }
   const auto p = yui::profile::probe();
-  const std::string doc = yui::profile::to_json(p).dump(true);
+  auto j = yui::profile::to_json(p);
+  yui::hw::Report hw;
+  if (with_hw) {
+    hw = yui::hw::scan("/", yui::hw::load_default_hwdb());
+    j.set("hw", yui::hw::to_json(hw));
+  }
+  const std::string doc = j.dump(true);
   if (!write_path.empty()) {
     FILE* f = std::fopen(write_path.c_str(), "wb");
     if (!f) {
@@ -52,5 +61,6 @@ int main(int argc, char** argv) {
   std::printf("  Tự chỉnh  : k=%d, cửa sổ=%d, luồng=%d (%s)\n", p.tune.k, p.tune.window, p.tune.threads,
               p.tune.profile.c_str());
   std::printf("  Ghi chú   : %s\n", p.tune.reason.c_str());
+  if (with_hw) std::printf("\n%s", yui::hw::summary_vi(hw).c_str());
   return 0;
 }

@@ -7,7 +7,8 @@
 use alloc::string::String;
 
 /// Framebuffer tuyến tính do firmware cấp (multiboot 1 flag bit 12, thẻ
-/// framebuffer type 8 của multiboot 2 — P2.16; GOP là P6.4).
+/// framebuffer type 8 của multiboot 2, nút `simple-framebuffer` của device
+/// tree — P2.16; GOP là P6.4).
 #[derive(Clone, Copy, Debug)]
 pub struct Framebuffer {
     pub addr: u64,
@@ -20,13 +21,17 @@ pub struct Framebuffer {
     pub red_shift: u8,
     pub green_shift: u8,
     pub blue_shift: u8,
-    /// Nguồn: "multiboot1" / "multiboot2" — in ra log để biết đường nào chạy.
+    /// Nguồn: "multiboot1" / "multiboot2" / "devicetree" — in ra log để biết
+    /// đường nào chạy.
     pub source: &'static str,
 }
 
 /// Kiểm một framebuffer firmware báo: chỉ nhận RGB trực tiếp 24/32 bit, kích
-/// thước hợp lý, và (x86_64) nằm trọn trong 4 GiB đầu mà bảng trang khởi động
-/// ánh xạ đồng nhất. Sai ở đâu thì in ra và trả None — không vẽ bừa.
+/// thước hợp lý, 32 bit thì địa chỉ + pitch chia hết cho 4 (aarch64 chạy với
+/// MMU tắt + strict-align: ghi u32 lệch là lỗi căn), và nằm trọn trong vùng
+/// nhân chạm được: x86_64 = 4 GiB đầu mà bảng trang khởi động ánh xạ đồng
+/// nhất; aarch64/riscv64 chưa bật MMU nên là địa chỉ vật lý < 2⁴⁸. Sai ở đâu
+/// thì in ra và trả None — không vẽ bừa.
 #[allow(clippy::too_many_arguments)]
 fn checked_fb(
     addr: u64,
@@ -39,25 +44,36 @@ fn checked_fb(
     source: &'static str,
 ) -> Option<Framebuffer> {
     if fb_type != 1 {
-        println!("    - framebuffer {}: type {} (khong phai RGB truc tiep), bo qua", source, fb_type);
+        fb_skip(source);
+        println!("type {} (khong phai RGB truc tiep), bo qua", fb_type);
         return None;
     }
     if addr == 0 || width == 0 || height == 0 || width > 16384 || height > 16384 {
-        println!("    - framebuffer {}: kich thuoc vo ly {}x{}, bo qua", source, width, height);
+        fb_skip(source);
+        println!("kich thuoc vo ly {}x{}, bo qua", width, height);
         return None;
     }
     if bpp != 24 && bpp != 32 {
-        println!("    - framebuffer {}: {} bit/pixel chua ho tro, bo qua", source, bpp);
+        fb_skip(source);
+        println!("{} bit/pixel chua ho tro, bo qua", bpp);
         return None;
     }
     let min_pitch = width as u64 * (bpp as u64 / 8);
     if (pitch as u64) < min_pitch {
-        println!("    - framebuffer {}: pitch {} < {}, bo qua", source, pitch, min_pitch);
+        fb_skip(source);
+        println!("pitch {} < {}, bo qua", pitch, min_pitch);
         return None;
     }
+    if bpp == 32 && (addr % 4 != 0 || pitch % 4 != 0) {
+        fb_skip(source);
+        println!("dia chi/pitch khong can 4 byte, bo qua");
+        return None;
+    }
+    let limit: u64 = if cfg!(target_arch = "x86_64") { 4u64 << 30 } else { 1u64 << 48 };
     let end = addr.checked_add(pitch as u64 * height as u64);
-    if end.map_or(true, |e| e > (4u64 << 30)) {
-        println!("    - framebuffer {}: nam ngoai 4 GiB anh xa dong nhat, bo qua", source);
+    if end.map_or(true, |e| e > limit) {
+        fb_skip(source);
+        println!("nam ngoai vung nhan cham duoc ({:#x}), bo qua", limit);
         return None;
     }
     let (r, g, b) = shifts;
@@ -78,6 +94,15 @@ fn checked_fb(
         blue_shift: b,
         source,
     })
+}
+
+/// Tiền tố "    - framebuffer <nguồn>: " in thẳng, KHÔNG qua `core::fmt`: trên
+/// aarch64, định dạng một biến `&str` bằng `{}` làm nhân dừng giữa dòng (xem
+/// console.rs — `print_str_no_newline`).
+fn fb_skip(source: &str) {
+    print!("    - framebuffer ");
+    crate::console::print_str_no_newline(source);
+    print!(": ");
 }
 
 /// Thông tin khởi động thô: hoặc multiboot info (x86_64) hoặc DTB (ARM/RISC-V).
@@ -466,4 +491,53 @@ fn parse_fdt(info: &mut BootInfo, addr: u64) {
         info.ram_source = "device tree /memory/reg";
     }
     info.harts = if harts > 0 { harts } else { 1 };
+
+    fdt_framebuffer(info, blob);
+}
+
+/// P2.16 (c): nút `simple-framebuffer`. Toàn bộ việc đọc nằm ở hàm an toàn
+/// `yui_cap::fdt::parse_fdt_framebuffer` (cùng vector với bản C++ + Python);
+/// ở đây chỉ in kết quả, kiểm như mọi framebuffer khác, và chặn trường hợp
+/// vùng khung hình đè lên ảnh nhân hoặc chính DTB (vẽ vào đó là tự phá mình).
+fn fdt_framebuffer(info: &mut BootInfo, blob: &[u8]) {
+    use yui_cap::fdt::{parse_fdt_framebuffer, FdtReason};
+    let r = parse_fdt_framebuffer(blob);
+    if r.reason != FdtReason::Ok {
+        print!("    - device tree: khong co framebuffer dung duoc (");
+        crate::console::print_str_no_newline(r.reason.code());
+        println!(", {} nut simple-framebuffer)", r.candidates);
+        return;
+    }
+    print!("    - device tree: simple-framebuffer {}x{} ", r.width, r.height);
+    crate::console::print_str_no_newline(r.format);
+    println!(" stride {} @ {:#x} (+{:#x})", r.stride, r.addr, r.size);
+    let fb_end = r.addr.saturating_add(r.size);
+    let dtb = (blob.as_ptr() as u64, blob.as_ptr() as u64 + blob.len() as u64);
+    let image = kernel_image();
+    for (what, (lo, hi)) in [("anh nhan", image), ("device tree", dtb)] {
+        if lo < hi && r.addr < hi && lo < fb_end {
+            print!("    - framebuffer devicetree: de len ");
+            crate::console::print_str_no_newline(what);
+            println!(" [{:#x}, {:#x}), bo qua", lo, hi);
+            return;
+        }
+    }
+    let shifts = (r.red_shift, r.green_shift, r.blue_shift);
+    info.framebuffer = checked_fb(r.addr, r.stride, r.width, r.height, r.bpp, 1, shifts, "devicetree");
+}
+
+/// Vùng ảnh nhân [__kernel_start, __kernel_end) theo linker script (gồm cả
+/// .bss, nơi đặt ngăn xếp và đống cấp phát).
+fn kernel_image() -> (u64, u64) {
+    extern "C" {
+        static __kernel_start: u8;
+        static __kernel_end: u8;
+    }
+    // An toàn: chỉ lấy ĐỊA CHỈ của hai ký hiệu linker, không đọc nội dung.
+    unsafe {
+        (
+            core::ptr::addr_of!(__kernel_start) as u64,
+            core::ptr::addr_of!(__kernel_end) as u64,
+        )
+    }
 }

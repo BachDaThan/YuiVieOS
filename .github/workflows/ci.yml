@@ -71,6 +71,19 @@ jobs:
           test -x "$RUNNER_TEMP/yui/bin/yui-ibus-engine"
           grep -q "$RUNNER_TEMP/yui/bin/yui-ibus-engine" \
             "$RUNNER_TEMP/yui/share/ibus/component/org.freedesktop.IBus.Yui.xml"
+          test -x "$RUNNER_TEMP/yui/bin/yui-hw"
+          test -f "$RUNNER_TEMP/yui/share/yui/hwdb.tsv"
+      - name: "yui-hw trên runner (máy ảo của GitHub — không phải máy thật, P6.31)"
+        run: |
+          cd "$RUNNER_TEMP"
+          YUI_HWDB="$RUNNER_TEMP/yui/share/yui/hwdb.tsv" "$RUNNER_TEMP/yui/bin/yui-hw" --write hw-1.json
+          YUI_HWDB="$RUNNER_TEMP/yui/share/yui/hwdb.tsv" "$RUNNER_TEMP/yui/bin/yui-hw" --json > hw-2.json
+          cmp hw-1.json hw-2.json
+          python3 -c "import json; d=json.load(open('hw-1.json')); assert d['schema']=='yui-hw/1' and not d['hwdb_errors']; print(len(d['devices']), 'thiết bị')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yui-hw-runner-${{ matrix.os }}
+          path: ${{ runner.temp }}/hw-1.json
       - name: Link libyui from C outside the tree
         run: |
           mkdir -p /tmp/abi && cd /tmp/abi
@@ -261,6 +274,28 @@ jobs:
           set -o pipefail
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq grub-common grub-pc-bin xorriso mtools
           ./scripts/qemu-splash.sh --strict 2>&1 | tee /tmp/qemu-splash.log
+      - name: "Splash qua framebuffer device tree (P2.16 đường c: simple-framebuffer, pmemsave)"
+        # DTB thật của máy ảo + một nút simple-framebuffer (dtc) trỏ vào RAM
+        # trống; nhân đọc nút, vẽ; monitor `pmemsave` chép vùng nhớ và
+        # check_splash_ppm.py --raw kiểm từng điểm ảnh. Có ca 4K (k = 2), ca
+        # thứ tự kênh BGR, ca 24 bit, ca disabled và ca đè ảnh nhân.
+        if: matrix.arch != 'x86_64'
+        timeout-minutes: 15
+        run: |
+          set -o pipefail
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq device-tree-compiler
+          python3 scripts/gen_fdt_vectors.py --check --dtc
+          ./scripts/qemu-splash-dt.sh ${{ matrix.arch }} --strict 2>&1 | tee /tmp/qemu-splash-dt.log
+      - name: Ảnh màn hình chào device tree (artifact)
+        if: always() && matrix.arch != 'x86_64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: splash-dt-${{ matrix.arch }}
+          path: |
+            build/splash-dt/*.ppm
+            build/splash-dt/*.log
+            build/splash-dt/*.dts
+          if-no-files-found: warn
       - name: Ảnh chụp màn hình chào (artifact)
         if: always() && matrix.arch == 'x86_64'
         uses: actions/upload-artifact@v4
@@ -276,7 +311,7 @@ jobs:
           # Hai dòng annotation: (1) log serial của QEMU, (2) đầu ra của
           # qemu-smoke.sh (chứa thông báo "BỎ QUA"/lỗi cục bộ). Không bao giờ
           # để body rỗng — annotation rỗng bị GitHub vứt đi.
-          for f in /tmp/qemu-serial.log /tmp/qemu.log /tmp/qemu-splash.log; do
+          for f in /tmp/qemu-serial.log /tmp/qemu.log /tmp/qemu-splash.log /tmp/qemu-splash-dt.log; do
             if [ -f "$f" ]; then
               body="$(cat -v "$f" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/%/%25/g; s/\r//g' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-1200)"
             else
@@ -285,6 +320,14 @@ jobs:
             [ -n "$body" ] || body="<log rong: $f>"
             echo "::error title=$(basename "$f")-${{ matrix.arch }}::$body"
           done
+          # Log device tree: nhiều ca ⇒ bỏ dòng tiến trình, giữ dòng ✓/✗/|, chia
+          # nhiều annotation (giữ UTF-8, không cat -v để không phình gấp ba).
+          if [ -f /tmp/qemu-splash-dt.log ]; then
+            grep -v '^── ' /tmp/qemu-splash-dt.log | sed 's/\x1b\[[0-9;]*m//g; s/%/%25/g; s/\r//g' \
+              | tr '\n' ' ' | sed 's/  */ /g' | fold -w 900 | head -6 | nl -ba | while read -r n chunk; do
+                echo "::error title=splash-dt-${{ matrix.arch }}-$n::$chunk"
+              done
+          fi
 
   # ------------------------------------------------------------- tài liệu ----
   docs:

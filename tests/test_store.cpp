@@ -780,7 +780,9 @@ YUI_TEST(store, daemon_rpc_and_shell_commands) {
   auto r = d.handle("store.search", json::Value(json::Object{}), err);
   CHECK_EQ(r["code"].as_string(), std::string("no_catalog"));
 
-  store::Store seed_store(store::Options{state + "/store"}, fx.keys);
+  store::Options seed_opts;
+  seed_opts.root = state + "/store";
+  store::Store seed_store(seed_opts, fx.keys);
   CHECK(seed_store.save_catalog(store::catalog_to_json(cat), store::sign_catalog(cat, kCatalogSeed)));
 
   json::Value q(json::Object{});

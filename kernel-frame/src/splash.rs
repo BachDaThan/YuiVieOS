@@ -13,7 +13,8 @@
 //! Toàn bộ `unsafe` của tệp này nằm ở hàm `put`: nó ghi vào vùng nhớ do
 //! firmware cấp, đúng loại việc mà khung phần cứng phải làm.
 
-use alloc::format;
+use alloc::string::String;
+use core::fmt::Write;
 
 use yui_cap::display;
 
@@ -75,8 +76,14 @@ pub fn render(fb: &Framebuffer, info: &BootInfo) -> Option<Drawn> {
     surface.centered("HE DIEU HANH VIET NAM", sub_scale, h / 3 + 7 * title_scale + 6 * k, SOFT);
 
     let c = profiler::classify(info.ram_mb, info.harts);
-    let line1 = format!("{}  {} HARTS  {} MB", c.tier, info.harts, info.ram_mb);
-    let line2 = format!("K={}  W={}  {}", c.k, c.window, info.simd);
+    // Chuỗi ghép bằng push_str, chỉ số nguyên đi qua `core::fmt`: định dạng
+    // biến `&str` bằng `{}` treo nhân aarch64 (xem console.rs).
+    let mut line1 = String::new();
+    line1.push_str(c.tier);
+    let _ = write!(line1, "  {} HARTS  {} MB", info.harts, info.ram_mb);
+    let mut line2 = String::new();
+    let _ = write!(line2, "K={}  W={}  ", c.k, c.window);
+    line2.push_str(info.simd);
     let panel_x = w / 20;
     let panel_w = w - 2 * panel_x;
     let inner = panel_w - 22 * k;

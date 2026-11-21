@@ -1,0 +1,25 @@
+# docs/hwdb.tsv — bảng thiết bị của yui-hw (P6.31). Mỗi dòng 6 cột cách nhau bằng TAB:
+#   bus  vvvv:dddd  hạng  nguồn  tên  ghi-chú/bằng-chứng
+# Luật (yui::hw::parse_hwdb kiểm, test_hw kiểm lại tệp này):
+#   - nguồn: real (đã chạy trên máy thật) | qemu | chưa-đo
+#   - chưa-đo ⇒ hạng phải là "-" (thiết bị chưa đo không được điền hạng)
+#   - real/qemu ⇒ hạng A–D và cột ghi chú phải nêu bằng chứng (máy, lệnh, kết quả)
+# Bảng khởi tạo chỉ có thiết bị của máy bạn có (HP Compaq 8000 Elite — mã lấy từ probe
+# linux-hardware.org của máy cùng mẫu, nên vẫn là chưa-đo) + một thiết bị QEMU đã đo ở CI.
+# Đóng góp: chạy `yui-hw --write bao-cao.json` rồi TỰ gửi PR sửa tệp này; yui-hw không gửi gì đi đâu.
+# EHCI/UHCI của ICH10 chưa có mã xác nhận ⇒ chưa ghi.
+pci	1234:1111	C	qemu	QEMU stdvga (Bochs VBE) — máy ảo, không phải máy thật	Splash GRUB/VBE 4 độ phân giải qua scripts/qemu-splash.sh (-vga std), CI 44767329534 xanh (P2.16); chỉ khung hình thường
+pci	8086:2e12	-	chưa-đo	Intel 4 Series IGD (GMA 4500) — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật
+pci	8086:2e13	-	chưa-đo	Intel 4 Series IGD, chức năng phụ — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật
+pci	8086:3a6e	-	chưa-đo	Intel ICH10 HD Audio (codec Realtek ALC261 theo tài liệu HP) — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật
+pci	8086:10de	-	chưa-đo	Intel 82567LM-3 Gigabit (họ e1000e) — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật
+pci	8086:3a00	-	chưa-đo	Intel ICH10 SATA 4 cổng, chế độ IDE — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật
+pci	8086:3a06	-	chưa-đo	Intel ICH10 SATA 2 cổng, chế độ IDE — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật
+pci	8086:3a02	-	chưa-đo	Intel ICH10 SATA AHCI (khi BIOS đặt AHCI) — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật
+pci	8086:2e16	-	chưa-đo	Intel 4 Series PT IDER (AMT) — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật
+pci	8086:2e14	-	chưa-đo	Intel 4 Series HECI (ME) — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật
+pci	8086:2e10	-	chưa-đo	Intel 4 Series DRAM controller (Q45) — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật
+pci	8086:2e11	-	chưa-đo	Intel 4 Series PCIe root port — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật
+pci	8086:3a14	-	chưa-đo	Intel ICH10DO LPC — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật
+pci	8086:3a70	-	chưa-đo	Intel ICH10 PCIe port 1 — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật
+pci	8086:244e	-	chưa-đo	Intel 82801 PCI bridge — HP Compaq 8000 Elite	tham khảo: probe linux-hardware.org của máy cùng mẫu (không phải máy của bạn) — xác nhận bằng yui-hw trên máy thật

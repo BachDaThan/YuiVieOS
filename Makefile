@@ -36,6 +36,7 @@ LIB_SRC := \
 	kernel-services/crypto.cpp \
 	kernel-services/codec.cpp \
 	kernel-services/profile.cpp \
+	kernel-services/hw.cpp \
 	kernel-services/telemetry.cpp \
 	kernel-services/ed25519.cpp \
 	kernel-services/bundle.cpp \
@@ -71,7 +72,7 @@ HEADERS := $(wildcard include/yui/*.hpp include/yui/*.h) \
 
 TESTS := test_crypto test_codec_json test_core test_sandbox test_ime test_daemon test_tools \
          test_telemetry test_fb test_ed25519 test_power test_fsstore test_linuxabi \
-         test_redteam test_store test_trash test_posix test_archive test_display
+         test_redteam test_store test_trash test_posix test_archive test_display test_hw
 
 # `kernel` is declared before `all`, so pin the default goal explicitly.
 .DEFAULT_GOAL := all
@@ -105,7 +106,7 @@ qemu:
 
 all: $(BIN)/yuid $(BIN)/libyui.a $(BIN)/libyui.so.1 $(BIN)/libyui.so $(BUILD)/yui.pc \
      $(BIN)/yui-profiler $(BIN)/yui-trim $(BIN)/yui-shell $(BIN)/yui-splash $(BIN)/yui-update $(BIN)/yui-store \
-     $(BIN)/yui-sandbox-exec
+     $(BIN)/yui-sandbox-exec $(BIN)/yui-hw
 
 $(OBJ)/%.o: %.cpp $(HEADERS)
 	@mkdir -p $(dir $@)
@@ -136,6 +137,10 @@ $(BIN)/yuid: $(OBJ)/ai-bridge-yuid/daemon/main.o $(BIN)/libyui.a
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
 $(BIN)/yui-profiler: $(OBJ)/tools/profiler/main.o $(BIN)/libyui.a
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
+
+$(BIN)/yui-hw: $(OBJ)/tools/hw/main.o $(BIN)/libyui.a
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
@@ -187,6 +192,8 @@ check: all test verify
 	@./$(BIN)/yuid --profile | head -5
 	@echo "── smoke: yui-profiler"
 	@./$(BIN)/yui-profiler | head -4
+	@echo "── smoke: yui-hw (quét chỉ-đọc, JSON ổn định giữa hai lần quét)"
+	@./$(BIN)/yui-hw --json > /tmp/smoke-hw-1.json && ./$(BIN)/yui-hw --json > /tmp/smoke-hw-2.json && cmp /tmp/smoke-hw-1.json /tmp/smoke-hw-2.json
 	@echo "── smoke: shell script"
 	@printf 'thôngtin\nthoát\n' | ./$(BIN)/yui-shell > /dev/null
 	@echo "── smoke: thùng rác (xoá → khôi phục, băm khớp)"
@@ -223,6 +230,8 @@ check: all test verify
 install: all
 	install -Dm755 $(BIN)/yuid $(DESTDIR)$(PREFIX)/bin/yuid
 	install -Dm755 $(BIN)/yui-profiler $(DESTDIR)$(PREFIX)/bin/yui-profiler
+	install -Dm755 $(BIN)/yui-hw $(DESTDIR)$(PREFIX)/bin/yui-hw
+	install -Dm644 docs/hwdb.tsv $(DESTDIR)$(PREFIX)/share/yui/hwdb.tsv
 	install -Dm755 $(BIN)/yui-trim $(DESTDIR)$(PREFIX)/bin/yui-trim
 	install -Dm755 $(BIN)/yui-shell $(DESTDIR)$(PREFIX)/bin/yui-shell
 	install -Dm755 $(BIN)/yui-splash $(DESTDIR)$(PREFIX)/bin/yui-splash

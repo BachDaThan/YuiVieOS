@@ -78,6 +78,8 @@ REQUIRED_FILES = [
     "tests/test_ime.cpp",
     "include/yui/store.hpp", "pkg-stripper/store.cpp", "tools/store/main.cpp",
     "tests/test_store.cpp",
+    "include/yui/hw.hpp", "kernel-services/hw.cpp", "tools/hw/main.cpp",
+    "tests/test_hw.cpp", "docs/hwdb.tsv",
     "include/yui/trash.hpp", "userspace-vi/trash.cpp", "tests/test_trash.cpp",
     "include/yui/posix.hpp", "userspace-vi/posix.cpp", "tests/test_posix.cpp",
     "tools/sandbox-exec/main.cpp",
@@ -86,6 +88,8 @@ REQUIRED_FILES = [
     "scripts/check_boundaries.py", "scripts/test_check_boundaries.py",
     "include/yui/display.hpp", "userspace-vi/display.cpp", "tests/test_display.cpp",
     "kernel-cap/src/display.rs", "tests/data/display_vectors.txt", "scripts/gen_display_vectors.py",
+    "kernel-cap/src/fdt.rs", "tests/data/fdt_fb_vectors.txt", "scripts/gen_fdt_vectors.py",
+    "scripts/qemu-splash-dt.sh",
     "scripts/qemu-splash.sh", "scripts/check_splash_ppm.py",
 ]
 STALE = ["core", "crates", "sandbox", "ui"]  # old layout must not come back
@@ -337,6 +341,7 @@ MIRRORED_ENUMS = [
     ("include/yui/sandbox.hpp", "kernel-cap/src/input.rs", "InputSourceKind"),
     ("include/yui/sandbox.hpp", "kernel-cap/src/input.rs", "InputPrivilege"),
     ("include/yui/display.hpp", "kernel-cap/src/display.rs", "PickReason"),
+    ("include/yui/display.hpp", "kernel-cap/src/fdt.rs", "FdtReason"),
 ]
 
 
@@ -623,13 +628,14 @@ def check_secrets() -> None:
 
 def check_display_vectors() -> None:
     """P2.16: tệp vector dùng chung C++/Rust phải khớp bản tham chiếu Python."""
-    header("vector chế độ hiển thị (P2.16)")
-    gen = ROOT / "scripts" / "gen_display_vectors.py"
-    res = subprocess.run([sys.executable, str(gen), "--check"], capture_output=True, text=True)
-    if res.returncode == 0:
-        ok(res.stdout.strip() or "display_vectors.txt khớp")
-    else:
-        bad((res.stderr or res.stdout).strip() or "display_vectors.txt lỗi thời")
+    header("vector chế độ hiển thị + framebuffer device tree (P2.16)")
+    for name in ("gen_display_vectors.py", "gen_fdt_vectors.py"):
+        gen = ROOT / "scripts" / name
+        res = subprocess.run([sys.executable, str(gen), "--check"], capture_output=True, text=True)
+        if res.returncode == 0:
+            ok(res.stdout.strip() or f"{name}: vector khớp")
+        else:
+            bad((res.stderr or res.stdout).strip() or f"{name}: tệp vector lỗi thời")
 
 
 def check_boundaries() -> None:

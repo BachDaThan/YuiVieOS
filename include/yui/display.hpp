@@ -133,6 +133,41 @@ struct Plan {
 Plan plan(const std::vector<Mode>& modes, const uint8_t* edid, size_t edid_len, const Mode* current,
           uint8_t user_override = 0, uint32_t dpi_hint = 0);
 
+// ---------------------------------------------------------------------------
+// Đường (c): framebuffer do firmware mô tả trong Device Tree (nút
+// `simple-framebuffer`, binding Linux display/simple-framebuffer.yaml) — cách
+// board ARM/RISC-V (U-Boot…) trao màn hình cho nhân khi chưa có driver GPU.
+//
+// Bộ đọc FDT tự viết, KHÔNG tin đầu vào: mọi offset/độ dài đều bị chặn; DTB
+// hỏng ở bất kỳ đâu ⇒ BadBlob và không dùng nút nào. Bản Rust
+// `kernel-cap/src/fdt.rs` (nhân gọi đúng hàm đó) làm cùng quy tắc; cả hai chạy
+// bộ vector `tests/data/fdt_fb_vectors.txt` sinh bởi scripts/gen_fdt_vectors.py.
+// Quy tắc chi tiết: xem đầu scripts/gen_fdt_vectors.py.
+enum class FdtReason {
+  Ok = 0,           // có framebuffer dùng được
+  NoNode = 1,       // không có nút compatible = "simple-framebuffer"
+  Disabled = 2,     // status khác "okay"/"ok"
+  BadFormat = 3,    // định dạng điểm ảnh vắng hoặc chưa hỗ trợ (vd r5g6b5)
+  BadGeometry = 4,  // width/height/stride vắng, sai cỡ, vô lý
+  BadReg = 5,       // reg sai theo #address-cells/#size-cells, địa chỉ 0, quá nhỏ, tràn
+  BadBlob = 6,      // DTB hỏng (header, offset, token, chuỗi, độ sâu…)
+};
+const char* fdt_reason_code(FdtReason r);  // "ok", "no_node", "disabled", …
+
+struct FdtFramebuffer {
+  FdtReason reason = FdtReason::NoNode;
+  uint32_t candidates = 0;  // số nút simple-framebuffer đã xét (0 nếu BadBlob)
+  uint64_t addr = 0, size = 0;
+  uint32_t width = 0, height = 0, stride = 0;
+  uint8_t bpp = 0;
+  uint8_t red_shift = 0, green_shift = 0, blue_shift = 0;
+  std::string format;  // "a8r8g8b8", "x8b8g8r8", "r8g8b8", …
+};
+
+/// Tìm framebuffer đầu tiên dùng được trong một DTB (FDT v17). `n` là số byte
+/// thật có trong bộ đệm; header nói lớn hơn ⇒ BadBlob.
+FdtFramebuffer parse_fdt_framebuffer(const uint8_t* data, size_t n);
+
 }  // namespace yui::display
 
 #endif  // YUI_DISPLAY_HPP

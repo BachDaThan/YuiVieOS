@@ -23,6 +23,7 @@ pub mod keyring;
 pub mod bundle;
 pub mod input;
 pub mod display;
+pub mod fdt;
 
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};

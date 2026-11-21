@@ -40,8 +40,8 @@ Yêu cầu: `g++` ≥ 10 (C++17), `make`, `python3`, POSIX. **Không** cần m�
 cần thư viện ngoài, không cần Rust.
 
 ```bash
-make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-trim,yui-shell,yui-splash,yui-update,yui-store,yui-sandbox-exec}
-make test         # 14702 kiểm thử (14636 C++17 + 66 C11 ABI)
+make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-hw,yui-trim,yui-shell,yui-splash,yui-update,yui-store,yui-sandbox-exec}
+make test         # 15593 kiểm thử (15527 C++17 + 66 C11 ABI)
 make check        # test + smoke run + kiểm tra tĩnh (scripts/verify.sh, gồm máy kiểm ranh giới P7.10)
 ```
 
@@ -105,7 +105,7 @@ pkg-stripper/        Tầng 5: Smart App Stripper (apppack)
 userspace-vi/        Tầng 5: text · ime · ui · shell · ui/app (Flutter)
 include/yui/         API công khai + header C `yui.h`
 tests/               9 bộ test C++17 + 1 bộ test C11
-tools/               yui-profiler · yui-trim · yui-shell · yui-splash
+tools/               yui-profiler · yui-hw · yui-trim · yui-shell · yui-splash
 arch/                linkerscript per arch: x86_64 · arm64 · riscv64
 scripts/             verify.sh · verify.py · build-kernel.sh · qemu-smoke.sh
 .github/workflows/   CI: cpp · rust · docs · cross-arch · kernel · qemu
@@ -124,10 +124,11 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | Tầng | Thành phần | Trạng thái | Bằng chứng |
 |---|---|---|---|
 | 0 | Hardware Auto-Profiler: CPU/RAM/GPU/pin/nhiệt → `may-yeu`/`can-bang`/`may-manh` + k/W | ✅ chạy | `kernel-services/profile.cpp`, `tools/profiler` |
+| 0 | Trợ lý phần cứng `yui-hw` (P6.31): quét PCI/USB/IOMMU/VT-x/EPT/firmware/ổ đĩa ⇒ hạng A/B/C/D **dự kiến** theo quy tắc + hạng **đã đo** chỉ từ bảng `docs/hwdb.tsv` (`real`/`qemu` có bằng chứng); báo cáo chỉ ghi ra tệp cục bộ | 🟡 kiểm thử trên cây sysfs giả + 31 mô tả tổng hợp; **chưa chạy trên máy thật nào** — không có con số "% phần cứng được hỗ trợ" | `kernel-services/hw.cpp`, `tools/hw`, `tests/test_hw.cpp` (290 check) |
 | 0 | Luồng khởi động 3 kiến trúc + linker script | ✅ build 3/3, boot 2/3 | `arch/{x86_64,arm64,riscv64}/linker.ld` |
 | 0 | Khung nhân bare-metal: serial, bộ cấp phát, `YuiBootInfo`, profiler, bảng năng lực trên ring 0 | ✅ boot thật (aarch64, riscv64) / 🔄 x86_64 đã sửa boot path (multiboot2 + ELF32 objcopy), đợi CI xác nhận | `kernel-frame/`; CI `qemu` bắt buộc 3 kiến trúc |
 | 0 | Màn hình chào trên framebuffer tuyến tính (font 5×7) + **chữ Việt có dấu** | ✅ kiểm thử | `userspace-vi/fb.cpp` (1184 check, `fb_viet.*` 29 check), `tools/splash`, [`docs/splash.png`](docs/splash.png) |
-| 0 | Chọn chế độ hiển thị gốc (EDID) + hệ số phóng nguyên HiDPI 1–4 theo DPI thật + viền đen thay vì kéo giãn; thẻ framebuffer Multiboot2 trong nhân (P2.16) | 🟡 logic C++ + Rust có test; splash 4 chế độ qua GRUB/QEMU xanh trên CI; GOP chờ P6.4 | `userspace-vi/display.cpp`, `kernel-cap/src/display.rs`, `tests/test_display.cpp` (1512 check, 34 bảng EDID), `scripts/qemu-splash.sh` |
+| 0 | Chọn chế độ hiển thị gốc (EDID) + hệ số phóng nguyên HiDPI 1–4 theo DPI thật + viền đen thay vì kéo giãn; thẻ framebuffer Multiboot2 + nút simple-framebuffer Device Tree trong nhân (P2.16) | 🟡 logic C++ + Rust có test; splash qua GRUB/VBE (x86_64) và Device Tree (aarch64 + riscv64, có 4K) xanh trên CI; GOP chờ P6.4 | `userspace-vi/display.cpp`, `kernel-cap/src/display.rs`, `kernel-cap/src/fdt.rs`, `tests/test_display.cpp` (2113 check, 34 bảng EDID + 48 DTB), `scripts/qemu-splash.sh`, `scripts/qemu-splash-dt.sh` |
 | 1 | Bảng năng lực: 16 quyền (kể cả `compute.heavy`), dẫn xuất chỉ thu hẹp, thu hồi bắc cầu | ✅ Rust | `kernel-cap/src/lib.rs` |
 | 1 | Thẻ năng lực ký HMAC-SHA-256, xác minh hằng thời gian, lỗi có kiểu | ✅ hai phía | `kernel-cap/src/lib.rs`, `vmm-sandbox/sandbox.cpp` |
 | 1 | SHA-256 / HMAC / SHAKE-256 / scrypt tự viết, có vector RFC | ✅ | `kernel-services/crypto.cpp`, `tests/test_crypto.cpp` |
@@ -136,7 +137,7 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 2 | Bộ lọc egress theo năng lực (mặc định chặn, allowlist policies/*.json) | ✅ kiểm thử | `vmm-sandbox/sandbox.cpp::EgressFilter`, `tests/test_redteam.cpp` |
 | 2 | Lập lịch chuyển đổi nóng LAVD (P/E-core, tín dụng đánh thức, công bằng) | ✅ Rust | `kernel-services/yui-sched` (9 test) |
 | 2 | ZRAM: codec YUI-LZ + kho trang nén, fallback verbatim | ✅ Rust + C++ | `kernel-services/yui-zram` (8 test), `kernel-services/codec.cpp` |
-| 2 | `yui-frame` (khung unsafe duy nhất) | ✅ boot được (2 kiến trúc) | `kernel-frame/` — 35 khối `unsafe` trong 7 tệp được `verify.sh` kiểm toán |
+| 2 | `yui-frame` (khung unsafe duy nhất) | ✅ boot được (2 kiến trúc) | `kernel-frame/` — 36 khối `unsafe` trong 7 tệp được `verify.sh` kiểm toán |
 | 2 | Tickless, DVFS, FS bất biến, Linux ABI | 🟡 chính sách + fsstore/ABI model có test; kernel integration và QEMU/hardware QA còn thiếu | P2.5, P2.7–P2.9 |
 | 3 | Hộp cát 3 bậc + audit + 4 policy mẫu có test | ✅ | `vmm-sandbox/` (129 check) |
 | 3 | Manifest micro-VM (JSON Schema) | 🟡 đặc tả | `vmm-sandbox/vmm/` |
