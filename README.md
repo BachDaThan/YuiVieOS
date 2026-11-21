@@ -137,7 +137,7 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 2 | Bộ lọc egress theo năng lực (mặc định chặn, allowlist policies/*.json) | ✅ kiểm thử | `vmm-sandbox/sandbox.cpp::EgressFilter`, `tests/test_redteam.cpp` |
 | 2 | Lập lịch chuyển đổi nóng LAVD (P/E-core, tín dụng đánh thức, công bằng) | ✅ Rust | `kernel-services/yui-sched` (`cargo test` trên CI) |
 | 2 | ZRAM: codec YUI-LZ + kho trang nén, fallback verbatim | ✅ Rust + C++ | `kernel-services/yui-zram` (`cargo test` trên CI), `kernel-services/codec.cpp` |
-| 2 | `yui-frame` (khung unsafe duy nhất) | ✅ boot được (2 kiến trúc) | `kernel-frame/` — 29 khối `unsafe {}` + 5 `unsafe fn` + 2 `unsafe impl`, nằm trong 7 tệp được `verify.sh` kiểm toán |
+| 2 | `yui-frame` (khung unsafe duy nhất) | ✅ boot được (2 kiến trúc) | `kernel-frame/` — 30 khối `unsafe {}` + 5 `unsafe fn` + 2 `unsafe impl`, nằm trong 8 tệp được `verify.sh` kiểm toán |
 | 2 | Tickless, DVFS, FS bất biến, Linux ABI | 🟡 chính sách + fsstore/ABI model có test; kernel integration và QEMU/hardware QA còn thiếu | P2.5, P2.7–P2.9 |
 | 3 | Hộp cát 3 bậc + audit + 4 policy mẫu có test | ✅ | `vmm-sandbox/`, `tests/test_sandbox.cpp` (340 check) |
 | 3 | Manifest micro-VM (JSON Schema) | 🟡 đặc tả | `vmm-sandbox/vmm/` |
@@ -156,7 +156,7 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 5 | Thùng rác (khôi phục kiểm băm, thùng đầy thì cảnh báo, không tự xoá) + dọn rác chỉ trong danh sách có tên, xoá vĩnh viễn cần xác nhận tin cậy | ✅ chạy trên Linux host; chưa nối snapshot nhân | `userspace-vi/trash.cpp`, `tests/test_trash.cpp` (203 check), P4.17 |
 | 5 | Kho Ứng Dụng — lõi: danh mục ký Ed25519, tải https từ nguồn chính thức, kiểm sha256, gọt cục bộ, hộp cát, biểu tượng; CLI `yui-store` + RPC `store.*` | ✅ chạy, chưa có danh mục thật, chỉ gói `.tar` | `pkg-stripper/store.cpp`, `tests/test_store.cpp` (215 check), P4.15 |
 | 5 | Kế hoạch giao diện thích ứng (Framebuffer ⇄ Vulkan/DRM) | ✅ logic + test | `userspace-vi/ui.cpp` |
-| 5 | IBus Telex/VNI engine | ✅ Người dùng xác minh Ubuntu 24.04: build sạch, `make check` 2831, D-Bus avg 7.16 ms; Firefox/LibreOffice để Desktop QA follow-up | `userspace-vi/ibus/`, P1.4 | <!-- số-đo: người dùng đo trên Ubuntu 24.04, commit a786a44, 2026-11-16 (PLAN P1.4, §12) -->
+| 5 | IBus Telex/VNI engine | ✅ Người dùng xác minh Ubuntu 24.04: build sạch, `make check` 2831, D-Bus avg 7.16 ms; Firefox/LibreOffice để Desktop QA follow-up | `userspace-vi/ibus/`, P1.4 <!-- số-đo: người dùng đo trên Ubuntu 24.04, commit a786a44, 2026-11-16 (PLAN P1.4, §12) --> |
 | 5 | Compositor thật (DRM/Vulkan), App Yui build được | ❌ chưa có (đã có bộ vẽ pixel + màn hình chào) | P2.6, P4.1, P4.5 |
 
 ### Phạm vi: những gì dự án không làm và không hứa

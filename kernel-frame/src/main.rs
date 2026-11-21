@@ -32,6 +32,7 @@ pub mod allocator;
 pub mod arch;
 pub mod boot;
 pub mod cap;
+pub mod frombytes;
 pub mod profiler;
 pub mod splash;
 
@@ -97,6 +98,7 @@ pub fn kmain(raw_boot: boot::RawBoot) -> ! {
     profiler::report(&info);
     println!("  [3] khoi tao bang nang luc");
     cap::self_test();
+    frombytes::self_test();
     println!("  [4] man hinh chao");
 
     if let Some(fb) = info.framebuffer {

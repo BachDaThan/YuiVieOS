@@ -44,7 +44,8 @@ CANON_RE = re.compile(r"(\d+) khối `unsafe \{\}` \+ (\d+) `unsafe fn` \+ (\d+)
 # Câu kiểu cũ trên dòng có nhắc `unsafe`: "36 khối unsafe", "Tổng: 29 khối" …
 LOOSE_RE = re.compile(r"(?<![\w.])(\d+) khối\b")
 # Tệp được kiểm luật 1: toàn bộ các tệp này + dòng P2.1 của PLAN.
-UNSAFE_DOCS = ("README.md", "docs/BUILD.md", "docs/ARCHITECTURE.md", "docs/SECURITY.md")
+UNSAFE_DOCS = ("README.md", "docs/BUILD.md", "docs/ARCHITECTURE.md", "docs/SECURITY.md",
+               "kernel-frame/README.md")
 PLAN_UNSAFE_ROWS = ("| P2.1 |",)
 
 PASS_RE = re.compile(r"✓ ([^:]+): (\d+) checks passed, 0 failed")
