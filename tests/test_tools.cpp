@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -195,6 +196,185 @@ YUI_TEST(apppack, strips_elf_debug_sections_only) {
   std::vector<uint8_t> junk(128, 0x55);
   CHECK_EQ(apppack::strip_elf_debug(junk), uint64_t(0));
   CHECK_EQ(junk[0], uint8_t(0x55));
+}
+
+namespace {
+
+// Minimal ELF64 LE with a section-header table: NULL, .shstrtab, `extra`
+// (PROGBITS at 700..800 filled with 0xAB).  No program headers.
+std::vector<uint8_t> tiny_elf(const std::string& extra) {
+  std::vector<uint8_t> elf(2048, 0);
+  elf[0] = 0x7f;
+  elf[1] = 'E';
+  elf[2] = 'L';
+  elf[3] = 'F';
+  elf[4] = 2;
+  elf[5] = 1;
+  const uint64_t shoff = 1024;
+  put64(elf, 0x28, shoff);
+  put16(elf, 0x3A, 64);
+  put16(elf, 0x3C, 3);
+  put16(elf, 0x3E, 1);
+  put16(elf, 0x36, 56);
+  std::string names = std::string("\0.shstrtab\0", 11) + extra + std::string("\0", 1);
+  std::memcpy(elf.data() + 512, names.data(), names.size());
+  put32(elf, size_t(shoff) + 64, 1);
+  put32(elf, size_t(shoff) + 64 + 0x04, 3);
+  put64(elf, size_t(shoff) + 64 + 0x18, 512);
+  put64(elf, size_t(shoff) + 64 + 0x20, names.size());
+  put32(elf, size_t(shoff) + 128, 11);
+  put32(elf, size_t(shoff) + 128 + 0x04, 1);
+  put64(elf, size_t(shoff) + 128 + 0x18, 700);
+  put64(elf, size_t(shoff) + 128 + 0x20, 100);
+  for (size_t i = 700; i < 800; ++i) elf[i] = 0xAB;
+  return elf;
+}
+
+// Minimal PE/COFF: MZ, e_lfanew = 0x80, "PE\0\0", N sections, no optional header.
+std::vector<uint8_t> tiny_pe(const std::vector<std::string>& sections) {
+  std::vector<uint8_t> pe(1024, 0);
+  pe[0] = 'M';
+  pe[1] = 'Z';
+  put32(pe, 0x3C, 0x80);
+  pe[0x80] = 'P';
+  pe[0x81] = 'E';
+  put16(pe, 0x80 + 6, uint16_t(sections.size()));
+  put16(pe, 0x80 + 20, 0);
+  for (size_t i = 0; i < sections.size(); ++i)
+    std::memcpy(pe.data() + 0x80 + 24 + i * 40, sections[i].data(), std::min<size_t>(8, sections[i].size()));
+  return pe;
+}
+
+void write_bytes(const std::string& path, const std::vector<uint8_t>& b) {
+  write_file(path, std::string(b.begin(), b.end()));
+}
+
+}  // namespace
+
+YUI_TEST(apppack, section_names_elf_and_pe) {
+  const auto elf_names = apppack::binary_section_names(tiny_elf(".vmp0"));
+  CHECK_EQ(elf_names.size(), size_t(2));
+  CHECK(elf_names.size() == 2 && elf_names[1] == ".vmp0");
+  const auto pe_names = apppack::binary_section_names(tiny_pe({".text", ".bind", ".rdata"}));
+  CHECK_EQ(pe_names.size(), size_t(3));
+  CHECK(pe_names.size() == 3 && pe_names[1] == ".bind");
+  // Truncated / lying headers yield nothing instead of reading out of bounds.
+  auto bad_pe = tiny_pe({".text"});
+  put16(bad_pe, 0x80 + 6, 60000);
+  CHECK(apppack::binary_section_names(bad_pe).size() < 60000);
+  auto bad_elf = tiny_elf(".x");
+  put64(bad_elf, 0x28, ~uint64_t(0) - 8);
+  CHECK(apppack::binary_section_names(bad_elf).empty());
+  CHECK(apppack::binary_section_names(std::vector<uint8_t>(10, 0)).empty());
+}
+
+YUI_TEST(apppack, electron_layout_keeps_node_modules_and_pak_locales) {
+  // Electron puts runtime JS under resources/app/node_modules and locale packs
+  // as files locales/<lang>.pak.  Before P1.6 node_modules was dropped.
+  const std::string root = mkdtemp_dir("electron");
+  write_file(root + "/electron", "\x7f" "ELF-not-really");
+  write_file(root + "/resources/app/main.js", "require('dep')");
+  write_file(root + "/resources/app/node_modules/dep/index.js", "module.exports = 1;");
+  write_file(root + "/resources/app.asar.unpacked/node_modules/native/addon.node", "addon");
+  write_file(root + "/locales/en-US.pak", "en");
+  write_file(root + "/locales/vi.pak", "vi");
+  write_file(root + "/locales/fr.pak", "fr");
+  write_file(root + "/locales/zh-CN.pak", "zh");
+  apppack::TrimOptions opts;
+  std::vector<apppack::Entry> kept;
+  apppack::TrimReport rep;
+  std::string err;
+  CHECK(apppack::collect(root, opts, kept, rep, &err));
+  CHECK(rep.stripped);
+  CHECK(rep.protection.empty());
+  auto has = [&](const std::string& p) {
+    for (const auto& e : kept)
+      if (e.path == p) return true;
+    return false;
+  };
+  CHECK_MSG(has("resources/app/node_modules/dep/index.js"), "app node_modules must be kept by default");
+  CHECK(has("resources/app.asar.unpacked/node_modules/native/addon.node"));
+  CHECK(has("locales/en-US.pak"));
+  CHECK(has("locales/vi.pak"));
+  CHECK_MSG(!has("locales/fr.pak") && !has("locales/zh-CN.pak"), "foreign .pak locales are trimmed");
+
+  apppack::TrimOptions src;
+  src.strip_build_dirs = true;
+  std::vector<apppack::Entry> kept2;
+  apppack::TrimReport rep2;
+  CHECK(apppack::collect(root, src, kept2, rep2, &err));
+  bool nm = false;
+  for (const auto& e : kept2)
+    if (e.path.find("node_modules") != std::string::npos) nm = true;
+  CHECK_MSG(!nm, "--strip-build-dirs drops node_modules (source trees)");
+}
+
+YUI_TEST(apppack, protected_apps_are_packed_verbatim) {
+  struct Case {
+    const char* tag;
+    std::function<void(const std::string&)> plant;
+    const char* reason_part;
+  };
+  const std::vector<Case> cases = {
+      {"widevine", [](const std::string& r) { write_file(r + "/WidevineCdm/_platform_specific/linux_x64/libwidevinecdm.so", "cdm"); }, "Widevine"},
+      {"widevine-file", [](const std::string& r) { write_file(r + "/lib/libwidevinecdm.so", "cdm"); }, "Widevine"},
+      {"vmp-sig", [](const std::string& r) {
+         write_file(r + "/bin/player", "binary");
+         ::chmod((r + "/bin/player").c_str(), 0755);
+         write_file(r + "/bin/player.sig", "signature");
+       }, "chữ ký"},
+      {"vmprotect", [](const std::string& r) { write_bytes(r + "/bin/game", tiny_elf(".vmp1")); }, "VMProtect"},
+      {"steamstub", [](const std::string& r) { write_bytes(r + "/game.exe", tiny_pe({".text", ".bind"})); }, "SteamStub"},
+      {"themida", [](const std::string& r) { write_bytes(r + "/app.dll", tiny_pe({".themida"})); }, "Themida"},
+  };
+  for (const auto& c : cases) {
+    const std::string root = mkdtemp_dir(c.tag);
+    write_file(root + "/locale/fr/messages", "Bonjour\n");   // normally trimmed
+    write_file(root + "/app.debug", "symbols");              // normally trimmed
+    write_file(root + "/a.txt", "same");
+    write_file(root + "/b.txt", "same");                     // normally deduped
+    write_bytes(root + "/lib/libplain.so", tiny_elf(".debug_info"));  // normally zeroed
+    c.plant(root);
+
+    apppack::TrimOptions opts;
+    opts.strip_docs = true;
+    apppack::TrimReport rep;
+    std::string err;
+    const auto packed = apppack::pack_tree(root, opts, rep, &err);
+    CHECK_MSG(!rep.stripped, std::string(c.tag) + ": protected app must report stripped=false");
+    CHECK_MSG(!rep.protection.empty() && rep.protection[0].reason.find(c.reason_part) != std::string::npos,
+              std::string(c.tag) + ": reason names the protection");
+    CHECK_EQ(rep.files_dropped, size_t(0));
+    CHECK_EQ(rep.duplicates, size_t(0));
+    CHECK_EQ(rep.bytes_debug_zeroed, uint64_t(0));
+    CHECK(rep.summary_vi().find("KHÔNG GỌT") != std::string::npos);
+
+    // 0 bytes modified: every original file comes back byte-identical.
+    const std::string out = mkdtemp_dir(std::string(c.tag) + "-out");
+    CHECK(apppack::unpack_to(packed, out, &err));
+    std::vector<apppack::Entry> verbatim;
+    apppack::TrimReport vr;
+    apppack::TrimOptions keep;
+    keep.verbatim = true;
+    CHECK(apppack::collect(root, keep, verbatim, vr, &err));
+    size_t identical = 0;
+    for (const auto& e : verbatim)
+      if (read_file(out + "/" + e.path) == std::string(e.data.begin(), e.data.end())) ++identical;
+    CHECK_EQ(identical, verbatim.size());
+    CHECK(verbatim.size() >= 6);  // 5 base files + the planted marker(s)
+  }
+
+  // A lone .sig (no sibling binary) or a plain ELF is not protection.
+  const std::string clean = mkdtemp_dir("clean");
+  write_file(clean + "/release.sig", "gpg");
+  write_bytes(clean + "/lib/libplain.so", tiny_elf(".debug_info"));
+  CHECK(apppack::detect_protection(clean).empty());
+  apppack::TrimReport rep;
+  std::vector<apppack::Entry> kept;
+  std::string err;
+  CHECK(apppack::collect(clean, apppack::TrimOptions{}, kept, rep, &err));
+  CHECK(rep.stripped);
+  CHECK_EQ(rep.bytes_debug_zeroed, uint64_t(100));
 }
 
 YUI_TEST(apppack, proposed_policy_generation_and_three_sources) {

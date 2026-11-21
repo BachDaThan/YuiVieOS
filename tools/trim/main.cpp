@@ -26,10 +26,16 @@ void usage() {
       "  --strip-docs          Bỏ tài liệu (share/doc, share/man, *.md)\n"
       "  --no-dedupe           Không gộp tệp trùng nội dung\n"
       "  --no-elf-strip        Không xoá ký hiệu gỡ lỗi trong ELF\n"
+      "  --strip-build-dirs    Bỏ node_modules/.venv/target/build (chỉ cho cây MÃ NGUỒN —\n"
+      "                        trong app đã đóng gói, ví dụ Electron, đó là mã chạy thật)\n"
+      "  --verbatim            Giữ nguyên 100%% byte, chỉ nén không mất dữ liệu\n"
       "  --keep-locales vi,en  Danh sách ngôn ngữ giữ lại\n"
       "  --level N             Mức nén 0..9 (mặc định 7)\n"
       "  --dry-run             Chỉ báo cáo, không ghi tệp\n"
-      "  --propose-policy <tệp> Sinh chính sách hộp cát đề xuất (.proposed.json)\n");
+      "  --propose-policy <tệp> Sinh chính sách hộp cát đề xuất (.proposed.json)\n"
+      "\n"
+      "App có bảo vệ bản quyền/toàn vẹn (Widevine, chữ ký .sig, VMProtect, Themida,\n"
+      "SteamStub…) được nhận ra tự động: không gọt gì, in \"stripped=false\".\n");
 }
 
 bool read_all(const std::string& path, yui::apppack::Bytes& out) {
@@ -79,6 +85,8 @@ int main(int argc, char** argv) {
     else if (a == "--strip-docs") opts.strip_docs = true;
     else if (a == "--no-dedupe") opts.dedupe = false;
     else if (a == "--no-elf-strip") opts.strip_debug_elf = false;
+    else if (a == "--strip-build-dirs") opts.strip_build_dirs = true;
+    else if (a == "--verbatim") opts.verbatim = true;
     else if (a == "--dry-run") dry_run = true;
     else if (a == "--propose-policy") propose_path = next("--propose-policy");
     else if (a == "--level") opts.level = std::atoi(next("--level").c_str());
@@ -156,6 +164,9 @@ int main(int argc, char** argv) {
     return 1;
   }
   std::printf("%s\n", rep.summary_vi().c_str());
+  // Dòng máy đọc được (CI P1.6 dựa vào nó).
+  std::printf("stripped=%s\n", rep.stripped ? "true" : "false");
+  for (const auto& m : rep.protection) std::printf("  ⚠ bảo vệ: %s — %s\n", m.path.c_str(), m.reason.c_str());
   for (const auto& d : rep.dropped_samples) std::printf("  − %s\n", d.c_str());
   for (const auto& w : rep.warnings) std::fprintf(stderr, "  ! %s\n", w.c_str());
 

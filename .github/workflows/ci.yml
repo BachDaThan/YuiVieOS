@@ -353,6 +353,24 @@ jobs:
           fi
 
   # ------------------------------------------------------------- tài liệu ----
+  realapp:
+    # P1.6: Smart Stripper trên app THẬT — Electron chính thức (gọt, bung, chạy lại
+    # dưới Xvfb) và Google Chrome kèm Widevine CDM (phải stripped=false, 0 byte sửa).
+    name: "Smart Stripper on real apps (P1.6)"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build yui-trim
+        run: make -j"$(nproc)" build/bin/yui-trim
+      - name: "Runtime libraries for Chromium (Xvfb, GTK, NSS)"
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb unzip libnss3 libgtk-3-0t64 libgbm1 libasound2t64 libxss1
+      - name: "Electron: trim, unpack, run again"
+        run: ./scripts/realapp-trim.sh electron
+      - name: "DRM app (Chrome + Widevine): stripped=false, 0 bytes modified"
+        run: ./scripts/realapp-trim.sh drm
+
   docs:
     name: Docs, policies & static checks
     runs-on: ubuntu-24.04
