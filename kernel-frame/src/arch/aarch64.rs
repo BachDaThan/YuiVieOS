@@ -18,7 +18,8 @@ _start:
        lặp được vector hoá, khởi tạo mảng, đếm ký tự trong Formatter::pad)
        gây trap đồng bộ mà chưa có bảng vector ⇒ nhân treo im lặng. Lần tự
        kiểm FromBytes (P2.22) treo đúng kiểu đó trên CI (run 44894963668);
-       lỗi cũ "định dạng &str bằng {} treo nhân" nhiều khả năng cùng gốc.
+       lỗi cũ "định dạng &str qua Formatter treo nhân" nhiều khả năng cùng
+       gốc. (Không viết dấu ngoặc nhọn trong global_asm: đó là chỗ thế đối số.)
        Ghi CPACR_EL1 hợp lệ ở EL1, EL2 và EL3. */
     mrs x1, cpacr_el1
     orr x1, x1, #(3 << 20)
