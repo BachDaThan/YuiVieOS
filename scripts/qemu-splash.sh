@@ -4,6 +4,14 @@
 #   ./scripts/qemu-splash.sh            # mặc định: 800x600 1280x1024 1920x1080 1024x768x24
 #   ./scripts/qemu-splash.sh --strict   # thiếu qemu/grub/nhân ⇒ thất bại
 #   YUI_SPLASH_RES="1024x768 1920x1080x32" ./scripts/qemu-splash.sh   # WxH[xD], D mặc định 32
+#   ./scripts/qemu-splash.sh --uefi --strict   # P2.2/P2.16(a)/P6.4: OVMF + GRUB EFI + GOP
+#
+# Đường UEFI (--uefi): OVMF (UEFI thật của QEMU, máy q35) → GRUB x86_64-efi →
+# `multiboot2` (GRUB thoát boot services rồi nhảy vào _start 32-bit như BIOS)
+# → khung hình là của **GOP** do OVMF dựng theo gfxpayload. Nhân phải in
+# "firmware: UEFI" (đọc thẻ con trỏ bảng hệ thống EFI do GRUB truyền — bằng
+# chứng, không đoán), vẽ đúng màn chào, rồi tới "FromBytes : ok" và
+# "yui: boot ok". GOP luôn 32 bit nên mặc định chỉ thử chế độ 32 bit.
 #
 # Đường đi (x86_64, BIOS): GRUB2 `multiboot2` + `set gfxpayload=WxHxD` dựng
 # framebuffer VBE tuyến tính → nhân đọc thẻ framebuffer (type 8) → splash vẽ
@@ -17,17 +25,26 @@ set -eu
 cd "$(dirname "$0")/.."
 
 STRICT=0
+UEFI=0
 for arg in "$@"; do
     case "$arg" in
         --strict) STRICT=1 ;;
+        --uefi) UEFI=1 ;;
         *) echo "tham số lạ: $arg" >&2; exit 2 ;;
     esac
 done
 
-RESOLUTIONS="${YUI_SPLASH_RES:-800x600 1280x1024 1920x1080 1024x768x24}"
+if [ "$UEFI" -eq 1 ]; then
+    RESOLUTIONS="${YUI_SPLASH_RES:-800x600 1280x1024 1920x1080}"
+    OUT="build/splash-uefi"
+    GRUB_DIR=/usr/lib/grub/x86_64-efi
+else
+    RESOLUTIONS="${YUI_SPLASH_RES:-800x600 1280x1024 1920x1080 1024x768x24}"
+    OUT="build/splash"
+    GRUB_DIR=/usr/lib/grub/i386-pc
+fi
 KERNEL="build/kernel/yui-kernel-x86_64.elf"
 TIMEOUT="${YUI_QEMU_TIMEOUT:-120}"
-OUT="build/splash"
 
 skip() {
     echo "── qemu splash: BỎ QUA — $1"
@@ -39,7 +56,26 @@ command -v qemu-system-x86_64 >/dev/null 2>&1 || skip "không có qemu-system-x8
 command -v grub-mkrescue >/dev/null 2>&1 || skip "không có grub-mkrescue (gói grub-common + grub-pc-bin)"
 command -v xorriso >/dev/null 2>&1 || skip "không có xorriso"
 command -v python3 >/dev/null 2>&1 || skip "không có python3"
-[ -d /usr/lib/grub/i386-pc ] || skip "không có module GRUB BIOS (/usr/lib/grub/i386-pc, gói grub-pc-bin)"
+if [ "$UEFI" -eq 1 ]; then
+    [ -d "$GRUB_DIR" ] || skip "không có module GRUB UEFI ($GRUB_DIR, gói grub-efi-amd64-bin)"
+    command -v mformat >/dev/null 2>&1 || skip "không có mformat (gói mtools) — grub-mkrescue cần để dựng efi.img"
+    # OVMF: ưu tiên cặp CODE + VARS (pflash, kiểu máy thật); không có thì -bios.
+    OVMF_CODE=""; OVMF_VARS=""; OVMF_BIOS=""
+    for c in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd; do
+        [ -f "$c" ] || continue
+        v="$(echo "$c" | sed 's/CODE/VARS/')"
+        [ -f "$v" ] && { OVMF_CODE="$c"; OVMF_VARS="$v"; break; }
+    done
+    if [ -z "$OVMF_CODE" ]; then
+        for b in /usr/share/ovmf/OVMF.fd /usr/share/qemu/OVMF.fd /usr/share/OVMF/OVMF.fd; do
+            [ -f "$b" ] && { OVMF_BIOS="$b"; break; }
+        done
+    fi
+    [ -n "$OVMF_CODE$OVMF_BIOS" ] || skip "không có firmware OVMF (gói ovmf)"
+    echo "── UEFI: OVMF ${OVMF_CODE:-$OVMF_BIOS}"
+else
+    [ -d "$GRUB_DIR" ] || skip "không có module GRUB BIOS ($GRUB_DIR, gói grub-pc-bin)"
+fi
 [ -f "$KERNEL" ] || skip "chưa build nhân ($KERNEL) — chạy: ./scripts/build-kernel.sh x86_64"
 
 if command -v grub-file >/dev/null 2>&1; then
@@ -79,17 +115,31 @@ menuentry "YuiVieOS ${W}x${H}x${D}" {
     boot
 }
 EOF
-    echo "── $RES: dựng ISO (GRUB multiboot2, gfxpayload=${W}x${H}x${D})"
-    if ! timeout 180 grub-mkrescue -d /usr/lib/grub/i386-pc -o "$ISO" "$ISO_DIR" >"$OUT/mkrescue-$RES.log" 2>&1; then
+    echo "── $RES: dựng ISO (GRUB $(basename "$GRUB_DIR") multiboot2, gfxpayload=${W}x${H}x${D})"
+    if ! timeout 180 grub-mkrescue -d "$GRUB_DIR" -o "$ISO" "$ISO_DIR" >"$OUT/mkrescue-$RES.log" 2>&1; then
         echo "✗ grub-mkrescue thất bại ($RES):" >&2
         tail -20 "$OUT/mkrescue-$RES.log" >&2
         exit 1
     fi
 
-    echo "── $RES: boot trong QEMU (-vga std)"
-    qemu-system-x86_64 -m 1024 -vga std -display none -no-reboot \
-        -serial "file:$LOG" -monitor "unix:$SOCK,server=on,wait=off" \
-        -cdrom "$ISO" -boot d >"$OUT/qemu-$RES.log" 2>&1 &
+    if [ "$UEFI" -eq 1 ]; then
+        if [ -n "$OVMF_CODE" ]; then
+            cp "$OVMF_VARS" "$OUT/vars-$RES.fd"
+            FW="-drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE -drive if=pflash,format=raw,file=$OUT/vars-$RES.fd"
+        else
+            FW="-bios $OVMF_BIOS"
+        fi
+        echo "── $RES: boot trong QEMU (q35 + OVMF, -vga std)"
+        # shellcheck disable=SC2086
+        qemu-system-x86_64 -machine q35 -m 1024 -vga std -display none -no-reboot \
+            $FW -serial "file:$LOG" -monitor "unix:$SOCK,server=on,wait=off" \
+            -cdrom "$ISO" -boot d >"$OUT/qemu-$RES.log" 2>&1 &
+    else
+        echo "── $RES: boot trong QEMU (-vga std)"
+        qemu-system-x86_64 -m 1024 -vga std -display none -no-reboot \
+            -serial "file:$LOG" -monitor "unix:$SOCK,server=on,wait=off" \
+            -cdrom "$ISO" -boot d >"$OUT/qemu-$RES.log" 2>&1 &
+    fi
     PID=$!
 
     deadline=$(( $(date +%s) + TIMEOUT ))
@@ -170,10 +220,31 @@ PY
     else
         FAILED=1
     fi
+    if [ "$UEFI" -eq 1 ]; then
+        # Bằng chứng đường UEFI: nhân tự đọc thẻ EFI (không phải script đoán),
+        # và đi hết kmain sau màn chào.
+        for want in "firmware: UEFI" "FromBytes : ok" "yui: boot ok"; do
+            if grep -q "$want" "$LOG"; then
+                echo "   ✓ $RES: serial có \"$want\""
+            else
+                echo "✗ $RES: serial thiếu \"$want\"" >&2
+                FAILED=1
+            fi
+        done
+        if grep -q "RAM       : 0 MiB\|khong doc duoc" "$LOG"; then
+            echo "✗ $RES: nhân không đọc được RAM dưới UEFI" >&2
+            FAILED=1
+        fi
+        grep "firmware\|RAM       :\|bootloader" "$LOG" | sed 's/^/   | /'
+    fi
 done
 
 if [ "$FAILED" -ne 0 ]; then
     echo "✗ qemu splash: có độ phân giải vẽ sai (xem build/splash/)" >&2
     exit 1
 fi
-echo "✓ qemu splash: vẽ đúng ở mọi độ phân giải: $RESOLUTIONS"
+if [ "$UEFI" -eq 1 ]; then
+    echo "✓ qemu splash UEFI (OVMF + GOP): boot + vẽ đúng ở mọi độ phân giải: $RESOLUTIONS"
+else
+    echo "✓ qemu splash: vẽ đúng ở mọi độ phân giải: $RESOLUTIONS"
+fi
