@@ -96,6 +96,7 @@ REQUIRED_FILES = [
     "scripts/check_doc_numbers.py", "scripts/test_check_doc_numbers.py",
     "scripts/check_legal.py", "scripts/test_check_legal.py", "include/yui/legal.hpp",
     "scripts/test_scan_secrets.py", ".github/workflows/secrets.yml",
+    "scripts/realapp-trim.sh", "tests/data/electron-smoke/main.js",
     "include/yui/display.hpp", "userspace-vi/display.cpp", "tests/test_display.cpp",
     "kernel-cap/src/display.rs", "tests/data/display_vectors.txt", "scripts/gen_display_vectors.py",
     "kernel-cap/src/fdt.rs", "tests/data/fdt_fb_vectors.txt", "scripts/gen_fdt_vectors.py",

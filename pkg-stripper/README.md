@@ -37,10 +37,11 @@ bằng tay. Liên kết mềm / tệp đặc biệt không được lưu — có
 - [x] Bộ test `tests/test_tools.cpp` (`apppack.*`): tròn vẹn, tamper bị phát hiện, chống zip-slip, strip ELF,
   đọc section ELF/PE an toàn, bố cục Electron (giữ `node_modules`, gọt `.pak`), 6 kiểu app có bảo vệ
   ⇒ `stripped=false` + bung ra trùng từng byte, bung vào đích tương đối
-- [x] App Electron thật — job CI `realapp` (`scripts/realapp-trim.sh`, 2026-11-21, run 44921693171):
+- [x] App Electron thật — job CI `realapp` (`scripts/realapp-trim.sh`, 2026-11-21, run 44922444653):
   Electron 33.2.1 chính thức + app thử: 261 MiB → gói 107 MiB (**nhỏ hơn 59 %**), sau gọt chạy lại
   ra kết quả **giống hệt** (renderer + `node_modules` + `--lang=vi`; `--lang=fr` đã gọt thì lùi về en-US);
-  VSCodium 1.143.17232: 602 MiB → 223 MiB (**nhỏ hơn 63 %**), CLI chạy được trước/sau như nhau.
+  VSCodium 1.143.17232: 602 MiB → 223 MiB (**nhỏ hơn 63 %**), sau gọt vẫn qua đủ 3 kiểm như bản gốc
+  (`--version`, `--list-extensions`, mở cửa sổ dưới Xvfb — tiến trình renderer còn sống sau 20 s).
   *Nói thật:* phần lớn là nhờ nén — cây sau khi bung chỉ nhỏ hơn 11–15 %, và gói `.yuip` vẫn
   **lớn hơn** zip/tar.gz chính thức 6–9 %.
 - [x] App có DRM — Google Chrome 158 (kèm Widevine CDM): `stripped=false`, bung ra 253/253 tệp trùng
