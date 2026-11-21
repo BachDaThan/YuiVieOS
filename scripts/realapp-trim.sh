@@ -105,6 +105,12 @@ vsc_checks() {
   ( timeout 25 xvfb-run -a "$dir/codium" --no-sandbox --disable-gpu --user-data-dir "$u" --extensions-dir "$e" \
       --disable-workspace-trust --skip-welcome --new-window > "$WORK/vsc-$tag-gui.log" 2>&1; echo $? > "$WORK/vsc-$tag-gui.rc" ) || true
   if [ "$(cat "$WORK/vsc-$tag-gui.rc")" = 124 ] && find "$u/logs" -path '*window*' -name '*.log' 2>/dev/null | grep -q .; then ok="$ok gui-window"; fi
+  if [ -n "${GITHUB_ACTIONS:-}" ] && [ "$tag" = before ] && ! case "$ok" in *gui-window*) true ;; *) false ;; esac; then
+    {
+      echo "::notice title=P1.6 vscodium gui-debug::rc=$(cat "$WORK/vsc-$tag-gui.rc"); logs: $(find "$u/logs" -name '*.log' 2>/dev/null | sed "s|$u/||" | head -8 | tr '\n' ' ')"
+      tail -n 8 "$WORK/vsc-$tag-gui.log" | cut -c1-250 | sed 's/%/%25/g' | while IFS= read -r l; do echo "::notice title=P1.6 vscodium gui-log::$l"; done
+    } >&2
+  fi
   echo "$ok"
 }
 
