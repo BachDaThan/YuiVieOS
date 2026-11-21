@@ -11,7 +11,11 @@ Checks, in order:
   5. every repository path quoted in the docs exists;
   6. sources are LF-only;
   7. no secrets leak (P7.3) and the "no spoofing / no check evasion" boundary
-     holds (P7.10, scripts/check_boundaries.py).
+     holds (P7.10, scripts/check_boundaries.py);
+  8. numbers quoted in the docs match the code: `unsafe` counted by kind,
+     the P0 check total and README check counts vs. the `make test` logs,
+     no untagged performance numbers in README (P0.16,
+     scripts/check_doc_numbers.py).
 
 Exit code 0 only if everything passes.  Run through scripts/verify.sh.
 """
@@ -86,6 +90,7 @@ REQUIRED_FILES = [
     "include/yui/archive.hpp", "pkg-stripper/archive.cpp", "pkg-stripper/zstd.cpp", "tests/test_archive.cpp",
     "tests/archive_fixtures.hpp", "scripts/gen_archive_fixtures.py",
     "scripts/check_boundaries.py", "scripts/test_check_boundaries.py",
+    "scripts/check_doc_numbers.py", "scripts/test_check_doc_numbers.py",
     "include/yui/display.hpp", "userspace-vi/display.cpp", "tests/test_display.cpp",
     "kernel-cap/src/display.rs", "tests/data/display_vectors.txt", "scripts/gen_display_vectors.py",
     "kernel-cap/src/fdt.rs", "tests/data/fdt_fb_vectors.txt", "scripts/gen_fdt_vectors.py",
@@ -652,6 +657,20 @@ def check_boundaries() -> None:
         ok(res.stdout.strip())
 
 
+def check_doc_numbers() -> None:
+    """Số liệu trong tài liệu khớp mã (P0.16)."""
+    header("số liệu tài liệu khớp mã (P0.16)")
+    script = ROOT / "scripts/check_doc_numbers.py"
+    if not script.is_file():
+        bad("scripts/check_doc_numbers.py không tồn tại")
+        return
+    res = subprocess.run([sys.executable, str(script)], cwd=str(ROOT), capture_output=True, text=True)
+    if res.returncode != 0:
+        bad(f"số liệu tài liệu lệch mã:\n{(res.stdout + res.stderr).strip()}")
+    else:
+        ok(res.stdout.strip())
+
+
 def main() -> int:
     if not (ROOT / "docs/PLAN.md").exists():
         print("verify.py: chạy từ trong repo YuiVieOS Beta")
@@ -667,6 +686,7 @@ def main() -> int:
     check_third_party()
     check_secrets()
     check_boundaries()
+    check_doc_numbers()
     check_links()
     check_doc_paths()
     check_line_endings()
