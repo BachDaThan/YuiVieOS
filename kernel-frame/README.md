@@ -14,11 +14,14 @@ Bốn việc không thể làm bằng Rust an toàn:
 3. **bộ cấp phát** — triển khai `GlobalAlloc` trên một vùng tĩnh
    (`src/allocator.rs`);
 4. **framebuffer** — ghi vào vùng nhớ firmware cấp (`src/splash.rs`);
-5. **zero-copy** — ép `&[u8]` → `&T` sau khi `yui_cap::frombytes::check` đã
+5. **khung hình nhanh** — đọc TSC, hiệu chỉnh bằng PIT, bật write-combining
+   (PAT) cho vùng khung hình sau khi `yui_cap::memrange::wc_pages` xác nhận
+   dải trang không chạm RAM/ảnh nhân (`src/arch/x86_64.rs`, P2.16);
+6. **zero-copy** — ép `&[u8]` → `&T` sau khi `yui_cap::frombytes::check` đã
    kiểm độ dài + căn chỉnh (`src/frombytes.rs`, đúng một khối, P2.22).
 
 Tất cả nằm trong các tệp được liệt kê ở `scripts/verify.py` (`FRAME_UNSAFE_FILES`),
-mỗi tệp có lý do bằng tiếng Việt. Tổng: 30 khối `unsafe {}` + 5 `unsafe fn` + 2 `unsafe impl` trong 8 tệp, mỗi khối có
+mỗi tệp có lý do bằng tiếng Việt. Tổng: 34 khối `unsafe {}` + 5 `unsafe fn` + 2 `unsafe impl` trong 8 tệp, mỗi khối có
 chú thích an toàn (con số do `scripts/check_doc_numbers.py` kiểm).
 
 ## Nội dung
@@ -31,6 +34,7 @@ chú thích an toàn (con số do `scripts/check_doc_numbers.py` kiểm).
 | `src/profiler.rs` | phân loại `may-yeu`/`can-bang`/`may-manh` + k/W, **cùng ngưỡng** với `kernel-services/profile.cpp` |
 | `src/cap.rs` | khởi tạo `CapTable`, chứng minh dẫn xuất không mở rộng quyền + thu hồi bắc cầu |
 | `src/splash.rs` | màn hình chào 5×7 trên framebuffer tuyến tính |
+| `src/fbspeed.rs` | đo MB/s ghi khung hình trước/sau write-combining (P2.16), không `unsafe` |
 | `src/frombytes.rs` | `ref_from_bytes`/`ref_from_prefix` zero-copy + tự kiểm lúc boot bằng `tests/data/frombytes_vectors.txt` (P2.22) |
 | `src/allocator.rs` | bump allocator 4 MiB |
 | `src/arch/*` | x86_64 (multiboot + long mode), aarch64 (PL011), riscv64 (SBI) |

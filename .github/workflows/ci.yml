@@ -288,12 +288,12 @@ jobs:
       - name: "Bằng chứng UEFI (annotation notice: dòng serial chính)"
         if: always() && matrix.arch == 'x86_64'
         run: |
-          for f in build/splash-uefi/serial-*.log; do
+          for f in build/splash-uefi/serial-*.log build/splash/serial-*.log; do
             [ -f "$f" ] || continue
-            body="$(grep -aE 'bootloader|firmware|RAM       :|Man hinh|FromBytes|yui: boot ok' "$f" \
+            body="$(grep -aE 'bootloader|firmware|RAM       :|Ghi khung|Man hinh|FromBytes|yui: boot ok' "$f" \
               | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/%/%25/g; s/\r//g' | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-900)"
             [ -n "$body" ] || body="<khong co dong nao khop trong $f>"
-            echo "::notice title=uefi-$(basename "$f" .log)::$body"
+            echo "::notice title=$(basename "$(dirname "$f")")-$(basename "$f" .log)::$body"
           done
       - name: "Splash qua framebuffer device tree (P2.16 đường c: simple-framebuffer, pmemsave)"
         # DTB thật của máy ảo + một nút simple-framebuffer (dtc) trỏ vào RAM

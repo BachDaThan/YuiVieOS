@@ -33,8 +33,7 @@ pub struct Drawn {
     pub k: u8,
 }
 
-/// Trả về None nếu framebuffer không dùng được.
-pub fn render(fb: &Framebuffer, info: &BootInfo) -> Option<Drawn> {
+fn surface(fb: &Framebuffer) -> Option<Surface> {
     if fb.addr == 0 || fb.width < 120 || fb.height < 80 || fb.bpp < 24 {
         return None;
     }
@@ -44,15 +43,32 @@ pub fn render(fb: &Framebuffer, info: &BootInfo) -> Option<Drawn> {
     } else {
         fb.width * bytes_per_pixel
     };
-
-    let surface = Surface {
+    Some(Surface {
         base: fb.addr as *mut u8,
         width: fb.width as i32,
         height: fb.height as i32,
         stride,
         bytes_per_pixel,
         shifts: (fb.red_shift, fb.green_shift, fb.blue_shift),
-    };
+    })
+}
+
+/// Đo ghi khung hình (P2.16): tô nền các dòng đầu sao cho ≤ `max_bytes`, bằng
+/// đúng đường `put` mà màn chào dùng. Trả (số byte đã ghi, số chu kỳ) —
+/// `fbspeed.rs` đổi ra MB/s. Không thêm `unsafe`: đi qua `Surface::put`.
+pub fn fill_bench(fb: &Framebuffer, max_bytes: u64) -> Option<(u64, u64)> {
+    let surface = surface(fb)?;
+    let row_bytes = surface.width as u64 * surface.bytes_per_pixel as u64;
+    let rows = (max_bytes / row_bytes.max(1)).clamp(1, surface.height as u64) as i32;
+    let t0 = crate::arch::cycles();
+    surface.fill(0, 0, surface.width, rows, BG);
+    let t1 = crate::arch::cycles();
+    Some((row_bytes * rows as u64, t1.wrapping_sub(t0)))
+}
+
+/// Trả về None nếu framebuffer không dùng được.
+pub fn render(fb: &Framebuffer, info: &BootInfo) -> Option<Drawn> {
+    let surface = surface(fb)?;
     let (w, h) = (surface.width, surface.height);
 
     let scale = display::choose_scale(&display::ScaleInput {

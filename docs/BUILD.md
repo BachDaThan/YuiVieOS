@@ -191,7 +191,7 @@ Ba dòng phải thấy trên serial: `yui: ready`, `Phan loai :` (auto-profiler)
 
 Ranh giới `unsafe` do `scripts/verify.py` (`check_frame`) canh: chỉ các tệp được
 liệt kê (arch/*, boot, allocator, splash, frombytes, main) mới được có `unsafe`; tệp khác
-xuất hiện `unsafe` ⇒ `verify.sh` đỏ. Tổng hiện tại: 30 khối `unsafe {}` + 5 `unsafe fn` + 2 `unsafe impl` trong 8 tệp (đếm theo loại bởi
+xuất hiện `unsafe` ⇒ `verify.sh` đỏ. Tổng hiện tại: 34 khối `unsafe {}` + 5 `unsafe fn` + 2 `unsafe impl` trong 8 tệp (đếm theo loại bởi
 `scripts/check_doc_numbers.py`, P0.16), có chú thích an toàn.
 
 Kết quả CI (2026-11-15): build **3/3** target; boot QEMU **2/3** — `riscv64` và

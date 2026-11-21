@@ -32,6 +32,7 @@ pub mod allocator;
 pub mod arch;
 pub mod boot;
 pub mod cap;
+pub mod fbspeed;
 pub mod frombytes;
 pub mod profiler;
 pub mod splash;
@@ -103,6 +104,8 @@ pub fn kmain(raw_boot: boot::RawBoot) -> ! {
     println!("  [4] man hinh chao");
 
     if let Some(fb) = info.framebuffer {
+        // Đo tốc độ ghi + bật write-combining TRƯỚC khi vẽ (phép đo tô nền).
+        fbspeed::measure(&fb, &info);
         match splash::render(&fb, &info) {
             Some(d) => {
                 // `fb.source` in thẳng: định dạng biến `&str` bằng `{}` treo

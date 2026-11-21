@@ -133,6 +133,33 @@ long_mode:
     hlt
     jmp 2b
 
+/* yui_x86_fb_wc(first_2m: u64 = rdi, end_2m: u64 = rsi) — P2.16.
+ * Đặt IA32_PAT.PA1 = WC (01) — PA1 mặc định là WT, nhân không dùng — rồi bật
+ * PWT (bit 3) trên các mục PD 2 MiB [first, end) của ánh xạ đồng nhất ⇒ các
+ * trang đó chọn PA1 = write-combining. Thủ tục theo Intel SDM 11.12.4: xả
+ * cache, đổi PAT/mục trang, nạp lại CR3 (xả TLB), xả cache lần nữa. Bên Rust
+ * đã kiểm: CPU có PAT, end <= 2048 (trong 4 GiB), dải không chạm RAM/ảnh nhân. */
+.global yui_x86_fb_wc
+yui_x86_fb_wc:
+    wbinvd
+    movl $0x277, %ecx
+    rdmsr
+    andl $0xFFFF00FF, %eax
+    orl  $0x00000100, %eax
+    wrmsr
+    leaq pd(%rip), %rax
+4:
+    cmpq %rsi, %rdi
+    jae 5f
+    orq  $0x8, (%rax,%rdi,8)
+    incq %rdi
+    jmp 4b
+5:
+    movq %cr3, %rax
+    movq %rax, %cr3
+    wbinvd
+    ret
+
 .section .rodata
 .align 8
 gdt64:
@@ -215,6 +242,68 @@ pub fn detect_simd() -> &'static str {
     } else {
         "scalar"
     }
+}
+
+/// Bộ đếm chu kỳ (TSC). Đơn vị đổi ra giây nhờ [`cycle_hz`].
+pub fn cycles() -> u64 {
+    // RDTSC chỉ đọc một thanh ghi đếm, không chạm bộ nhớ.
+    unsafe { core::arch::x86_64::_rdtsc() }
+}
+
+/// Tần số TSC, hiệu chỉnh bằng kênh 2 của bộ định thời PIT 8254
+/// (1 193 182 Hz) trong ~10 ms — cách Linux làm khi CPUID không báo tần số.
+/// `None` nếu PIT không đếm (máy mới có thể tắt hẳn 8254): không bịa số.
+pub fn cycle_hz() -> Option<u64> {
+    const PIT_HZ: u64 = 1_193_182;
+    const LATCH: u64 = PIT_HZ / 100; // 10 ms
+    // Cổng 0x61 (cổng điều khiển hệ thống B): bit 0 = cổng gate kênh 2, bit 1
+    // = loa (tắt), bit 5 = OUT2. Cổng 0x43/0x42: lệnh và bộ đếm kênh 2, chế độ
+    // 0 (OUT2 lên 1 khi đếm về 0). Chỉ ghi cổng vào/ra của PIT, không chạm RAM.
+    let (t0, t1, done) = unsafe {
+        outb(0x61, (inb(0x61) & !0x02) | 0x01);
+        outb(0x43, 0xB0);
+        outb(0x42, (LATCH & 0xFF) as u8);
+        outb(0x42, (LATCH >> 8) as u8);
+        let t0 = cycles();
+        let mut spins = 0u64;
+        let mut done = false;
+        while spins < 200_000_000 {
+            if inb(0x61) & 0x20 != 0 {
+                done = true;
+                break;
+            }
+            spins += 1;
+        }
+        (t0, cycles(), done)
+    };
+    if !done || t1 <= t0 {
+        return None;
+    }
+    Some((t1 - t0) * PIT_HZ / LATCH)
+}
+
+/// (CPU có PAT, đang chạy trong máy ảo) theo CPUID.1: EDX bit 16, ECX bit 31.
+pub fn cpu_flags() -> (bool, bool) {
+    let leaf1 = unsafe { __cpuid(1) };
+    (leaf1.edx & (1 << 16) != 0, leaf1.ecx & (1 << 31) != 0)
+}
+
+/// Bật write-combining cho dải trang 2 MiB `[first_2m, end_2m)` của ánh xạ
+/// đồng nhất. Người gọi (`fbspeed.rs`) phải chắc dải là MMIO thuần: không
+/// chạm RAM, không chạm ảnh nhân. Trả `false` nếu CPU không có PAT hoặc dải
+/// nằm ngoài 4 GiB đã ánh xạ.
+pub fn set_write_combining(first_2m: u64, end_2m: u64) -> bool {
+    extern "C" {
+        fn yui_x86_fb_wc(first_2m: u64, end_2m: u64);
+    }
+    if !cpu_flags().0 || first_2m >= end_2m || end_2m > 2048 {
+        return false;
+    }
+    // AN TOÀN: hàm asm chỉ đổi PA1 của IA32_PAT (nhân không dùng PA1 ở đâu
+    // khác) và bit PWT của mục PD trong dải đã kiểm; nạp lại CR3 để TLB thấy
+    // thay đổi. Ánh xạ địa chỉ không đổi, chỉ kiểu bộ nhớ đổi.
+    unsafe { yui_x86_fb_wc(first_2m, end_2m) };
+    true
 }
 
 pub fn cpu_vendor() -> [u8; 12] {

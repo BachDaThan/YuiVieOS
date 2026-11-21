@@ -96,6 +96,7 @@ REQUIRED_FILES = [
     "kernel-cap/src/display.rs", "tests/data/display_vectors.txt", "scripts/gen_display_vectors.py",
     "kernel-cap/src/fdt.rs", "tests/data/fdt_fb_vectors.txt", "scripts/gen_fdt_vectors.py",
     "kernel-cap/src/frombytes.rs", "kernel-frame/src/frombytes.rs",
+    "kernel-cap/src/memrange.rs", "kernel-frame/src/fbspeed.rs",
     "tests/data/frombytes_vectors.txt", "scripts/gen_frombytes_vectors.py",
     "scripts/qemu-splash-dt.sh",
     "scripts/qemu-splash.sh", "scripts/check_splash_ppm.py",
@@ -248,7 +249,7 @@ BRACKETS = {"(": ")", "[": "]", "{": "}"}
 # nào khác xuất hiện `unsafe` đều là hồi quy.
 FRAME_UNSAFE_FILES = {
     "arch/mod.rs": "lệnh hlt / wfi để dừng máy",
-    "arch/x86_64.rs": "cổng nối tiếp (in/out), CPUID, cầu nối 32→64 bit",
+    "arch/x86_64.rs": "cổng nối tiếp (in/out), CPUID, cầu nối 32→64 bit, TSC/PIT + PAT write-combining (P2.16)",
     "arch/aarch64.rs": "UART PL011 qua con trỏ MMIO, đọc thanh ghi hệ thống",
     "arch/riscv64.rs": "lời gọi SBI qua ecall, đọc thanh ghi misa",
     "boot.rs": "đọc multiboot info / device tree do firmware cấp",

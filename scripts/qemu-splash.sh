@@ -220,6 +220,17 @@ PY
     else
         FAILED=1
     fi
+    # P2.16 "đo MB/s": nhân đo ghi khung hình, bật write-combining (PAT) khi
+    # dải trang không chạm RAM/ảnh nhân, đo lại. Ảnh chụp ở trên được kiểm
+    # SAU khi WC bật ⇒ vẽ qua WC vẫn đúng từng điểm ảnh. Con số trong máy ảo
+    # không đại diện; chỉ đòi dòng đo có mặt và WC thật sự bật.
+    if grep -q "Ghi khung : truoc [0-9]* MB/s, sau WC [0-9]* MB/s" "$LOG"; then
+        grep "Ghi khung" "$LOG" | sed 's/^/   | /'
+    else
+        echo "✗ $RES: thiếu dòng đo ghi khung trước/sau WC" >&2
+        grep "Ghi khung" "$LOG" | sed 's/^/   | /' >&2 || true
+        FAILED=1
+    fi
     if [ "$UEFI" -eq 1 ]; then
         # Bằng chứng đường UEFI: nhân tự đọc thẻ EFI (không phải script đoán),
         # và đi hết kmain sau màn chào.
