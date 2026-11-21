@@ -9,7 +9,9 @@
 # phân phối lại gì: Stripper chạy cục bộ trên bản người dùng đã có — PLAN §3).
 #
 # Mỗi dòng kết quả in kèm "::notice" để CI hiện thành annotation.
-set -euo pipefail
+set -Eeuo pipefail
+# Lệnh nào hỏng (set -e) cũng thành annotation: CI không cho tải log về được.
+trap 'rc=$?; echo "LỖI dòng $LINENO: $BASH_COMMAND (mã $rc)" >&2; [ -z "${GITHUB_ACTIONS:-}" ] || echo "::error title=P1.6 ${MODE:-}::dòng $LINENO: $BASH_COMMAND (mã $rc)"' ERR
 cd "$(dirname "$0")/.."
 ROOT=$PWD
 TRIM=$ROOT/build/bin/yui-trim
@@ -20,7 +22,17 @@ MAX_RATIO=${MAX_RATIO:-65}   # gói .yuip ≤ 65 % cây gốc  ⇔  nhỏ hơn �
 mkdir -p "$WORK"
 
 note() { echo "$*"; [ -n "${GITHUB_ACTIONS:-}" ] && echo "::notice title=P1.6 $MODE::$*" || true; }
-die() { echo "LỖI: $*" >&2; [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=P1.6 $MODE::$*"; exit 1; }
+die() {
+  trap - ERR
+  echo "LỖI: $*" >&2
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    echo "::error title=P1.6 $MODE::$*"
+    # đuôi log của lần chạy app gần nhất (nếu có), mỗi dòng một annotation
+    local f; f=$(ls -t "$WORK"/*.log 2>/dev/null | head -1 || true)
+    [ -n "$f" ] && tail -n 15 "$f" | cut -c1-300 | sed 's/%/%25/g' | while IFS= read -r l; do echo "::error title=P1.6 log $(basename "$f")::$l"; done
+  fi
+  exit 1
+}
 bytes() { du -sb "$1" | cut -f1; }
 pct() { echo $(( ($1 * 1000 / $2 + 5) / 10 )); }
 
