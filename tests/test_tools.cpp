@@ -10,6 +10,7 @@
 
 #include "testutil.hpp"
 #include "yui/apppack.hpp"
+#include "yui/legal.hpp"
 #include "yui/shell.hpp"
 #include "yui/ui.hpp"
 
@@ -333,6 +334,9 @@ YUI_TEST(shell, bilingual_commands) {
   shell::Shell sh(daemon, layout);
 
   CHECK(sh.banner().find("YuiVieOS") != std::string::npos);
+  // P7.9: nhãn AS-IS chuẩn hiện ngay khi mở shell.
+  CHECK(sh.banner().find(legal::kAsIsVi) != std::string::npos);
+  CHECK(sh.banner().find("nguyên trạng (AS-IS)") != std::string::npos);
   CHECK(sh.help_text().find("giúp / help") != std::string::npos);
   CHECK(sh.commands().size() >= 12);
 
@@ -500,6 +504,8 @@ YUI_TEST(shell, all_26_commands_run_in_both_languages) {
 
   // 21. phiênbản / version
   CHECK(sh.run("phiênbản").find("YuiVieOS Beta") != std::string::npos);
+  CHECK(sh.run("phiênbản").find(legal::kAsIsVi) != std::string::npos);
+  CHECK(sh.run("phiênbản").find(legal::kAsIsEn) != std::string::npos);
   CHECK(sh.run("version").find("YuiVieOS Beta") != std::string::npos);
 
   // 22. trakho / vaultinfo

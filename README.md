@@ -41,7 +41,7 @@ cần thư viện ngoài, không cần Rust.
 
 ```bash
 make              # → build/bin/{yuid,libyui.so,libyui.a,yui-profiler,yui-hw,yui-trim,yui-shell,yui-splash,yui-update,yui-store,yui-sandbox-exec}
-make test         # 15593 kiểm thử (15527 C++17 + 66 C11 ABI)
+make test         # 15597 kiểm thử (15531 C++17 + 66 C11 ABI)
 make check        # test + smoke run + kiểm tra tĩnh (scripts/verify.sh, gồm máy kiểm ranh giới P7.10)
 ```
 
@@ -148,7 +148,7 @@ task trong [`docs/PLAN.md`](docs/PLAN.md).
 | 4 | Telemetry Hook: `telemetry.read` + `yui_telemetry()` đọc pin/nhiệt/RAM thật, tự chỉnh k/W | ✅ chạy | `kernel-services/telemetry.cpp`, `tests/test_telemetry.cpp` (567 check); C-ABI `yui_telemetry()` do `test_capi` kiểm |
 | 4 | 5 công cụ OS MCP `sys_power`/`sys_scheduler`/`sys_app_stripper`/`sys_proc`/`sys_search_vault` + xác nhận | ✅ chạy (P4.3 `[x]`) | `ai-bridge-yuid/daemon/`, P4.3 |
 | 4 | Cài đặt tham chiếu graph/vault/engine (**sẽ thay ở P5**) | 🟡 tạm | `ai-bridge-yuid/reference/` |
-| 5 | Smart App Stripper: strip ELF, khử trùng lặp, lọc locale, chống zip-slip | ✅ chạy | `pkg-stripper/apppack.cpp`, `tools/trim`, `tests/test_tools.cpp` (414 check, chung cho các công cụ CLI) |
+| 5 | Smart App Stripper: strip ELF, khử trùng lặp, lọc locale, chống zip-slip | ✅ chạy | `pkg-stripper/apppack.cpp`, `tools/trim`, `tests/test_tools.cpp` (418 check, chung cho các công cụ CLI) |
 | 5 | Giải nén an toàn (P4.33): DEFLATE + zstd tự viết, `zip`/`gz`/`zst`/`tar`/`tar.gz`/`tar.zst`, chặn zip-slip/liên kết/bom nén, CRC/XXH64, xoá sạch khi lỗi | ✅ chạy (chưa 7z) | `pkg-stripper/archive.cpp`, `pkg-stripper/zstd.cpp`, `tests/test_archive.cpp` (429 check) |
 | 5 | Bộ gõ Telex **và** VNI, đặt dấu đúng chính tả | ✅ kiểm thử | `userspace-vi/ime.cpp`, `tests/test_ime.cpp` (7149 check) |
 | 5 | Shell song ngữ Việt–Anh, 36 lệnh (gồm `tìmapp`/`cài`/`gỡ` của Kho, `xoá`/`khôiphục`/`dọnrác` của thùng rác) | ✅ chạy | `userspace-vi/shell.cpp` |

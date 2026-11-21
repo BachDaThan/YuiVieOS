@@ -35,7 +35,7 @@ TITLE = "YUIVIEOS BETA"
 def load_font():
     src = (ROOT / "kernel-frame/src/splash.rs").read_text(encoding="utf-8")
     font = {}
-    names = {"SPACE": " ", "DASH": "-", "DOT": ".", "EQ": "=", "QUESTION": "?"}
+    names = {"SPACE": " ", "DASH": "-", "DOT": ".", "EQ": "=", "QUESTION": "?", "SLASH": "/"}
     for name, body in re.findall(r"const FONT_(\w+): \[u8; 7\] = \[([^\]]*)\];", src):
         font[names.get(name, name)] = [int(x, 16) for x in body.split(",")]
     return font

@@ -37,13 +37,14 @@ fn mb_per_s(bytes: u64, cycles: u64, hz: u64) -> u64 {
 }
 
 /// Đo, bật WC nếu an toàn, đo lại; in một dòng. Gọi **trước** khi vẽ màn
-/// chào (phép đo tô nền, màn chào vẽ đè lên sau).
-pub fn measure(fb: &Framebuffer, info: &BootInfo) {
+/// chào (phép đo tô nền, màn chào vẽ đè lên sau). Trả (MB/s trước, MB/s sau WC
+/// nếu bật được, máy ảo) để màn chào in lại cho người không có cổng nối tiếp.
+pub fn measure(fb: &Framebuffer, info: &BootInfo) -> Option<(u64, Option<u64>, bool)> {
     let hz = match crate::arch::cycle_hz() {
         Some(hz) if hz > 0 => hz,
         _ => {
             println!("  Ghi khung : khong do duoc (khong co dong ho chu ky / PIT)");
-            return;
+            return None;
         }
     };
     let (_, in_vm) = crate::arch::cpu_flags();
@@ -51,21 +52,23 @@ pub fn measure(fb: &Framebuffer, info: &BootInfo) {
         Some(b) => b,
         None => {
             println!("  Ghi khung : khung hinh khong dung duoc, bo qua");
-            return;
+            return None;
         }
     };
-    print!("  Ghi khung : truoc {} MB/s", mb_per_s(before.0, before.1, hz));
+    let before_mbs = mb_per_s(before.0, before.1, hz);
+    let mut after_mbs = None;
+    print!("  Ghi khung : truoc {} MB/s", before_mbs);
 
     let fb_len = fb.pitch as u64 * fb.height as u64;
     let ram = &info.ram_ranges[..info.ram_range_count];
     match wc_pages(fb.addr, fb_len, ram, info.ram_ranges_complete, crate::boot::kernel_image()) {
         Ok((first, end)) if crate::arch::set_write_combining(first, end) => {
             match crate::splash::fill_bench(fb, BENCH_BYTES) {
-                Some(after) => print!(
-                    ", sau WC {} MB/s ({} trang 2 MiB",
-                    mb_per_s(after.0, after.1, hz),
-                    end - first
-                ),
+                Some(after) => {
+                    let a = mb_per_s(after.0, after.1, hz);
+                    after_mbs = Some(a);
+                    print!(", sau WC {} MB/s ({} trang 2 MiB, ", a, end - first)
+                }
                 None => print!(", sau WC: khong do lai duoc ("),
             }
         }
@@ -81,4 +84,5 @@ pub fn measure(fb: &Framebuffer, info: &BootInfo) {
         print!(", may ao — so khong dai dien");
     }
     println!(")");
+    Some((before_mbs, after_mbs, in_vm))
 }

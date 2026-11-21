@@ -10,6 +10,7 @@
 #include "yui/b64.hpp"
 #include "yui/codec.hpp"
 #include "yui/ime.hpp"
+#include "yui/legal.hpp"
 #include "yui/telemetry.hpp"
 #include "yui/text.hpp"
 
@@ -239,6 +240,7 @@ std::string Shell::banner() const {
   os << "Giao diện: " << ui::path_name(layout_.path) << " · " << layout_.columns << "×" << layout_.rows
      << " ký tự · tỉ lệ " << layout_.scale_px << "x\n";
   os << "Lý do: " << layout_.reason << "\n";
+  os << legal::kAsIsVi << "\n";
   os << "Gõ \"giúp\" hoặc \"help\" để xem lệnh. Thoát bằng \"thoát\".";
   return os.str();
 }
@@ -633,7 +635,9 @@ std::string Shell::dispatch(const std::string& cmd, const std::vector<std::strin
     std::ostringstream os;
     os << "YuiVieOS Beta · Phiên bản: "
        << (v.is_object() && v.has("version") ? v["version"].as_string() : "0.4.0")
-       << " · Giao thức: JSON-RPC 2.0 / MCP 2024-11-05 · C-ABI v1";
+       << " · Giao thức: JSON-RPC 2.0 / MCP 2024-11-05 · C-ABI v1\n"
+       << legal::kAsIsVi << "\n"
+       << legal::kAsIsEn;
     return os.str();
   }
 

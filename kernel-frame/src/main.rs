@@ -74,6 +74,8 @@ pub fn kmain(raw_boot: boot::RawBoot) -> ! {
     println!();
     println!("yui: ready");
     println!("YuiVieOS Beta · khung phan cung (Tầng 0 + Tầng 1)");
+    // Nhãn AS-IS (P7.9), bản ASCII của yui::legal::kAsIsVi — check_legal.py kiểm.
+    println!("  Ban beta mien phi, cung cap nguyen trang (AS-IS), khong bao hanh — docs/terms_vi.md");
     print!("  Kien truc : ");
     println_str!(boot::arch_name());
 
@@ -105,8 +107,8 @@ pub fn kmain(raw_boot: boot::RawBoot) -> ! {
 
     if let Some(fb) = info.framebuffer {
         // Đo tốc độ ghi + bật write-combining TRƯỚC khi vẽ (phép đo tô nền).
-        fbspeed::measure(&fb, &info);
-        match splash::render(&fb, &info) {
+        let speed = fbspeed::measure(&fb, &info);
+        match splash::render(&fb, &info, speed) {
             Some(d) => {
                 // `fb.source` in thẳng: định dạng biến `&str` bằng `{}` treo
                 // nhân trên aarch64 (xem console.rs).
