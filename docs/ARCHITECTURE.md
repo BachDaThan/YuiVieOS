@@ -532,3 +532,13 @@ sang Desktop QA follow-up, không chặn tính năng. Cũng chưa kiểm chứng
 | AI là tiến trình ngoài (bridge) | Tốn một lần qua socket | Nhân không thể bị lõi AI làm sập; thay mô hình không cần build lại HĐH |
 | Tài liệu song ngữ, Việt trước | Tốn công viết | Đây là hệ điều hành Việt, không phải bản dịch |
 | Ghi rõ 7 điều chưa bảo vệ (`SECURITY.md` §7) | Trông "yếu" hơn marketing | Người dùng cần biết giới hạn thật để không mất dữ liệu |
+
+## 11. Hướng mở rộng đợt 9 (đề xuất 2026-11-21 — **chưa triển khai**, không có số đo)
+
+Phần này chỉ ghi **ranh giới thiết kế** đã chốt trong `PLAN.md` §13 (C136–C171) và §17.1; không có dòng nào ở đây là tuyên bố đã chạy.
+
+- **Heuristic tầng driver ≠ AI trong nhân:** quyết định trong driver chỉ là bảng/ngưỡng/máy trạng thái hữu hạn, xác định, có test; nhân **không** chứa trọng số học được và **không** đọc định dạng `.yui` (P6.50). Mọi suy luận AI nằm ở userspace và còn **khoá ở P5**.
+- **Taint ngoài trọng số (P5.21):** dữ liệu từ khán giả/web/tệp lạ gắn `TAINT_EXTERNAL_UNTRUSTED` ⇒ luồng đó có `CapTable = NONE`; trạng thái nằm trong máy trạng thái C++ của `yuid`, **mô hình không có đường gỡ**; chỉ `PhysicalHardware` (P2.21) gỡ được.
+- **Dừng khẩn và nhật ký (P5.27):** phím dừng do nhân/host xử lý, không qua AI hay bộ gõ; nhật ký "AI đã làm gì" nằm trên máy.
+- **Sạch:** mô hình AI/giọng nói/thư viện game tải theo nhu cầu, không vào ISO (`THIRD-PARTY.md` §11); không crate ngoài ở Tầng 1–2 (P2.22); số `unsafe` đếm theo loại (P0.16).
+- **Miễn trừ:** `terms_vi.md` mục 12–19 và `privacy_vi.md` mục 13–20 viết "tối đa trong phạm vi luật cho phép"; phần kỹ thuật làm cho lời miễn trừ có trọng lượng là mặc định TẮT, xác nhận vật lý, nút dừng, nhật ký xoá được, không gửi dữ liệu đi.

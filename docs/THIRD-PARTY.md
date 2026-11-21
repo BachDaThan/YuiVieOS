@@ -134,3 +134,23 @@ Nguyên tắc: Store chỉ hiển thị **metadata** và chuyển luồng tải 
 |---|---|---|
 | 6 vector "golden" của Zstandard (`tests/golden-decompression*` trong github.com/facebook/zstd, commit `1658a42`) | `tests/archive_fixtures.hpp` (P4.33), nhúng dạng hex qua `scripts/gen_archive_fixtures.py` — mỗi tệp 11–45 byte | Dự án zstd cấp phép kép BSD-3-Clause / GPLv2 (mình **chưa đọc kỹ** điều khoản cho riêng thư mục test; đây là vài chục byte dữ liệu thử, không phải mã). Bộ giải `pkg-stripper/zstd.cpp` viết theo RFC 8878, **không chép mã** của zstd |
 | Đầu ra nén của zlib 1.2.13 và libzstd 1.5.7 (qua Python `zlib` và gói PyPI `zstandard` 0.25.0) | `tests/archive_fixtures.hpp` | Chỉ là **dữ liệu do công cụ sinh ra** từ văn bản tự viết; `zstandard` chỉ cần khi sinh lại mẫu, không phải dependency build/test |
+
+## 11. Thành phần AI đa phương tiện, thư viện game và dữ liệu (đề xuất 2026-11-21; giấy phép CHƯA kiểm trừ khi ghi "đã tra" — P7.21, P7.23, P7.24)
+
+Nguyên tắc (cùng §3): **không vào ISO/kernel**; tải theo nhu cầu qua `yui-store` kèm băm; mỗi thành phần có dòng ở đây **trước khi** tích hợp; chạy trong hộp cát/tiến trình riêng; bản phi thương mại bị chặn ở mọi cấu hình thương mại.
+
+| Thành phần | Dùng để | Giấy phép | Trạng thái kiểm | Ghi chú |
+|---|---|---|---|---|
+| VieNeu-TTS (bản 0.5B) | Đọc tiếng Việt, nhân bản giọng từ mẫu ngắn | Apache-2.0 | **Đã tra 2026-11-21** (trang mô hình + README) | Mẫu giọng 3–5 giây; có **watermark đầu ra bật sẵn — không gỡ**; cần bộ chuyển âm vị (dòng dưới) |
+| VieNeu-TTS (bản 0.3B) | Như trên, nhanh hơn | **CC BY-NC 4.0 (phi thương mại)**, ghi là thử nghiệm | **Đã tra 2026-11-21** | **Không dùng** ở bản thương mại hoá; dùng thương mại phải xin phép tác giả |
+| eSpeak NG | Bộ chuyển âm vị mà VieNeu-TTS yêu cầu | **Chưa kiểm** (theo hiểu biết là GPL — cần xác minh) | ❓ | Nếu GPL: chỉ chạy như **tiến trình riêng**, không liên kết vào lõi; nghĩa vụ mã nguồn khi đóng gói |
+| Viet-ASR (int8, ONNX) | Nhận dạng giọng tiếng Việt | **Chưa kiểm** (nguồn/giấy phép cụ thể chưa xác định) | ❓ | Tư vấn không nêu tên kho; chất lượng tiếng Việt chưa đo |
+| Silero VAD | Phát hiện có tiếng nói | **Chưa kiểm** | ❓ | Đọc giấy phép bản gốc |
+| YAMNet / BEATs-Lite | Nhận biết âm thanh nền | **Chưa kiểm** | ❓ | Hai mô hình khác nhau, mỗi cái một giấy phép |
+| SmolVLM2-256M | Hiểu khung hình (hộp cát, không mạng) | **Chưa kiểm** (tư vấn ghi Apache-2.0, chưa đọc bản gốc) | ❓ | |
+| Qwen3.5-0.8B | Mô hình thị giác-ngôn ngữ nhỏ | **Chưa kiểm** (tư vấn ghi Apache-2.0, chưa đọc bản gốc) | ❓ | Tên/phiên bản chưa đối chiếu với trang chính thức |
+| Cubiomes (thư viện) | Tính hạt giống/quần xã Minecraft **Java Edition** | **MIT** (chuyển từ GPLv3 sang MIT năm 2020) | **Đã tra 2026-11-21** (thảo luận chuyển giấy phép + bản ghi commit) | **Không hỗ trợ Bedrock**; dùng trên thế giới của chính bạn |
+| Cubiomes Viewer | Ứng dụng đồ hoạ dựa trên Cubiomes | **GPL-3.0** | **Đã tra 2026-11-21** | **Không nhúng**, không đóng gói |
+| Mẫu giọng, VRM, sprite, ảnh, tài liệu do người dùng nạp | Gói `.yuic`/`.yuik` | Của người nạp | Không thuộc dự án | Hiện metadata giấy phép; người nạp chịu trách nhiệm (terms mục 17) |
+
+Việc cần làm: đọc giấy phép bản gốc của từng dòng ❓ (ngày đọc + nguồn) **trước** khi tích hợp; không đổi chữ "chưa kiểm" thành "đã kiểm" nếu chưa có nguồn.
