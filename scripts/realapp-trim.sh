@@ -100,15 +100,22 @@ vsc_checks() {
   rm -rf "$u" "$e"
   if "$dir/bin/codium" --version > "$WORK/vsc-$tag-version.log" 2>&1 && grep -q "^${VSCODIUM_VERSION%.*}" "$WORK/vsc-$tag-version.log"; then ok="$ok cli-version"; fi
   if "$dir/bin/codium" --list-extensions --user-data-dir "$u" --extensions-dir "$e" > "$WORK/vsc-$tag-ext.log" 2>&1; then ok="$ok cli-extensions"; fi
-  # Giao diện: chạy 25 s dưới Xvfb; đạt nếu cửa sổ renderer đã ghi log và tiến trình chưa chết.
+  # Giao diện: chạy dưới Xvfb; đạt nếu sau 20 s còn tiến trình renderer (cửa sổ)
+  # của ĐÚNG bản này (đường dẫn tuyệt đối) đang sống.
+  local adir; adir=$(cd "$dir" && pwd)
   rm -rf "$u"
-  ( timeout 25 xvfb-run -a "$dir/codium" --no-sandbox --disable-gpu --user-data-dir "$u" --extensions-dir "$e" \
-      --disable-workspace-trust --skip-welcome --new-window > "$WORK/vsc-$tag-gui.log" 2>&1; echo $? > "$WORK/vsc-$tag-gui.rc" ) || true
-  if [ "$(cat "$WORK/vsc-$tag-gui.rc")" = 124 ] && find "$u/logs" -path '*window*' -name '*.log' 2>/dev/null | grep -q .; then ok="$ok gui-window"; fi
-  if [ -n "${GITHUB_ACTIONS:-}" ] && [ "$tag" = before ] && ! case "$ok" in *gui-window*) true ;; *) false ;; esac; then
+  xvfb-run -a "$adir/codium" --no-sandbox --disable-gpu --user-data-dir "$u" --extensions-dir "$e" \
+      --disable-workspace-trust --skip-welcome --new-window > "$WORK/vsc-$tag-gui.log" 2>&1 &
+  local xpid=$!
+  sleep 20
+  local nren; nren=$(pgrep -fc -- "$adir/codium --type=renderer" || true)
+  pkill -f -- "$adir/codium" || true
+  wait "$xpid" 2>/dev/null || true
+  if [ "${nren:-0}" -ge 1 ]; then ok="$ok gui-renderer"; fi
+  if [ -n "${GITHUB_ACTIONS:-}" ] && [ "$tag" = before ] && [ "${nren:-0}" -lt 1 ]; then
     {
-      echo "::notice title=P1.6 vscodium gui-debug::rc=$(cat "$WORK/vsc-$tag-gui.rc"); logs: $(find "$u/logs" -name '*.log' 2>/dev/null | sed "s|$u/||" | head -8 | tr '\n' ' ')"
-      tail -n 8 "$WORK/vsc-$tag-gui.log" | cut -c1-250 | sed 's/%/%25/g' | while IFS= read -r l; do echo "::notice title=P1.6 vscodium gui-log::$l"; done
+      echo "::notice title=P1.6 vscodium gui-debug::không thấy renderer; tiến trình codium: $( (pgrep -fa -- "$adir/codium" || true) | cut -c1-120 | head -5 | tr '\n' ' ')"
+      (tail -n 8 "$WORK/vsc-$tag-gui.log" || true) | cut -c1-250 | sed 's/%/%25/g' | while IFS= read -r l; do echo "::notice title=P1.6 vscodium gui-log::$l"; done
     } >&2
   fi
   echo "$ok"
